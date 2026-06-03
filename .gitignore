@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets — never commit credentials
+.env
+*.key
+
+# Data caches
+*.csv
+data/cache/
