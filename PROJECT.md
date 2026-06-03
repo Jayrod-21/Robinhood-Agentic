@@ -27,12 +27,17 @@ Active — bootstrap phase (Jared confirms every order before it places).
 
 ## Key Docs
 - `docs/AGENTIC_ROBINHOOD_v1.md` — operating charter (mission, model, risk rules, autonomy).
-- `docs/agentic_journal.md` — live trading journal / self-learning substrate.
+- `docs/agentic_journal.md` — live trading journal / self-learning substrate (running ledger).
+- `docs/THESIS_FRAMEWORK.md` + `docs/THESES.md` — the forward-thinking layer (top-down pass + per-name forward theses).
+- `docs/SLATE.md` — current target allocation.
 - `reference/SOURCES.md` — pointers to the canonical Wasden material in 3a.
+- `logs/` — append-only deep archive: `sessions/` (narratives), `debates/` (multi-agent records), `trades/` (execution logs). Seed of the future 24/7 app's event store — see `logs/README.md`.
 
 ## Roadmap (incremental)
-- [x] Daily-scan: yfinance adapter → Sprinkle Sauce screen → ranked candidate report (no trades). `python -m src.daily_scan`
-- [ ] Risk + pre-trade validation tuned for $100.
-- [ ] Robinhood execution glue (review → confirm → place → journal).
-- [ ] Outcome logging + lesson capture loop (self-learning).
-- [ ] Scheduled daily runner (`/schedule`) once the loop is trusted.
+- [x] Daily-scan: yfinance adapter → Sprinkle Sauce screen → ranked candidate report. `python -m src.daily_scan`
+- [x] Forward layer: top-down pass + per-name forward theses (`THESIS_FRAMEWORK.md` + `THESES.md`).
+- [x] Robinhood execution: review → place → journal. **First full slate deployed 2026-06-03** (7 positions).
+- [x] Append-only log archive (`logs/`) — sessions, debates, trades.
+- [ ] Scheduled daily pre-market scan routine (in progress).
+- [ ] Local 24/7 app/script: event store (JSONL), position monitoring, stop/discipline automation, stored RH auth.
+- [ ] Outcome logging on position close → lesson capture (self-learning loop).
