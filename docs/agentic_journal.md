@@ -9,6 +9,12 @@
 | Date | Event | Account Value | Cash | Notes |
 |------|-------|--------------|------|-------|
 | 2026-06-03 | Baseline | $100.00 | $100.00 | Clean slate, zero positions. Charter v1 created. |
+| 2026-06-03 | First trade (TSM) | $99.99 | $78.00 | TSM filled 0.04991 sh @ $440.79 = $22.00. Other 6 slate orders BLOCKED (investor-profile gate). |
+
+## Open Positions (live)
+| Ticker | Qty | Avg cost | Cost basis | Thesis role | Stop (mental -20%) |
+|--------|-----|----------|-----------|-------------|--------------------|
+| TSM | 0.049910 | $440.79 | $22.00 | Compute anchor (THESES.md) | ~$352.6 |
 
 ## Scan Log
 
@@ -66,8 +72,16 @@ _None yet._
 
 ## Decision Log
 
-_No trades yet. First entry will record: ticker, Wasden bucket rationale, bull/bear summary,
-entry price, planned exit (target + stop/invalidation), size, and confidence._
+### 2026-06-03 — BUY TSM (first live trade) ✅ FILLED
+- Order: market, dollar_amount $22.00, ref_id 1111...1111, order id 6a204a52-70d9-4484-9fed-442f1c0dfebc.
+- Fill: 0.049910 sh @ $440.79 avg = $22.00. Account → $99.99 value / $78 cash.
+- Thesis: compute anchor — AI-foundry monopoly, sold out thru 2028, shrinking Taiwan-invasion discount (US intel downgrade Mar'26). HIGH conviction, lowest-variance HIGH name = top weight (22%). See THESES.md.
+- Planned exit: -20% mental stop ~$352.6 (re-underwrite, don't average down); trim past ~1.3x; target = invasion-discount re-rate, watch Q2 ~mid-July.
+
+### 2026-06-03 — remaining 6 slate orders BLOCKED (not placed)
+VST $15 / NVDA $13 / V $12 / CVX $11 / GEV $9 / QCOM $6 all rejected: Robinhood requires investor-profile completion before the account's SECOND trade. Reviews were clean (fractional-tradable, no alerts). Pending Jared completing profile:
+https://applink.robinhood.com/investment_profile?account_number=542574025&context=second_trade
+Once done: place the 6 (will leave ~$12 cash = 12%, within floor). Quotes at attempt: VST $156.67, NVDA $216.32, V $309.30, CVX $190.59, GEV $974.20, QCOM $250.75.
 
 ## Lessons Learned
 
