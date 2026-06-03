@@ -11,4 +11,9 @@
   (Jared confirms every order).
 - Architecture: in-session Claude agent IS the intelligence layer (no paid LLM API tokens);
   Robinhood MCP for quotes + execution; references 3a for the Wasden framework.
-- Next: build the daily-scan capability (yfinance → Sprinkle Sauce screen → Wasden lens).
+- Built the daily-scan (increment 1): `src/screen.py` (lean Sprinkle Sauce tiers, pure/testable),
+  `src/data.py` (yfinance adapter, fails soft per ticker), `src/universe.py` (curated seed),
+  `src/daily_scan.py` (runner + report). 18 unit tests pass; live smoke scan works
+  (OXY survived; AAPL rejected on PEG, NVDA on thin FCF yield). Registered in `TESTS.md`.
+- Next: risk/sizing + pre-trade validation for $100, then Robinhood execution glue
+  (review → confirm → place → journal).

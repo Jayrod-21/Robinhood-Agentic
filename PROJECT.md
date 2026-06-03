@@ -31,7 +31,7 @@ Active — bootstrap phase (Jared confirms every order before it places).
 - `reference/SOURCES.md` — pointers to the canonical Wasden material in 3a.
 
 ## Roadmap (incremental)
-- [ ] Daily-scan: yfinance adapter → Sprinkle Sauce screen → Wasden lens → candidate write-up (no trades).
+- [x] Daily-scan: yfinance adapter → Sprinkle Sauce screen → ranked candidate report (no trades). `python -m src.daily_scan`
 - [ ] Risk + pre-trade validation tuned for $100.
 - [ ] Robinhood execution glue (review → confirm → place → journal).
 - [ ] Outcome logging + lesson capture loop (self-learning).
