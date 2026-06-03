@@ -37,6 +37,12 @@ Judge scores (3 judges): Catalyst-Event 78/78/78 (winner) > Value-Concentration 
 **Binary-sizing rule:** cap any true criminal/regulatory-binary name (UNH, PLTR) + SIZE AS A COIN FLIP — the cap, never the stop, is the defense (gaps don't honor stops on $100 fractional). Exit BEFORE resolution or accept the gap.
 **DO FIRST (judge consensus):** stage V ~$10 (10%) near $309 ahead of ~Jun17 GENIUS vote; $300 add-level + $292 hard stop pre-written before clicking. Nearest dated catalyst, genuine fear, sets the discipline. STILL awaiting Jared go (bootstrap).
 
+### 2026-06-03 — FORWARD LAYER built + theses written + CATALYST CORRECTION
+Built forward-thinking layer: `docs/THESIS_FRAMEWORK.md` (top-down 5-bucket pass + per-name forward-thesis template) + `docs/THESES.md` (living forward theses for TSM/PLTR/UNH/V/CVX). Deep forward research (4 agents, ~160k tok).
+**!! CORRECTION:** "V June 17 GENIUS Act vote" was WRONG — GENIUS Act passed/signed 2025. Live 2026 catalyst = CLARITY Act (Senate Banking advanced 15-9 May'26, floor vote pending, NO fixed Jun17 date). Walmart/Amazon own-stablecoin = Jun 2025 WSJ report, no at-scale launch since. The "do first: stage V into Jun17" action above is VOID as written — V thesis still valid (co-option > disintermediation, estimates rising while multiple compresses) but there is no imminent dated June 17 cliff. Forward layer caught it.
+**Forward thesis convictions:** TSM HIGH (monopoly raising prices into sold-out demand; US intel downgraded Taiwan-2027 invasion risk Mar'26 = shrinking discount not repriced). UNH MED-HIGH (civil-near-won undercuts criminal theory; watch Jul 7 civil-trial date + Q2 MCR). V MED-HIGH (co-opts stablecoins via USDC settlement; own the headline-beta fear). CVX MED-HIGH (NOT oil bet — quality ballast + under-priced AI-power→natgas leg, 2.5GW W.Texas plant 2027). PLTR MED (business accelerating but ~115x P/S prices perfection; inverse of TSM; downside under-appreciated; dated-catalyst rental only, size small).
+**Key expectations-gap framing now per name (the edge):** see THESES.md. Next: re-decide first trade w/ corrected V catalyst; still bootstrap (Jared confirms).
+
 ## Open Positions
 
 _None yet._
