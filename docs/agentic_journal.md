@@ -50,6 +50,16 @@ Jared flagged: datacenter buildout backlash; NVDA agentic computer; QCOM AI inte
 **UNH DEMOTED (skeptic vindicated):** -37% from ATH, 19mo underwater, stalled lower highs ($404->$378), **BERKSHIRE EXITED entire stake Q1'26 (disclosed May15)**. Overhang stock — open EXPANDING DOJ CRIMINAL probe + active antitrust (Optum breakup tail) caps the multiple; MA membership shrinking 1.3-1.4M; ~21x fwd, only ~4% to PT. = resolution trade not forward trade. OFF core. (Note: 2027 MA rate data conflicts across rounds: +2.48% vs +0.09% — unresolved.)
 **Reframe implication:** forward aggressive slate should tilt toward POWER+EDGE reroute (TSM/NVDA/QCOM + GEV/VST/CCJ + CVX gas) over the original quality-value slate. Awaiting Jared: rebuild slate around reframe? Still bootstrap, no trade placed.
 
+### 2026-06-03 — ALLOCATION debate (12-agent workflow) -> TARGET SLATE set (see SLATE.md)
+Philosophy scores: Reframe-Barbell 80/82/84 (WON) > Correlation-Risk 76/74/76 > Catalyst-Payload 71/71/71 > Concentrated-Conviction 68/62/62 (too one-factor). 3 judges converged within pct points.
+**FINAL CONSENSUS ALLOCATION ($100):** TSM 22 / VST 15 / NVDA 13 / V 12 / CVX 11 / GEV 9 / QCOM 6 / PLTR 2 / CASH 10.
+**Unanimous EXCLUSIONS:** IONQ + OKLO + NuScale = 0% (no expect-to-lose lottery in no-ruin $100 book — kills earlier "tiny optional IONQ"). CCJ dropped (deepened AI-power factor, lost most on down-tape). UNH off (prior demotion).
+**Correlation verdict:** ~60% of book = ONE AI-buildout-capex bet; barbell hedges which END wins, not cycle rollover. Only V+CVX (23%) + cash (10%) = ~33% truly off-factor. Deliberate concentration = the aggression.
+**Sizing rules:** PLTR cap 2% rental-only; -20% mental stop/name (no averaging down); trim winners past 1.3x; on capex guide-down cut GEV/NVDA first + raise cash to 20%; keep V+CVX >=20% always.
+**Honest return:** ~+4-6%/mo median; 25-40% = right-tail 1-in-3-4mo; left tail -12 to -18% in air-pocket.
+**Live tape during debate (intraday Jun3):** TSM ~$441, NVDA $215.99 (-3.1%), GEV $974.53, VST $156.68; PLTR/IONQ/OKLO/CCJ all red = risk-off day.
+**FIRST TRADE (judge consensus):** TSM ~$22 (anchor, lowest-variance). Still bootstrap — awaiting Jared confirm. No order placed yet.
+
 ## Open Positions
 
 _None yet._
