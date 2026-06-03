@@ -10,11 +10,19 @@
 |------|-------|--------------|------|-------|
 | 2026-06-03 | Baseline | $100.00 | $100.00 | Clean slate, zero positions. Charter v1 created. |
 | 2026-06-03 | First trade (TSM) | $99.99 | $78.00 | TSM filled 0.04991 sh @ $440.79 = $22.00. Other 6 slate orders BLOCKED (investor-profile gate). |
+| 2026-06-03 | Slate COMPLETE | $99.87 | $12.00 | Investor profile completed; remaining 6 filled. 7 positions live, ~$0.13 entry friction (spread). Cash 12%. |
 
-## Open Positions (live)
+## Open Positions (live, as of 2026-06-03)
 | Ticker | Qty | Avg cost | Cost basis | Thesis role | Stop (mental -20%) |
 |--------|-----|----------|-----------|-------------|--------------------|
-| TSM | 0.049910 | $440.79 | $22.00 | Compute anchor (THESES.md) | ~$352.6 |
+| TSM  | 0.049910 | $440.79 | $22.00 | Compute anchor | ~$352.6 |
+| VST  | 0.095693 | $156.75 | $15.00 | Nuclear power + cash-flow floor | ~$125.4 |
+| NVDA | 0.059894 | $217.05 | $13.00 | Convexity (cloud+edge hedge) | ~$173.6 |
+| V    | 0.038704 | $310.05 | $12.00 | Off-factor diversifier (payments) | ~$248.0 |
+| CVX  | 0.057579 | $191.04 | $11.00 | Off-factor ballast (oil+gas→AI power) | ~$152.8 |
+| GEV  | 0.009242 | $973.82 | $9.00  | Power-reroute high-beta call | ~$779.1 |
+| QCOM | 0.024050 | $249.48 | $6.00  | Cheap edge satellite | ~$199.6 |
+| **CASH** | — | — | **$12.00** | Dry powder (12%, within 10-20% floor) | — |
 
 ## Scan Log
 
@@ -78,10 +86,11 @@ _None yet._
 - Thesis: compute anchor — AI-foundry monopoly, sold out thru 2028, shrinking Taiwan-invasion discount (US intel downgrade Mar'26). HIGH conviction, lowest-variance HIGH name = top weight (22%). See THESES.md.
 - Planned exit: -20% mental stop ~$352.6 (re-underwrite, don't average down); trim past ~1.3x; target = invasion-discount re-rate, watch Q2 ~mid-July.
 
-### 2026-06-03 — remaining 6 slate orders BLOCKED (not placed)
-VST $15 / NVDA $13 / V $12 / CVX $11 / GEV $9 / QCOM $6 all rejected: Robinhood requires investor-profile completion before the account's SECOND trade. Reviews were clean (fractional-tradable, no alerts). Pending Jared completing profile:
-https://applink.robinhood.com/investment_profile?account_number=542574025&context=second_trade
-Once done: place the 6 (will leave ~$12 cash = 12%, within floor). Quotes at attempt: VST $156.67, NVDA $216.32, V $309.30, CVX $190.59, GEV $974.20, QCOM $250.75.
+### 2026-06-03 — remaining 6 orders: initially BLOCKED, then FILLED ✅
+First attempt rejected: Robinhood requires investor-profile completion before the account's SECOND trade (per-account; gated trade #2+). NOTE: the `applink.robinhood.com` link is a MOBILE-APP deep link — useless in desktop browser; profile must be completed in the Robinhood app (switch to Agentic acct ••••4025 → tap Buy on any ticker → questionnaire pops). After Jared completed it, all 6 filled:
+- VST 0.095693 @ $156.75 = $15.00 · NVDA 0.059894 @ $217.05 = $13.00 · V 0.038704 @ $310.05 = $12.00
+- CVX 0.057579 @ $191.04 = $11.00 · GEV 0.009242 @ $973.82 = $9.00 · QCOM 0.024050 @ $249.48 = $6.00
+**SLATE FULLY DEPLOYED.** 7 positions, $87.87 equity + $12 cash = $99.87. Entry friction ~$0.13 (spread on 7 fractional market buys). All thesis/sizing per SLATE.md. Bootstrap complete — first full slate live.
 
 ## Lessons Learned
 
