@@ -27,6 +27,16 @@ Agent Wasden-lens ranking + narratives (deep research w/ news+ecosystem):
 
 **Proposed starter (NOT yet executed, bootstrap=confirm-each):** UNH 25% / TSM 25% / V 20% / CVX 15% / cash 15%. 4 concentrated names, no oil cluster, within 10-20% cash floor. Awaiting Jared go/adjust.
 
+### 2026-06-03 — 4-position debate (12-agent workflow) outcome
+Judge scores (3 judges): Catalyst-Event 78/78/78 (winner) > Value-Concentration 70/58/66 > Risk-Skeptic 62/62/61 > High-Beta-Momentum 40/70/47.
+**VERDICT on proposed slate: PARTLY.** UNH/TSM/V/CVX = right thing to OWN (survival core, kills oil cluster) but NOT best path to 25-40%/mo as buy-and-hold. The "how" (trade dated catalysts, exit into gap) matters more than the "what."
+**HONEST realistic return: +3% to +8%/mo expected, wide distribution.** 25-40% = right-tail outcome ~1 in 3-4 months when a dated catalyst fires clean — NOT a monthly mean. Bad months -10% to -25%.
+**RECOMMENDED PATH (blend):** dated catalysts on cheap-floor names — buy fear, exit into the gap, never hold an uncapped binary through resolution. Engine=Catalyst timing, floor=Value cheapness, seatbelt=Risk caps.
+**Consolidated rec slate:** TSM 25 / UNH 15-18 (CAPPED for DOJ-criminal tail, was 25-30) / V 18 (STAGED catalyst trade not hold, exit into Jun17 pop, stop $292) / CVX 12 (lone oil ballast) / PLTR 12 (high-beta PAYLOAD, dated-catalyst-only, scale-out, the one line that can pay 30% in a catalyst month) / cash 15.
+**Best NEW ticker: PLTR** (beta ~2.6, ±15-25% on earnings = the instrument that physically moves 30%; size small + dated-only). NVDA = bench substitute (never both = 1 AI-beta bet). MU lower-conviction.
+**Binary-sizing rule:** cap any true criminal/regulatory-binary name (UNH, PLTR) + SIZE AS A COIN FLIP — the cap, never the stop, is the defense (gaps don't honor stops on $100 fractional). Exit BEFORE resolution or accept the gap.
+**DO FIRST (judge consensus):** stage V ~$10 (10%) near $309 ahead of ~Jun17 GENIUS vote; $300 add-level + $292 hard stop pre-written before clicking. Nearest dated catalyst, genuine fear, sets the discipline. STILL awaiting Jared go (bootstrap).
+
 ## Open Positions
 
 _None yet._
