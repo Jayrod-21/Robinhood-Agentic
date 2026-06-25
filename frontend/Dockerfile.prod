@@ -1,0 +1,27 @@
+# Production frontend image — real `next build` + `next start` (not dev mode).
+#
+# NEXT_PUBLIC_API_URL is baked EMPTY so the browser calls relative `/api/...` on the same origin,
+# which the Caddy reverse proxy routes to the backend. Used by deploy/docker-compose.prod.yml.
+FROM node:20-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_PUBLIC_API_URL=""
+RUN npm run build
+
+FROM node:20-slim AS run
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+# Copy only what `next start` needs.
+COPY --from=build /app/package.json /app/package-lock.json* ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/.next ./.next
+COPY --from=build /app/public ./public
+COPY --from=build /app/next.config.js ./next.config.js
+RUN groupadd -r nodejs && useradd -r -g nodejs -m nodejs && chown -R nodejs:nodejs /app
+USER nodejs
+EXPOSE 3000
+CMD ["npx", "next", "start", "-H", "0.0.0.0", "-p", "3000"]

@@ -1,0 +1,17 @@
+# Backend build context is this project root. Keep the image lean and secret-free.
+# (The frontend has its own context at ./frontend with its own .dockerignore.)
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.ruff_cache/
+.git/
+.env
+.env.ports
+backend/.env
+backend/tests/
+frontend/
+JMWFM/
+reference/
+docs/
+logs/
+data/

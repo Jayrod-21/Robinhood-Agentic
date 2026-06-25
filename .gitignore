@@ -8,7 +8,22 @@ venv/
 
 # Secrets — never commit credentials
 .env
+backend/.env
+deploy/.env
 *.key
+
+# Generated runtime artifacts
+.env.ports
+data/refresh.request
+data/refresh.lock
+data/account_snapshot.json
+logs/refresh/
+logs/cron/
+
+# Node / Next.js (frontend)
+node_modules/
+frontend/.next/
+frontend/node_modules/
 
 # Data caches
 *.csv

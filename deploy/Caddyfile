@@ -1,0 +1,27 @@
+# Caddy reverse proxy — single origin + basic auth in front of the dashboard.
+# cloudflared connects to this (published on 127.0.0.1 by the prod compose); Caddy routes
+# /api/* to the backend and everything else to the frontend, behind HTTP basic auth.
+#
+# DASH_USER + DASH_PASSWORD_HASH come from the environment (the hash is bcrypt — generate with:
+#   docker run --rm caddy caddy hash-password --plaintext 'your-password'
+# ). See SERVER_DEPLOY.md.
+
+:80 {
+	# Basic auth on every request (runs before routing). The live account is behind this.
+	basic_auth {
+		{$DASH_USER} {$DASH_PASSWORD_HASH}
+	}
+
+	# API → backend. `handle` (not `handle_path`) preserves the /api prefix the backend expects.
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	# Everything else → the Next.js frontend.
+	handle {
+		reverse_proxy frontend:3000
+	}
+
+	# No `encode`/compression: the scan/debate/pipeline endpoints are SSE, and compression can
+	# buffer them. Caddy streams reverse_proxy responses (flushes per chunk) by default.
+}

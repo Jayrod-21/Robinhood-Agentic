@@ -38,6 +38,17 @@ Active — bootstrap phase (Jared confirms every order before it places).
 - [x] Forward layer: top-down pass + per-name forward theses (`THESIS_FRAMEWORK.md` + `THESES.md`).
 - [x] Robinhood execution: review → place → journal. **First full slate deployed 2026-06-03** (7 positions).
 - [x] Append-only log archive (`logs/`) — sessions, debates, trades.
-- [ ] Scheduled daily pre-market scan routine (in progress).
-- [ ] Local 24/7 app/script: event store (JSONL), position monitoring, stop/discipline automation, stored RH auth.
+- [x] **Dockerized live dashboard** (`backend/` FastAPI + `frontend/` Next.js, `docker-compose.yml`):
+  real account monitor (bridge snapshot + live yfinance P&L), Sprinkle Sauce scan, and a live
+  bull/bear + 10-agent jury debate engine. Runs on freshly-picked random ports (`bin/pick_ports.sh`);
+  `bin/up.sh` builds, starts, and launches the refresh daemon. See `docs/DASHBOARD.md`.
+- [x] Event store seed (`logs/events.jsonl`) — each finished debate appends a typed event.
+- [x] Refresh bridge: in-dashboard button → `bin/refresh_daemon.sh` (host) → `claude` + Robinhood
+  MCP → rewrites `data/account_snapshot.json`. No stored credentials.
+- [x] **Ubuntu server deployment** (`deploy/` + `SERVER_DEPLOY.md`): always-on prod stack (Caddy
+  single-origin + basic auth, prod Next.js build, `restart: always`), Cloudflare Tunnel, systemd
+  boot unit, and a **twice-daily cron cycle** (market open + close, `TZ=America/New_York`) that
+  refreshes the snapshot (headless `claude` + MCP, no wt.exe), scans the universe, debates each
+  position, and writes `logs/reports/<date>-<phase>.md`. Job: `python -m app.jobs.cycle open|close`.
+- [ ] Position monitoring + stop/discipline automation in the dashboard.
 - [ ] Outcome logging on position close → lesson capture (self-learning loop).

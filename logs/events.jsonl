@@ -1,0 +1,3 @@
+{"ts": "2026-06-16T22:24:39Z", "type": "debate", "payload": {"id": "dbt-20260616T222439Z-627e2d", "ticker": "V", "decision": "HOLD", "escalated": false}}
+{"ts": "2026-06-16T23:41:01Z", "type": "debate", "payload": {"id": "dbt-20260616T234101Z-1acffe", "ticker": "TSM", "decision": "HOLD", "escalated": false}}
+{"ts": "2026-06-16T23:40:50Z", "type": "cycle", "payload": {"phase": "close", "total_value": 196.65, "unrealized_pl": -3.55, "survivors": ["TSM", "ABBV", "CVX", "OXY", "UNH", "V", "SLB"], "decisions": {"TSM": "HOLD"}, "escalations": []}}

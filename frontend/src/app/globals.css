@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-ink-950 text-zinc-200 antialiased;
+  font-feature-settings: "tnum" 1, "cv01" 1;
+}
+
+/* Numbers align in tables/cards */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thin scrollbars in the dark theme */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-ink-700 rounded-full;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}

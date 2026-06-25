@@ -1,0 +1,66 @@
+# Production stack for the Ubuntu server: always-on, single origin behind Caddy + basic auth,
+# reachable via Cloudflare Tunnel. Self-contained (does NOT extend the dev compose).
+#
+#   cd /path/to/3b.\ Robinhood\ Agentic
+#   docker compose -f deploy/docker-compose.prod.yml up -d --build
+#
+# Only Caddy is published, to 127.0.0.1:${DASH_PORT} — cloudflared connects there. The backend and
+# frontend have NO host ports; they're only reachable through Caddy (which enforces basic auth).
+# Env: backend/.env (ANTHROPIC_API_KEY, models) + deploy/.env (DASH_USER, DASH_PASSWORD_HASH, DASH_PORT).
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    env_file:
+      - ../backend/.env
+    environment:
+      - JURY_MODEL=${JURY_MODEL:-claude-haiku-4-5}
+      - SYNTH_MODEL=${SYNTH_MODEL:-claude-sonnet-4-6}
+      # Same origin via Caddy → no cross-origin requests, so CORS can stay closed.
+      - CORS_ORIGINS=
+      - CORS_ORIGIN_REGEX=
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: always
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.prod
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: always
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - backend
+      - frontend
+    environment:
+      - DASH_USER=${DASH_USER:?set DASH_USER in deploy/.env}
+      - DASH_PASSWORD_HASH=${DASH_PASSWORD_HASH:?set DASH_PASSWORD_HASH (caddy hash-password) in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    # Published to localhost ONLY — cloudflared reaches it here; nothing else is exposed.
+    ports:
+      - "127.0.0.1:${DASH_PORT:-8088}:80"
+    restart: always
+
+volumes:
+  caddy_data:
+  caddy_config:

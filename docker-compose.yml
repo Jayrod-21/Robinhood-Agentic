@@ -1,0 +1,44 @@
+# Agentic Robinhood dashboard — two services on freshly-picked random ports.
+#
+# Ports come from .env.ports (written by bin/pick_ports.sh); docker compose auto-loads .env, so
+# bin/up.sh concatenates .env.ports into .env before invoking compose. Never hard-code the ports.
+services:
+  backend:
+    build:
+      context: .                      # project root: image bundles backend/ + src/
+      dockerfile: backend/Dockerfile
+    ports:
+      - "${BACKEND_PORT}:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - JURY_MODEL=${JURY_MODEL:-claude-haiku-4-5}
+      - SYNTH_MODEL=${SYNTH_MODEL:-claude-sonnet-4-6}
+      # Empty by default → the backend allows localhost/127.0.0.1 on any port via its built-in
+      # CORS_ORIGIN_REGEX. Set CORS_ORIGINS to explicit origins for a shared/remote deploy.
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+    volumes:
+      # Live data + logs are read/written through the host so the refresh bridge and debate
+      # archive survive container restarts and are visible to the host-side refresh daemon.
+      - ./data:/app/data
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${FRONTEND_PORT}:3000"
+    environment:
+      # Browser-facing: the frontend calls the backend on the host's published backend port.
+      - NEXT_PUBLIC_API_URL=http://localhost:${BACKEND_PORT}
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

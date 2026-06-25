@@ -92,6 +92,92 @@ First attempt rejected: Robinhood requires investor-profile completion before th
 - CVX 0.057579 @ $191.04 = $11.00 · GEV 0.009242 @ $973.82 = $9.00 · QCOM 0.024050 @ $249.48 = $6.00
 **SLATE FULLY DEPLOYED.** 7 positions, $87.87 equity + $12 cash = $99.87. Entry friction ~$0.13 (spread on 7 fractional market buys). All thesis/sizing per SLATE.md. Bootstrap complete — first full slate live.
 
+### 2026-06-15 — 25-agent debate (best path to +20-40% in 1mo-1qtr) + $100 deposit
+Jared funded the Agentic acct with a fresh $100 -> account ~$198.29 (cash ~$112, equity ~$86). Ran a 25-agent
+debate (8 recon incl. macro/sentiment/IPO lane + 3 alpha-scouts, 8 strategy desks, 4 judges, 4 red-teamers, 1 PM synth).
+Objective set explicitly by Jared: engineer the best path to +20-40% over the next month/quarter, not a passive rebalance.
+
+**Book P&L since 6-03 entry (at 6-15 close):** V +4.5%, GEV +0.6%, TSM flat, NVDA -2.2%, VST -2.0%, CVX -5.5%, QCOM -11.6%.
+
+**Engine = a dated-catalyst calendar, not buy-and-hold:** Jun-24 (MU FQ3 earnings AC + QCOM Investor Day 2:15pm ET,
+same AI-semis factor = ONE bet), Jul-16 (TSM Q2, ~Jul-10 monthly-rev tell), Aug-22 (SVRA PDUFA, no AdCom).
+
+**Honest return frame (return-realism judge + red-team enforced):** median ~+4-7%/mo. P(+20-40%) ~12-15% over 1mo,
+~28-33% over 1qtr. Left tail: a Jun-24 correlated double sell-the-news = ~-8 to -12% book over the event window (not ruin;
+bounded by small caps + 16.5% cash + off-factor V/CVX/SVRA legs).
+
+**Red-team fixes adopted:** (1) NO CVX add — "oil bid" FALSIFIED (Brent ~$83-86, -20% off peak, Hormuz reopening <30d = bearish);
+hold CVX as two-sided ballast only. (2) MU sized SMALL (9.5%) not large — at ALL-TIME HIGH $1,087.99, zero reversion cushion,
+±20% implied; coin-flip, EXIT INTO THE GAP, NO dollar stop (cap is the defense). (3) QCOM add capped at $12 — "named hyperscaler
+reveal" is UNVERIFIED moomoo chatter + pre-rallied +4.27%; don't chase green into the event, already own the free option at -11.6%.
+(4) MU+QCOM AI-semis sleeve held to ~24.5%; SVRA added as the only genuinely uncorrelated leg. (5) Full GEV exit (cleanest
+correlation cut, Jefferies PT cut 6-11). (6) MU "81% GM fabricated" attack REJECTED — verified real via SEC 8-K ($33.5B±750M
+rev, $19.15±0.40 EPS, ~81.0% GM, HBM sold out 2026) — but 81% is the priced base case, hence small sizing.
+
+**APPROVED TARGET SLATE (Jared approved full slate 6-15):** TSM 21.5 / QCOM 15 / VST 13.5 / MU 9.5 / NVDA 6.5 / V 6 /
+SVRA 6 / CVX 5.5 / CASH 16.5. Per-name target/stop set BEFORE buy per sell-discipline.
+
+**APPROVED ORDERS — staged for 2026-06-16 OPEN (market closed 6-15, fractional/dollar orders need regular hours):**
+| # | Order | $ | Note |
+|---|-------|---|------|
+| 1 | BUY TSM | $20 | anchor, cheapest AI compute (PEG<1), lowest left-tail; target $510 / stop $375 mental |
+| 2 | BUY VST | $18 | cheap megawatt theme, contracted cashflow; target $178 / stop $130 mental |
+| 3 | BUY MU  | $18 | capped Jun-24 coin-flip, exit into gap; target $1,290 / cap-is-defense (no $ stop) |
+| 4 | BUY QCOM| $12 | capped add into own Jun-24 Investor Day, ONLY if not gapping up pre-event; target $255 / stop $192 mental |
+| 5 | BUY SVRA| $12 | LIMIT at/below $5.33 (bid 5.15/ask 5.49 = 6.4% spread); skip if won't fill cheap; Aug-22 PDUFA; target $10 |
+| 6 | SELL GEV (full ~$9) | — | cleanest correlation cut; proceeds settle T+1, earmarked for any Jun-24 sell-the-news gap |
+Deploy ~$80 fresh, leave ~$32 / 16.5% cash. **Jun-24 plan:** market-sell MU into the post-print gap (no round-trip),
+trim QCOM into any Investor-Day pop.
+
+**ORDERS QUEUED 2026-06-15 ~23:18 ET (Jared: "just do the trades, ok if active tomorrow morning"). All state=queued,
+activate at the 6-16 open. Dollar-market orders queued gfd after-hours -> execute at open; SVRA gtc limit rests until fill.**
+| Order | Qty/$ @ est | Order id |
+|-------|-------------|----------|
+| BUY TSM  | 0.045960 sh / $20 @ ~$435.09 | 6a30c055-66a7-40f8-8fb9-b228ea9faa78 |
+| BUY VST  | 0.117340 sh / $18 @ ~$153.40 | 6a30c072-d9fd-4939-a929-fb2a3c25f993 |
+| BUY MU   | 0.016800 sh / $18 @ ~$1071.11 | 6a30c074-7775-41ac-9d8f-70dd7d277973 |
+| BUY QCOM | 0.054310 sh / $12 @ ~$220.92 | 6a30c079-7812-482a-9fe3-a9ddc180f937 |
+| BUY SVRA | 2 sh LIMIT @ $5.33 GTC (rests; may not fill at open) | 6a30c083-6c94-4042-a074-c676df039424 |
+| SELL GEV | 0.009242 sh (full exit) market | 6a30c085-934d-421c-b606-a6fa7bc7124c |
+Net: all 6 placed by the `agentic` agent. Check fills at the open via get_equity_orders. SVRA limit may sit unfilled
+if SVRA opens/stays above $5.33 — that is intended (skip-if-won't-fill-cheap).
+
+**SCHEDULED CATALYST BRIEFINGS (cloud routines, email-only — Robinhood MCP is local-only, so cloud CANNOT trade):**
+Two one-time claude.ai routines emit a researched Gmail draft to jaredmwilliams.me@gmail.com, then Jared executes in a LOCAL session.
+- `trig_01ThfQRZHZU8SiZBE3xkKJNz` — "June 24 event-day brief" — fires 2026-06-24T12:30:00Z (6:30 MDT): QCOM Investor Day (12:15 MT) + MU earnings-tonight setup + exit-into-gap plan.
+- `trig_01JHQ1JNRKbubR6qWKV5Ahzv` — "June 25 MU gap & exit plan" — fires 2026-06-25T12:00:00Z (6:00 MDT): MU post-print gap + the exit decision mapped to the actual gap; QCOM trim follow-up.
+Manage at https://claude.ai/code/routines . Jul-16 (TSM) + Aug-22 (SVRA) not yet scheduled — add closer to the dates.
+
+### 2026-06-16 — ALL 6 QUEUED ORDERS FILLED AT OPEN + Debate 3 (slate stress-test, 16-agent)
+**Fills (6-16 open):** TSM +$20 @ $436.19 · VST +$18 @ $153.25 · MU +$18 @ $1,100.00 (at/above prior ATH) ·
+QCOM +$12 @ $225.63 · SVRA 2sh @ $5.33 (limit filled) · GEV full exit 0.009242 sh @ $991.85 (+1.8%).
+Account → $198.28 total / $42.54 cash (21.4%) / $155.74 equity. Slate fully redeployed.
+**Live P&L day-1 (intraday ~10:47 MDT):** V +6.8%, VST +3.2% (winners) · TSM −1.5%, NVDA −3.7%, QCOM −5.5%,
+CVX −6.1%, MU −4.5% (bought at ATH, bleeding before its own catalyst), SVRA −1.8%.
+
+**Debate 3 (`logs/debates/2026-06-16-debate-3-slate-stress-test.md`, run wf_7a2b43d8-c51, ~608k tok).**
+Judge tally: Correlation-Hawk 220/avg73 (WON) > Cut-The-Losers 194/65 > Hold-The-Line 171/57 > Ride-The-Winners 148/49.
+**VERDICT: HOLD WITH TWEAKS.** Hawk won the diagnosis — ruin-relevant denominator is EQUITY not total acct:
+TSM+MU+NVDA+QCOM = **56.5% of equity** in one record-crowded factor firing TWICE on Jun-24. But Return-Realist
++ Wasden judges' shared blindspot overrode a maximal de-gross: on a $198 book NO single re-trade moves
+P(+20-40%) >~1-2 pts, and a −14% MU gap = −$2.41 = **1.2% of book** → 4 spread-paying sells over-engineer a
+bounded tail. So: adopt the diagnosis, execute with the MINIMUM needle-moving trades.
+**3 ORDERS (bootstrap — awaiting Jared go):** (1) TRIM MU ~$4 market (~23%, broken-ENTRY right-size, keep convex
+HBM stub + gap-sell). (2) TRIM NVDA ~$3 market (~24%, cut 2nd-tightest beta; rejected 50% halving — best fundamentals).
+(3) ADD V ~$6 LIMIT ~$331 (cure off-factor floor with stronger horse, funded by trims; do NOT chase >$333). Net cash ~flat → ~22%.
+**HOLD:** TSM full (lowest-IV, no Jun-24 catalyst), QCOM (trim INTO Investor-Day pop not before), VST (let winner run, no add),
+CVX (ballast, do NOT add oil into 4Mbpd glut), SVRA (sole true diversifier).
+**Off-factor floor:** V+CVX = 11.7% of $198 vs 20% = a denominator artifact of the $100 deposit (NOT fresh risk).
+REJECTED re-baseline-to-15% + counting VST as off-factor (VST = DEMAND side of same AI bet). +$6 V → ~14.6% today;
+close rest from Jun-24 plan-of-record trims. No rule rewrite.
+**Jun-24 playbook:** go in lighter (MU/NVDA trims), ~$33 dry powder. Intraday: trim QCOM $5-6 into Investor-Day pop.
+After MU close print: market-sell the ~$13 stub INTO the gap (cap IS the defense). Clean+up → re-buy MU at a known
+number / add TSM/VST. Down → bounded −8 to −12%, survivable, not forced.
+**ESCALATION TRIGGER (Hawk dissent):** confirmed AI-capex guide-down before Jun-24 → escalate to full de-gross + 26%+ cash.
+**Un-priced ruin path (Risk judge):** whole book ≈ ONE AI-buildout bet (semis supply + VST demand + CVX gas-to-power)
+wearing 5 tickers; only SVRA truly uncorrelated. A confirmed AI scare hits supply AND demand together → could blow past
+the −12% worst-case. Watch on any hyperscaler capex trim.
+
 ## Lessons Learned
 
 _Populated as positions close. Each lesson links the outcome back to the thesis so the loop compounds._

@@ -1,0 +1,20 @@
+# Cloudflare Tunnel config — exposes the dashboard publicly with no open inbound ports.
+# cloudflared connects OUT to Cloudflare and forwards to Caddy on 127.0.0.1:DASH_PORT.
+#
+# Setup (one-time):
+#   cloudflared tunnel login
+#   cloudflared tunnel create agentic-dashboard          # prints a <TUNNEL-ID> + creds json
+#   cloudflared tunnel route dns agentic-dashboard agentic.yourdomain.com
+#   cp this file to ~/.cloudflared/config.yml  (edit the values)
+#   sudo cloudflared service install                     # runs the tunnel on boot
+#
+# Auth is enforced by Caddy basic-auth (deploy/.env). For stronger control, also put a
+# Cloudflare Access policy in front of the hostname.
+
+tunnel: <TUNNEL-ID>
+credentials-file: /home/YOU/.cloudflared/<TUNNEL-ID>.json
+
+ingress:
+  - hostname: agentic.yourdomain.com
+    service: http://localhost:8088   # must match DASH_PORT in deploy/.env
+  - service: http_status:404
