@@ -65,6 +65,11 @@ log "pulling Agentic account via MCP (cwd=${MCP_CWD}, timeout=${TIMEOUT}s) → $
 
 after="$(snapshot_mtime)"
 if (( after > before )); then
+  # The snapshot is written by the MCP session's Write tool, which uses the ambient umask — that
+  # yields 0664 on this host. It holds cash, buying power, and every position with cost basis, so
+  # restrict it explicitly rather than relying on data/ being 0700 to hide it. Also applies to the
+  # run log, which echoes the same figures.
+  chmod 600 "${SNAPSHOT_FILE}" "${runlog}" 2>/dev/null || true
   log "✓ snapshot refreshed"
   exit 0
 fi
