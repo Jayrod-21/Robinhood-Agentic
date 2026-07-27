@@ -2,7 +2,18 @@
 
 Consumed by `/testcheck`. Each suite lists its command and pass criteria.
 
+**Setup:** run from the project root with the venv active (`python3 -m venv .venv && .venv/bin/pip
+install -r backend/requirements.txt ruff`, or `make venv`). Commands below say `python3`; use
+`.venv/bin/python` if the venv isn't activated — the backend suite needs `fastapi`/`pydantic`, which
+are not in the system interpreter.
+
 ## Suites
+
+### 0. Lint
+- **Command:** `ruff check backend/app src`
+- **Pass criteria:** `All checks passed!`. Rule selection and line length are pinned in
+  `pyproject.toml`, and CI pins the ruff version — so a lint failure means a real code change,
+  not a new ruff release.
 
 ### 1. Screen unit tests
 - **Command:** `python3 -m pytest tests/ -q`
@@ -26,9 +37,17 @@ Consumed by `/testcheck`. Each suite lists its command and pass criteria.
 - **Command:** `cd frontend && npm install --no-audit --no-fund && npm run build`
 - **Pass criteria:** `next build` compiles all routes with no type errors (/, /scan, /pipeline, /debate).
 
+Suites 1 and 2 can also be run together as a bare `python3 -m pytest` from the root (87 tests) —
+`pyproject.toml` sets importlib import mode so the two same-named `tests` packages don't collide.
+
 ## Smoke checks (manual, need network / Docker)
 - **Daily scan:** `python3 -m src.daily_scan AAPL NVDA OXY` → ranked survivors + annotated rejects (live yfinance).
-- **Full stack:** `bash bin/up.sh` (needs Docker Desktop running) → open `http://localhost:$FRONTEND_PORT`:
+- **Full stack:** `bash bin/up.sh` (needs a reachable Docker daemon) → open `http://localhost:$FRONTEND_PORT`:
   Portfolio shows the real account with live P&L; Refresh opens an MCP-bridge tab; Scan streams the
   screen; Pipeline/Debate run the live jury (needs `ANTHROPIC_API_KEY` in `backend/.env`).
+- **Preconditions for the live paths:** Portfolio/Refresh need the host `robinhood-trading` MCP added
+  and OAuth-authenticated (`claude mcp add --scope user --transport http robinhood-trading <URL>`);
+  without it `/api/account` returns 503 with a message saying so. Debate/Pipeline need
+  `ANTHROPIC_API_KEY`; without it they 503 and `/api/health` reports `debate_ready: false`.
+  Scan and both test suites need neither.
 - **Ports:** `bash bin/pick_ports.sh` twice → two distinct free ports each run, different across runs.

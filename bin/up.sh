@@ -15,20 +15,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${PROJECT_DIR}"
 
-# Resolve a working docker CLI (WSL symlink can be stale; fall back to docker.exe).
+# Resolve a working docker CLI (under WSL the symlink can be stale; fall back to docker.exe).
 DOCKER="docker"
 if ! ${DOCKER} info >/dev/null 2>&1; then
   if command -v docker.exe >/dev/null 2>&1 && docker.exe info >/dev/null 2>&1; then
     DOCKER="docker.exe"
   else
-    cat >&2 <<'MSG'
-✗ Docker daemon is not reachable.
-
+    echo "✗ Docker daemon is not reachable." >&2
+    echo >&2
+    # The fix differs by host, and printing the WSL instructions on a native Linux box sends you
+    # looking for a Docker Desktop that isn't there. Detect and say the right thing.
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+      cat >&2 <<'MSG'
 Start Docker Desktop on Windows, then enable WSL integration:
   Docker Desktop → Settings → Resources → WSL Integration → enable for this distro → Apply & Restart.
-
-Re-run bin/up.sh once `docker info` succeeds.
 MSG
+    else
+      cat >&2 <<'MSG'
+On Linux, start the engine and make sure your user can reach the socket:
+  sudo systemctl start docker
+  sudo usermod -aG docker "$USER"   # then log out and back in (or: newgrp docker)
+MSG
+    fi
+    echo >&2
+    echo "Re-run bin/up.sh once \`docker info\` succeeds." >&2
     exit 1
   fi
 fi

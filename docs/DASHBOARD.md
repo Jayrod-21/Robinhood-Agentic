@@ -6,8 +6,18 @@ live bull/bear + 10-agent jury debate, all on freshly-picked random ports.
 
 ## Run it
 
-Preconditions: **Docker Desktop running** with WSL integration enabled. For live debates only, put a
-key in `backend/.env` (copy `backend/.env.example`).
+Preconditions: **a reachable Docker daemon** — on Linux the `docker` service running with your user
+in the `docker` group; under WSL, Docker Desktop with WSL integration enabled. For live debates only,
+put a key in `backend/.env` (copy `backend/.env.example`).
+
+The Portfolio page needs an account snapshot, which comes from the host-side `robinhood-trading` MCP
+(see "The Refresh bridge" below). On a fresh machine that MCP has to be added and
+OAuth-authenticated once before `/api/account` returns anything but a 503:
+
+```bash
+claude mcp add --scope user --transport http robinhood-trading <your-MCP-URL>
+claude   # interactive session; complete the Robinhood OAuth when prompted
+```
 
 ```bash
 bash bin/up.sh

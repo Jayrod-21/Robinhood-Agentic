@@ -1,0 +1,41 @@
+# Tooling configuration for the agentic trader.
+#
+# There is no packaging metadata here on purpose — the project is run as scripts and containers,
+# not installed as a distribution. This file exists so lint results are reproducible: without an
+# explicit rule selection, `ruff check` follows whatever ruff's defaults happen to be for the
+# installed version, so a routine `pip install ruff` in CI can turn a green build red without a
+# single line of code changing.
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"  # matches the runtime in backend/Dockerfile (python:3.12-slim)
+
+[tool.ruff.lint]
+# E4/E7/E9 + F are ruff's defaults. The rest are selected deliberately:
+#   I    — import order, so diffs stay minimal
+#   B    — bugbear: mutable defaults, loop-variable capture, and similar real defects
+#   BLE  — blind `except Exception`. This codebase uses broad excepts on purpose in its
+#          soft-fail paths (pricing one symbol must never break a request), so the rule is
+#          selected to make every one of them a deliberate, annotated exception rather than
+#          an accident.
+#   ISC  — implicit string concatenation, which reads as a missing comma inside list literals
+#   RUF  — ruff's own checks, incl. RUF100 for noqa directives that no longer apply
+select = ["E4", "E7", "E9", "F", "I", "B", "BLE", "ISC", "RUF"]
+
+# The docs and code comments use typographic dashes (– —) as house style. RUF001/2/3 flag them as
+# ASCII-confusable, which would mean mangling prose to satisfy the linter.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately raise bare Exceptions from stubs and monkeypatched fakes.
+"**/tests/**" = ["BLE"]
+
+[tool.pytest.ini_options]
+# There are two test packages both literally named `tests` (`./tests` for the screen and
+# `./backend/tests` for the dashboard). Under pytest's default prepend import mode they collide on
+# the module name, so a bare `pytest` from the repo root dies during collection — the suites only
+# work because TESTS.md and CI happen to invoke them as two separate commands. importlib mode
+# imports each test module by path instead of by package name, so both collect together.
+addopts = "--import-mode=importlib"
+testpaths = ["tests", "backend/tests"]
+pythonpath = ["."]

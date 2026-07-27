@@ -123,7 +123,7 @@ async def run_debate(ticker: str, question: str | None = None):
     except ac.DebateUnavailable as exc:
         yield {"type": "error", "message": str(exc)}
         return
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("researcher stage failed")
         yield {"type": "error", "message": f"Researcher stage failed: {exc}"}
         return

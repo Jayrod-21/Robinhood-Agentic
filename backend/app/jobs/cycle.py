@@ -70,10 +70,14 @@ def _format_report(phase: str, now: datetime, account, survivors, scanned, debat
     if account is not None:
         lines += [
             "## Account",
-            f"- Total value: ${account.live_total_value:,.2f} "
-            f"(equity ${account.live_equity_value:,.2f}, cash ${account.cash:,.2f})",
-            f"- Unrealized P&L: ${account.total_unrealized_pl:,.2f} "
-            f"({account.total_unrealized_pl_pct if account.total_unrealized_pl_pct is not None else 0:+.2f}%)",
+            (
+                f"- Total value: ${account.live_total_value:,.2f} "
+                f"(equity ${account.live_equity_value:,.2f}, cash ${account.cash:,.2f})"
+            ),
+            (
+                f"- Unrealized P&L: ${account.total_unrealized_pl:,.2f} "
+                f"({account.total_unrealized_pl_pct if account.total_unrealized_pl_pct is not None else 0:+.2f}%)"
+            ),
             f"- Snapshot: {account.generated_at}" + ("  ⚠ some prices stale" if account.stale_prices else ""),
             "",
         ]

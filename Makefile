@@ -51,8 +51,8 @@ test-src: venv ## Sprinkle Sauce screen unit tests
 	cd "$(ROOT)" && $(PY) -m pytest tests -q
 
 .PHONY: lint
-lint: venv ## Ruff lint the backend
-	cd "$(ROOT)/backend" && "$(ROOT)/$(VENV)/bin/ruff" check app/
+lint: venv ## Ruff lint the backend + screen (same invocation as CI)
+	cd "$(ROOT)" && "$(ROOT)/$(VENV)/bin/ruff" check backend/app src
 
 .PHONY: build-fe
 build-fe: ## Production build the frontend (type-check + compile)
