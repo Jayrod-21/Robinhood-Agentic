@@ -97,6 +97,12 @@ dependency errors. Not a git hook, so `--no-verify` does not skip it.
 
 ---
 
+**Prior art:** `docs/PATTERNS_FROM_9B.md` surveys 9b Korean Master — which runs this same shape on M
+already — and records which of its deploy, database, test-gate, and security patterns to port, with
+the reasoning behind each. Phases 1, 2, and 6 below lean on it directly.
+
+---
+
 ## 3. Guiding constraints
 
 These are decisions already made. They bound every phase below.
