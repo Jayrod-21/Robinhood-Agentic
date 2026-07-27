@@ -26,6 +26,8 @@ Claude agent as the Wasden intelligence layer | Markdown-file journal as the sel
 Active — bootstrap phase (Jared confirms every order before it places).
 
 ## Key Docs
+- `PROJECT_PLAN.md` — **the living plan**: current problems (P1–P10), build phases, testing
+  strategy, and what's blocked on Jared. Start here to pick up work.
 - `docs/AGENTIC_ROBINHOOD_v1.md` — operating charter (mission, model, risk rules, autonomy).
 - `docs/agentic_journal.md` — live trading journal / self-learning substrate (running ledger).
 - `docs/THESIS_FRAMEWORK.md` + `docs/THESES.md` — the forward-thinking layer (top-down pass + per-name forward theses).
