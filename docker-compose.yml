@@ -8,7 +8,15 @@ services:
       context: .                      # project root: image bundles backend/ + src/
       dockerfile: backend/Dockerfile
     ports:
-      - "${BACKEND_PORT}:8000"
+      # Loopback ONLY. This service serves the live account snapshot and a side-effecting refresh
+      # endpoint, and the dev stack has no auth in front of it — a bare "PORT:8000" publishes both
+      # to every host on the LAN.
+      - "127.0.0.1:${BACKEND_PORT}:8000"
+    # Run as the host user so the bind-mounted data/ and logs/ can stay 0700 instead of being
+    # world-writable. The image's own user is uid 1001, which does not exist on the host; the old
+    # workaround was `chmod -R a+rwX` in bin/up.sh, which made the holdings snapshot readable — and
+    # the refresh trigger forgeable — by any local account.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - JURY_MODEL=${JURY_MODEL:-claude-haiku-4-5}
@@ -34,7 +42,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "${FRONTEND_PORT}:3000"
+      # Loopback only — same reasoning as the backend. Reach it over an SSH tunnel from another box.
+      - "127.0.0.1:${FRONTEND_PORT}:3000"
     environment:
       # Browser-facing: the frontend calls the backend on the host's published backend port.
       - NEXT_PUBLIC_API_URL=http://localhost:${BACKEND_PORT}

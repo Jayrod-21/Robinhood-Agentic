@@ -32,8 +32,14 @@ SNAPSHOT_FILE="${DATA_DIR}/account_snapshot.json"
 PROMPT_FILE="${SCRIPT_DIR}/refresh_prompt.md"
 LOG_DIR="${PROJECT_DIR}/logs/refresh"
 
-# The robinhood MCP is scoped to /root/Jared — run claude from there so it loads.
-MCP_CWD="/root/Jared"
+# Directory to run `claude` from so the robinhood MCP loads. With a USER-scoped MCP (the documented
+# setup — `claude mcp add --scope user …`) any directory works, so the project root is the safe
+# default. Override via AGENTIC_MCP_CWD only if the MCP is project-scoped somewhere else.
+#
+# This used to be hard-coded to /root/Jared, the projects root on the retired WSL box. On any other
+# host that path does not exist (or is not readable), so the `cd` below failed and every headless
+# refresh exited 1 — which looks identical to "the MCP isn't authenticated".
+MCP_CWD="${AGENTIC_MCP_CWD:-${PROJECT_DIR}}"
 
 POLL_INTERVAL=2          # seconds between trigger checks
 HEADLESS_TIMEOUT=100     # seconds for the silent attempt

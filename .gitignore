@@ -28,3 +28,8 @@ frontend/node_modules/
 # Data caches
 *.csv
 data/cache/
+
+# Local convenience symlink to the canonical quality bar at the projects root.
+# Symlinked (not copied) so it never drifts; excluded because it points outside the repo and
+# would dangle in a fresh clone or a CI checkout.
+SENIOR_ENGINEER_BAR.md

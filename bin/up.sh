@@ -56,10 +56,18 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo "⚠ ANTHROPIC_API_KEY not set — account & scan work, but live debates/pipeline will 503."
 fi
 
-# The backend runs non-root (uid 1001); make the bind-mounted dirs writable so it can persist the
-# refresh trigger, debate records, and the event store. a+rwX is robust to re-creation/ownership flips.
+# The backend writes the refresh trigger, debate records, and the event store into these bind
+# mounts. It runs as the HOST user (see docker-compose.yml `user:`) rather than the image's uid
+# 1001, so these directories can stay private.
+#
+# They must be private: data/account_snapshot.json is the account's full position list and cost
+# basis, and data/refresh.request is acted on by the host daemon purely because it EXISTS — a
+# world-writable data/ lets any local account both read the holdings and forge a refresh, bypassing
+# the API's cooldown entirely. The previous `chmod -R a+rwX` did exactly that.
+HOST_UID="$(id -u)"; HOST_GID="$(id -g)"
+export HOST_UID HOST_GID
 mkdir -p "${PROJECT_DIR}/data" "${PROJECT_DIR}/logs/debates" "${PROJECT_DIR}/logs/refresh"
-chmod -R a+rwX "${PROJECT_DIR}/data" "${PROJECT_DIR}/logs" 2>/dev/null || true
+chmod 700 "${PROJECT_DIR}/data" "${PROJECT_DIR}/logs" "${PROJECT_DIR}/logs/debates" "${PROJECT_DIR}/logs/refresh"
 
 echo "Building + starting containers (backend :${BACKEND_PORT}, frontend :${FRONTEND_PORT})…"
 ${DOCKER} compose up --build -d

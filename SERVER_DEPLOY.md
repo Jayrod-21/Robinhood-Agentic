@@ -52,7 +52,7 @@ chmod 600 deploy/.env
 The scheduled refresh runs `claude --print` headlessly, but the MCP's OAuth must be set up once with a
 browser. Add it at **user scope** so it's reachable from any directory:
 ```bash
-claude mcp add --scope user --transport http robinhood-trading https://agent.robinhood.com/...   # use your MCP URL
+claude mcp add --scope user --transport http robinhood-trading https://agent.robinhood.com/mcp/trading
 claude   # open an interactive session; complete the Robinhood OAuth when prompted
 ```
 Then prove the headless refresh works:

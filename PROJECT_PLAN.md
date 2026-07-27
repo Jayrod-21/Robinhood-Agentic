@@ -29,15 +29,21 @@ What that verification did **not** cover, because it can't yet: anything touchin
 Ordered by what blocks the most downstream work. IDs are stable — reference them in commits and
 issues.
 
-### P1 — The `robinhood-trading` MCP is not configured on M  🔴 blocking
+### P1 — The `robinhood-trading` MCP needs its OAuth completed  🔴 blocking
 
 Every live-account path depends on it: the Portfolio page, the Refresh button, `bin/refresh_once.sh`,
 and the twice-daily cycle job. Without it `/api/account` returns 503 and `/api/health` reports
 `snapshot_present: false`.
 
-The MCP URL was never written down — `SERVER_DEPLOY.md` and every log carry the placeholder
-`https://agent.robinhood.com/...`, and there is no MCP entry in `~/.claude.json`. It has to be
-re-added and OAuth-authenticated interactively. **Needs Jared** (§6).
+**Registered 2026-07-27** at user scope — `https://agent.robinhood.com/mcp/trading`. `claude mcp list`
+now reports it as `! Needs authentication`. The remaining step is interactive and cannot be scripted:
+run `claude` on M and complete the Robinhood OAuth when prompted.
+
+Two related bugs found while wiring this up, both now fixed: `bin/refresh_daemon.sh` hard-coded
+`MCP_CWD="/root/Jared"` — the projects root on the retired WSL box — so every headless refresh `cd`'d
+into a nonexistent path and exited 1, which is indistinguishable from "the MCP isn't authenticated".
+It now defaults to the project root. And `SERVER_DEPLOY.md` recorded only a `...` placeholder for the
+URL, which is why it was unrecoverable; the real URL is now in the docs.
 
 ### P2 — The live slate has run unmonitored for ~7 weeks  🔴 real money
 
@@ -90,6 +96,36 @@ while containers are 3.12, so "passes locally" and "passes in CI" are not the sa
 solved this by running every suite in a pinned container. No `ANTHROPIC_API_KEY` in `backend/.env`,
 so debates and pipeline 503.
 
+### P11 — Fourteen concrete security findings from the 2026-07-27 review  🔴 partly fixed
+
+An adversarial review against 9b's threat models turned up 14 verified findings, recorded in
+`docs/SECURITY_FINDINGS_2026-07-27.md` and each confirmed against the source. **Three were live
+exposures and are fixed** in the same commit that recorded them:
+
+- **F2 (fixed)** — `bin/up.sh` ran `chmod -R a+rwX` on `data/` and `logs/`, leaving them `0777` and
+  `logs/events.jsonl` `0666`. That made the holdings snapshot world-readable *and* let any local
+  account forge `data/refresh.request`, which the daemon acts on purely because it exists — bypassing
+  the API cooldown entirely. Root cause was a uid mismatch (container 1001 vs host 1000); fixed by
+  running the container as the host user and setting the directories `0700`.
+- **F3 (fixed)** — `docker-compose.yml` published both services on `0.0.0.0`. The dev stack has no
+  auth in front of it, so anything on the LAN could read `/api/account` and POST `/api/refresh`. Now
+  bound to `127.0.0.1`.
+- **F14 (fixed)** — the stale `MCP_CWD` described under P1.
+
+**Still open**, tracked as issues: F1 CSRF on `POST /api/refresh` (no `Origin`/`Sec-Fetch-Site` check
+anywhere, and HTTP Basic has no `SameSite` equivalent — this becomes forced order placement the day
+the Commit button ships); F4 no rate limit on `/api/scan/run-stream` while the adjacent paid
+endpoints share a limiter; F5 upstream exception text streamed verbatim to clients; F6 held tickers
+logged at INFO; F7 no log redaction filter; F8 fully unpinned dependencies with no vulnerability
+scanning; F9 no container hardening in either compose; F10 no security response headers; F11 Caddy
+basic-auth with no lockout and a default `admin` username; F12 `TICKER_RE` accepts `A..`; F13 the
+snapshot schema permits negative quantities and never checks `schema_version`.
+
+The recommendation on auth is to replace basic-auth-only with the same shape 9b runs — Argon2id, an
+opaque `SameSite=Strict` session cookie, and mandatory TOTP — keeping Caddy basic-auth as an outer
+gate. The asset being protected is not the ~$200 balance; it is order-placement authority against a
+real brokerage account, plus a host-side Claude session already OAuth'd to that broker.
+
 ### P10 — The global pre-push hook false-fails on M  🟡
 
 It runs pytest in the system interpreter without the project venv, so it blocks `git push` with
@@ -114,8 +150,12 @@ These are decisions already made. They bound every phase below.
 | **FMP free tier for now** | **250 API calls per day.** Cache aggressively, fixture-back every test, never loop the universe against live FMP. Paid license (~300 calls/min) comes once the build is ready to use it. |
 | **Guardrails must not block valid trades** | Jared lost ~$4k to mis-set guardrails. Every risk rule must be tunable, observable, and overridable — never a silent block. A guardrail that fires must say which rule, on what input, and how to override. |
 | **Hosting = M + Cloudflare Tunnel + `jaredstudio.com`** | Same shape as 9b. Named tunnel, not a Quick Tunnel. Subdomain TBD. |
+| **Zero-downtime deploys — "purple/yellow"** | 3b runs a live UI that Jared interacts with, so redeploys must not drop it. Port 9b's two-color machinery under **purple/yellow** naming (distinct from 9b's blue/green): deploy-inactive → validate → switch, with a split-brain gate and auto-rollback on failed post-switch health. |
+| **UI correctness comes before the debate engine** | The 10-agent jury is deprioritized — it spends Anthropic tokens and is not what's blocking. Get the dashboard and the non-debate paths right first. |
+| **Verify a host port is free before creating a container** | M hosts several live stacks at once (9b holds 1840–1843 plus its DB). On a collision, pick a **new** port — never take over the one in use. `bin/pick_ports.sh` already does this correctly and is the reference: socket bind + `ss` + `docker ps`. |
+| **`SENIOR_ENGINEER_BAR.md`** | The canonical quality contract at the projects root, symlinked into this repo. **§7.2 covers live-money algorithmic trading** and is binding here: `Decimal` never float for money, kill switch, unique client order id, reconcile with the broker before any resubmit, no-lookahead backtests. |
 | **Robinhood's API keeps growing** | Re-check what the MCP exposes before designing around a limitation. A capability that was missing in June may exist now. |
-| **/fixpass before finalizing** | Every feature: build → tests → `/fixpass` (independent review → fix → re-review) → then merge. Per feature group, not batched at the end. |
+| **/fixpass on everything created** | Every feature: build → tests → `/fixpass` (independent reviewers → aggregate → independent fix-pass agent → independent re-review agent) → then merge. All four stages, every time, per feature group — never batched at the end, never shortcut. |
 
 ---
 
