@@ -52,7 +52,7 @@ test-src: venv ## Sprinkle Sauce screen unit tests
 
 .PHONY: lint
 lint: venv ## Ruff lint the backend + screen (same invocation as CI)
-	cd "$(ROOT)" && "$(ROOT)/$(VENV)/bin/ruff" check backend/app src
+	cd "$(ROOT)" && "$(ROOT)/$(VENV)/bin/ruff" check backend/app src db
 
 .PHONY: build-fe
 build-fe: ## Production build the frontend (type-check + compile)
@@ -60,6 +60,34 @@ build-fe: ## Production build the frontend (type-check + compile)
 
 .PHONY: check
 check: test lint build-fe ## Full local gate: tests + lint + frontend build
+
+# ── database ────────────────────────────────────────────────────────────────────
+# The DB is a separate compose project so it outlives a dashboard redeploy, and it has no host port
+# (ADR-001) — every target below goes through a container on rh-internal.
+.PHONY: db-up
+db-up: ## Start Postgres (generates db/.env with a fresh password on first run)
+	bash "$(ROOT)/bin/db_up.sh"
+
+.PHONY: db-down
+db-down: ## Stop Postgres. Volume PRESERVED — data survives.
+	docker compose -p rh-db -f "$(ROOT)/docker-compose.db.yml" down
+	@echo "✓ Postgres stopped (volume rh_db_data preserved)"
+
+.PHONY: db-status
+db-status: ## Show applied vs pending migrations
+	bash "$(ROOT)/bin/db_migrate.sh" status
+
+.PHONY: db-migrate
+db-migrate: ## Apply pending migrations
+	bash "$(ROOT)/bin/db_migrate.sh" up
+
+.PHONY: db-migrate-dry
+db-migrate-dry: ## Print the migration plan without applying (also evaluates the destructive gate)
+	bash "$(ROOT)/bin/db_migrate.sh" up --dry-run
+
+.PHONY: db-psql
+db-psql: ## Open psql against the database
+	bash "$(ROOT)/bin/db_psql.sh"
 
 # ── docker stack ────────────────────────────────────────────────────────────────
 .PHONY: up

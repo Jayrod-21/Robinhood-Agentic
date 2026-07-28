@@ -10,7 +10,7 @@ are not in the system interpreter.
 ## Suites
 
 ### 0. Lint
-- **Command:** `ruff check backend/app src`
+- **Command:** `ruff check backend/app src db`
 - **Pass criteria:** `All checks passed!`. Rule selection and line length are pinned in
   `pyproject.toml`, and CI pins the ruff version — so a lint failure means a real code change,
   not a new ruff release.
@@ -39,6 +39,17 @@ are not in the system interpreter.
 
 Suites 1 and 2 can also be run together as a bare `python3 -m pytest` from the root (87 tests) —
 `pyproject.toml` sets importlib import mode so the two same-named `tests` packages don't collide.
+
+### 4. Database migrations (needs Docker)
+- **Command:** `bash bin/db_up.sh && bash bin/db_migrate.sh up`
+- **Pass criteria:** all migrations apply; `bash bin/db_migrate.sh status` shows every version
+  `applied` with checksum `ok`.
+- **Round trip:** `bash bin/db_migrate.sh down --allow-destructive --target 000` then `up` again —
+  proves each `.down.sql` truly reverses its `.up.sql` and leaves no residue.
+- **Guard checks** (each must fail loudly): `down` without `--allow-destructive` → exit 1; editing an
+  applied migration → `ChecksumMismatch`, exit 1; a migration containing a top-level `BEGIN`/`COMMIT`
+  → rejected at discovery, exit 1; bad credentials → exit 3.
+- **Network:** none beyond Docker. The database is on an internal-only network with no egress.
 
 ## Smoke checks (manual, need network / Docker)
 - **Daily scan:** `python3 -m src.daily_scan AAPL NVDA OXY` → ranked survivors + annotated rejects (live yfinance).

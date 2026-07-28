@@ -32,7 +32,7 @@ jobs:
 
       # Rule selection lives in pyproject.toml so this matches `make lint` exactly.
       - name: Lint (ruff)
-        run: ruff check backend/app src
+        run: ruff check backend/app src db
 
       - name: Backend unit tests
         run: PYTHONPATH="$GITHUB_WORKSPACE" python -m pytest backend/tests -q
