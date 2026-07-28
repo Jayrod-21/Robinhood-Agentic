@@ -37,5 +37,5 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 # work because TESTS.md and CI happen to invoke them as two separate commands. importlib mode
 # imports each test module by path instead of by package name, so both collect together.
 addopts = "--import-mode=importlib"
-testpaths = ["tests", "backend/tests"]
+testpaths = ["tests", "backend/tests", "db/tests"]
 pythonpath = ["."]

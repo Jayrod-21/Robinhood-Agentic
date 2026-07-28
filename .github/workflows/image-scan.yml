@@ -1,0 +1,84 @@
+# Container image scanning + SBOM (SENIOR_ENGINEER_BAR §6.2 / §3.11).
+#
+# Scans the two images this repo ships or depends on:
+#   * rh-migrate — built here from db/Dockerfile (hash-pinned deps; the build itself would fail on
+#     a tampered wheel, this catches vulnerable-but-authentic ones);
+#   * the pinned postgres:16-alpine digest from docker-compose.db.yml — new CVEs land after the
+#     digest was chosen, which is what the weekly schedule exists to catch.
+#
+# Fails on HIGH/CRITICAL with an available fix. Actions are pinned to commit SHAs, not tags
+# (Bar §5.9 — the tj-actions compromise was a moved tag).
+
+name: Image scan
+
+on:
+  push:
+    paths:
+      - "db/Dockerfile"
+      - "db/requirements.txt"
+      - "docker-compose.db.yml"
+      - ".github/workflows/image-scan.yml"
+  schedule:
+    # Weekly rescan: images that scanned clean at build time do not stay clean.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Trivy — migrate runner + postgres base
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+
+      - name: Build rh-migrate image
+        run: docker build -f db/Dockerfile -t rh-migrate:ci db/
+
+      - name: Scan rh-migrate image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: rh-migrate:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Resolve pinned postgres digest from compose
+        id: pg
+        run: |
+          ref="$(grep -oE 'postgres:16-alpine@sha256:[0-9a-f]{64}' docker-compose.db.yml | head -1)"
+          [ -n "$ref" ] || { echo "no pinned postgres digest found in docker-compose.db.yml" >&2; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Scan postgres base image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.pg.outputs.ref }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          # gosu is excluded DELIBERATELY, not to make the gate green by fiat: the current upstream
+          # postgres:16-alpine (verified identical to our pin, 2026-07-28) ships a gosu built on a
+          # stale Go stdlib, flagging 15 HIGH/CRITICAL TLS/net-parsing CVEs. gosu's only job in
+          # this image is the entrypoint's one-shot root→postgres privilege drop — it never touches
+          # a socket, so those code paths are unreachable. Without this scope the job is
+          # permanently red on findings we cannot act on, which trains people to ignore it. Re-test
+          # without the skip whenever the digest is bumped.
+          skip-files: usr/local/bin/gosu
+
+      - name: Generate SBOM (CycloneDX) for rh-migrate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: rh-migrate:ci
+          format: cyclonedx
+          output: sbom-rh-migrate.cdx.json
+          # SBOM generation must not re-evaluate severities; the gate above already did.
+          exit-code: "0"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sbom-rh-migrate
+          path: sbom-rh-migrate.cdx.json
+          retention-days: 90

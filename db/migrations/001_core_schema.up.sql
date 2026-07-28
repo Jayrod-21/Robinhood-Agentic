@@ -1,4 +1,5 @@
--- 001_core_schema — securities, data-source provenance, and the shared updated_at trigger.
+-- 001_core_schema — securities, data-source provenance, the shared updated_at trigger, and the
+-- least-privilege runtime role.
 --
 -- migrate: non-destructive
 --
@@ -12,7 +13,8 @@
 --   * TIMESTAMPTZ always, never naive timestamp
 --   * TEXT with a CHECK, never VARCHAR(n)
 --   * NUMERIC for money and ratios, never float — a float price silently corrupts P&L
---   * FK ON DELETE always explicit; RESTRICT unless the child is meaningless without its parent
+--   * FK ON DELETE always explicit, and every FK constraint is NAMED (fk_…) — auto-generated
+--     names diverge across environments and break migration diffs
 --   * ix_ / uq_ / fk_ / ck_ naming
 --
 -- The runner owns the transaction: no BEGIN/COMMIT here (see db/migrate.py).
@@ -27,12 +29,42 @@ END;
 $$;
 
 COMMENT ON FUNCTION set_updated_at() IS
-    'Shared BEFORE UPDATE trigger: maintains updated_at. Attach to every entity table.';
+    'Shared BEFORE UPDATE trigger: maintains updated_at. Attach to every mutable entity table.';
+
+-- ── runtime role (least privilege, SENIOR_ENGINEER_BAR §4.9) ─────────────────────────────────
+-- The migration/DDL role is the container superuser (`rh`); the future app connects as `rh_app`,
+-- which gets DML only — no DDL, no superuser, and therefore no `COPY … FROM PROGRAM`. Created
+-- with NO password: it cannot authenticate until an operator sets one
+-- (bin/db_psql.sh -c "ALTER ROLE rh_app WITH PASSWORD '…'"), so shipping the role early adds no
+-- attack surface. CREATE ROLE has no IF NOT EXISTS in PG16, hence the catalog check.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rh_app') THEN
+        CREATE ROLE rh_app LOGIN;
+    END IF;
+END
+$$;
+
+GRANT USAGE ON SCHEMA public TO rh_app;
+-- Future tables/sequences created by the migration role inherit these automatically, so 002+ (and
+-- the evaluation tables to come) need no per-migration grant boilerplate. schema_migrations
+-- predates this statement and is deliberately NOT granted — the app has no business writing
+-- migration bookkeeping.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO rh_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT USAGE, SELECT ON SEQUENCES TO rh_app;
 
 -- ── data sources / provenance ────────────────────────────────────────────────────────────────
 -- One row per distinct ingest. Every fact loaded from outside records which pull produced it, so a
 -- disagreement between a backtest and a live scan can be traced to a source rather than argued
 -- about. Modelled on 9b's corpus_sources.
+--
+-- APPEND-ONLY BY POLICY: rows here are the provenance record and are never deleted — every
+-- source_id FK in this schema is ON DELETE RESTRICT, so a DELETE against a referenced row is
+-- refused. (Deliberate deviation from Bar §4.1 "index every FK": source_id is deliberately
+-- unindexed on the two bar tables — see 002 — because with an append-only parent the only query
+-- an index would serve is the refused DELETE, and the index would cost tens of GB at 1.6B rows.)
 CREATE TABLE IF NOT EXISTS data_sources (
     id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     provider     TEXT        NOT NULL,
@@ -50,6 +82,9 @@ CREATE TABLE IF NOT EXISTS data_sources (
     row_count    BIGINT,
     notes        TEXT,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- row_count and notes are legitimately corrected after a load completes; updated_at shows it
+    -- happened (Bar §4.3).
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT ck_data_sources_provider   CHECK (provider  ~ '^[a-z0-9_]{2,32}$'),
     CONSTRAINT ck_data_sources_dataset    CHECK (dataset   ~ '^[a-z0-9_]{2,64}$'),
@@ -66,14 +101,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_data_sources_artifact
 
 CREATE INDEX IF NOT EXISTS ix_data_sources_fetched_at ON data_sources (fetched_at DESC);
 
+DROP TRIGGER IF EXISTS trg_data_sources_updated_at ON data_sources;
+CREATE TRIGGER trg_data_sources_updated_at
+    BEFORE UPDATE ON data_sources
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 COMMENT ON TABLE data_sources IS
-    'One row per ingest. fetched_at is the point-in-time anchor — the moment the data was pulled, '
-    'not the period it describes.';
+    'One row per ingest, append-only (all source_id FKs are RESTRICT). fetched_at is the '
+    'point-in-time anchor — the moment the data was pulled, not the period it describes.';
 
 -- ── securities ───────────────────────────────────────────────────────────────────────────────
 -- The reference table. Deliberately includes delisted names: dropping them is exactly how a
 -- backtest acquires survivorship bias (SENIOR_ENGINEER_BAR §7.2), so `delisted_at` marks them
--- rather than a DELETE removing them.
+-- rather than a DELETE removing them. "Active" is DEFINED as delisted_at IS NULL — there is no
+-- separate is_active flag, because two columns encoding one truth is how reference data rots.
 CREATE TABLE IF NOT EXISTS securities (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     symbol      TEXT        NOT NULL,
@@ -85,23 +126,39 @@ CREATE TABLE IF NOT EXISTS securities (
     -- grows with whatever the provider returns, and an enum would need a migration per new value.
     security_type TEXT,
     currency    TEXT        NOT NULL DEFAULT 'USD',
-    is_active   BOOLEAN     NOT NULL DEFAULT TRUE,
+    -- Earliest date this row's identity is known to have been listed. NULL means "listed before
+    -- our data begins / not yet populated" — the loader sets it from the earliest observation and
+    -- point-in-time universe queries must treat NULL as unknown-start, not as never-listed.
     first_seen  DATE,
     delisted_at DATE,
-    source_id   BIGINT      REFERENCES data_sources (id) ON DELETE SET NULL,
+    source_id   BIGINT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    -- Ticker grammar: 1-5 uppercase letters with an optional single dotted or hyphenated class
-    -- suffix (BRK.B, BRK-B). Deliberately tighter than "letters and dots" so consecutive or
-    -- trailing dots cannot enter the reference table.
-    CONSTRAINT ck_securities_symbol   CHECK (symbol ~ '^[A-Z]{1,5}([.-][A-Z]{1,2})?$'),
+    CONSTRAINT fk_securities_source FOREIGN KEY (source_id)
+        REFERENCES data_sources (id) ON DELETE RESTRICT,
+
+    -- Symbol grammar: the canonical form is the Polygon flat-file ticker, stored VERBATIM —
+    -- uppercase root, optional lowercase class markers (p = preferred, r = rights, w = warrant,
+    -- e.g. BACpA, AANw), optional dotted suffixes (BRK.B, TDW.WS.A). Loaders from other providers
+    -- NORMALIZE to this form (BRK-B → BRK.B; Bloomberg 'NVDA US Equity' → NVDA); a symbol a loader
+    -- chooses to skip instead must be a logged decision, not a swallowed exception.
+    -- Validated empirically against real day files (2020-11-30, 2021-06-30, 2023-06-30 —
+    -- 12,928 distinct tickers, 0 rejected; the previous 1-5-uppercase grammar rejected 482 real
+    -- symbols in the 2020-11-30 file alone).
+    CONSTRAINT ck_securities_symbol   CHECK (symbol ~ '^[A-Za-z][A-Za-z0-9]{0,9}(\.[A-Za-z0-9]{1,4}){0,2}$'),
     CONSTRAINT ck_securities_currency CHECK (currency ~ '^[A-Z]{3}$'),
     CONSTRAINT ck_securities_delisted CHECK (delisted_at IS NULL OR first_seen IS NULL OR delisted_at >= first_seen)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_securities_symbol ON securities (symbol);
-CREATE INDEX IF NOT EXISTS ix_securities_active ON securities (symbol) WHERE is_active;
+-- One LIVE holder per symbol, not one holder ever: tickers get recycled across a 5-year universe,
+-- and a global unique would force a re-listed symbol to overwrite the delisted company's identity
+-- (survivorship bias's uglier sibling). Loader rule: a symbol re-appearing after its previous
+-- holder was delisted is a NEW row; historical symbol→id resolution goes through
+-- (symbol, as-of-date) against first_seen/delisted_at.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_securities_symbol_live
+    ON securities (symbol) WHERE delisted_at IS NULL;
+CREATE INDEX IF NOT EXISTS ix_securities_symbol ON securities (symbol);
 CREATE INDEX IF NOT EXISTS ix_securities_sector ON securities (sector) WHERE sector IS NOT NULL;
 
 DROP TRIGGER IF EXISTS trg_securities_updated_at ON securities;
@@ -111,6 +168,7 @@ CREATE TRIGGER trg_securities_updated_at
 
 COMMENT ON TABLE securities IS
     'Security reference. Delisted names are RETAINED with delisted_at set — removing them is how a '
-    'backtest acquires survivorship bias.';
-COMMENT ON COLUMN securities.is_active IS
-    'Currently tradeable. Never a reason to delete the row; history still references it.';
+    'backtest acquires survivorship bias. Active = delisted_at IS NULL; a recycled ticker is a new row.';
+COMMENT ON COLUMN securities.first_seen IS
+    'Earliest known listing date. NULL = listed before our data begins / not yet populated — treat '
+    'as unknown-start in point-in-time universe queries, never as never-listed.';

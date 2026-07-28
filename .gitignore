@@ -41,3 +41,7 @@ data/market/
 
 # Postgres credentials (bin/db_up.sh generates this on first run).
 db/.env
+
+# Database dumps (bin/db_backup.sh). Local safety copies only — they contain the full DB and
+# would bloat git; DR-grade off-host copies are a separate concern (see the script header).
+data/backups/

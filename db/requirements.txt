@@ -1,0 +1,16 @@
+# Migration-runner image dependencies — exact-pinned AND hash-pinned (Bar §3.11: a matching
+# version string from a compromised index is not the artifact you reviewed; a matching sha256 is).
+# Installed with `pip install --require-hashes`, so every transitive dependency must be listed.
+#
+# To bump: update the versions, then regenerate hashes from freshly downloaded wheels for
+# cp312/manylinux (the container platform):
+#   pip download --only-binary :all: --python-version 312 --implementation cp \
+#     --platform manylinux_2_17_x86_64 -d /tmp/wheels 'psycopg[binary]==<ver>' 'typing-extensions>=4.6'
+#   sha256sum /tmp/wheels/*.whl
+psycopg[binary]==3.3.4 \
+    --hash=sha256:b6bbc25ccf05c8fad3b061d9db2ef0909a555171b84b07f29458a447253d679a
+psycopg-binary==3.3.4 \
+    --hash=sha256:e7510c37550f91a187e3660a8cc50d4b760f8c3b8b2f89ebc5698cd2c7f2c85d
+# psycopg dependency for python < 3.13 (the image is 3.12).
+typing-extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8

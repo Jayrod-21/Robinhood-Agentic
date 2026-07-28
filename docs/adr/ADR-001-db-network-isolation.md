@@ -1,6 +1,8 @@
 # ADR-001 — The database is network-isolated and has no host port
 
-**Status:** accepted · **Date:** 2026-07-28
+**Status:** accepted · **Date:** 2026-07-28 · **Amended:** 2026-07-28 (fixpass — the original
+overstated on-box isolation; the Consequences section below now states what was actually verified.
+The decision itself is unchanged.)
 
 ## Context
 
@@ -39,20 +41,37 @@ Access paths:
 
 **Good**
 
-- The egress block is real and verified: `wget http://1.1.1.1` from inside the container returns
-  `Network unreachable`.
-- Nothing off-box can reach the database, and neither can anything on the box that is not on
-  `rh-internal` — a stronger posture than loopback binding, which is reachable by every local user.
+- The egress block is real and verified, including the DNS channel: TCP out returns
+  `Network unreachable`, and external DNS through Docker's embedded resolver SERVFAILs rather than
+  forwarding.
+- Nothing off-box can reach the database, and neither can containers on other Docker bridges
+  (inter-bridge isolation, verified both directions against the 3b dashboard bridge and `km-db`).
 - Containerizing the migration runner and the loader also **pins their Python to 3.12**, matching the
   deploy target. M's host Python is 3.14, so this closes part of P9 (the "passes locally ≠ passes in
   CI" gap) as a side effect rather than as separate work.
+
+**What this does NOT provide** *(correction, 2026-07-28 — the original claimed on-box isolation
+stronger than a loopback bind; that claim was false and is withdrawn)*
+
+- **On-box processes CAN reach the database.** `internal: true` removes the network's default route
+  and NAT; it does not remove the host's own interface on the bridge. Verified: an ordinary host
+  process opened a TCP connection to the container's bridge IP (`172.x.x.x:5432`) and completed a
+  Postgres startup exchange. Those connections face `scram-sha-256` (verified: empty and wrong
+  passwords refused), so **the password in `db/.env` (mode 0600) is the on-box access control**.
+  The net posture equals a `127.0.0.1` bind guarded by a 0600 credential file — not stronger. If
+  genuine on-box isolation is ever wanted, that is a host firewall rule on the bridge subnet — a
+  separate, deliberate decision.
+- Consequently, host tools *can technically* connect via the bridge IP. Don't: the IP is unstable
+  across container recreation. The supported paths remain the wrapper and `rh-internal` containers.
 
 **Bad**
 
 - Every host tool must go through a wrapper or a container. That is real friction, and friction
   invites shortcuts — hence `bin/db_psql.sh` existing up front rather than being left as an exercise.
-- A Python process in the project venv cannot open a socket to the database. Anything needing direct
-  access has to run containerized.
+- A Python process in the project venv has no *stable* address for the database — only the
+  per-recreation bridge IP, which nothing should hard-code. Anything needing direct access has to
+  run containerized. *(Original wording claimed the venv "cannot open a socket" at all; wrong, per
+  the correction above — the point that survives is instability, not impossibility.)*
 
 **Revisit if** the friction starts producing workarounds, or if a tool genuinely cannot be
 containerized. The escape hatch is to move the DB to a non-internal bridge with loopback-only

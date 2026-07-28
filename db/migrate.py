@@ -6,27 +6,73 @@ lives in this repo, auditable in one sitting, and usable directly from the test 
 subprocess. `main(argv)` is importable, so tests call it as a function.
 
 DISCOVERY
-    Applies ``NNN_<name>.up.sql`` / ``.down.sql`` pairs from ``db/migrations`` in numeric order.
-    Both directions are required; a missing partner is a hard error rather than a silent skip.
+    Applies ``NNN_<name>.up.sql`` / ``NNN_<name>.down.sql`` pairs from ``db/migrations`` in numeric
+    order. Both directions are required; a missing partner is a hard error rather than a silent
+    skip. A migration that destroys data is marked IN ITS FILENAME:
+    ``NNN_<name>.destructive.up.sql`` / ``NNN_<name>.destructive.down.sql`` — each direction is
+    marked independently. Every file's text is read ONCE at discovery and carried on the Migration
+    object — the SQL that is validated and checksummed is the SQL that executes.
+
+DESTRUCTIVE CLASSIFICATION — the filename is the single source of truth
+    Three independent verification rounds (docs/fixpass/REVIEW_migrate_runner.md, REVIEW_FIXES.md,
+    REVIEW_FIXES_b1_residual.md) forged the predecessor design, which read a ``-- migrate:``
+    directive out of the SQL text and therefore had to reimplement PostgreSQL's lexer in Python to
+    tell comments from literals from code. Thirteen distinct end-to-end forgeries later, the parser
+    is GONE (ADR-002). A filename cannot be influenced by anything inside the file, so the entire
+    forgery class is structurally impossible: no text a migration body contains can change its
+    classification. ``-- migrate:`` comments are inert; the ones still present in the applied
+    001-003 up bodies stay only because editing an applied migration would break its checksum.
+
+    A keyword sniff backs the filename as a BEST-EFFORT secondary net: a file whose RAW TEXT
+    contains DROP TABLE / DROP SCHEMA / DROP DATABASE / DROP OWNED / DROP MATERIALIZED / TRUNCATE
+    — keywords separated by whitespace or by SQL comments, which PostgreSQL's lexer treats as
+    token separators — but whose filename is not marked destructive is REFUSED at discovery. The
+    sniff deliberately does NOT strip comments or literals first ('DROP TABLE' in a comment
+    refuses too; the fix is a one-line rename or rewording), and it is deliberately INCOMPLETE:
+    it has never covered mass DELETE FROM or DROP COLUMN, it does not see nested block-comment
+    separators, and NO text rule can decide dynamically built SQL — EXECUTE 'DR'||'OP TABLE ...'
+    destroys data without containing any keyword (round 4, REVIEW_redesign_verification.md
+    R4-B1). The author marking the filename correctly is the real control; the sniff only
+    reduces the cost of forgetting it, for the common literal shapes.
 
 GUARANTEES
     * Each migration runs inside ONE transaction, and the ``schema_migrations`` bookkeeping row is
-      written in that SAME transaction — so a partially-applied migration is impossible.
-    * The runner OWNS the transaction. Migration files must not contain top-level BEGIN / COMMIT /
-      ROLLBACK / START TRANSACTION / SAVEPOINT; discovery REJECTS any file that does, so a stray
-      COMMIT can never truncate the runner's transaction and decouple the schema change from its
-      bookkeeping row. (This is not hypothetical — it is the exact bug 9b Korean Master hit and
-      recorded in its ADR-013.)
+      written in that SAME transaction — so a partially-applied-but-recorded migration is
+      impossible.
+    * The runner OWNS the transaction. This is enforced by the SERVER, not by parsing SQL: after
+      the body executes and before the bookkeeping row is written, the runner asserts that
+      libpq still reports an open transaction (``conn.info.transaction_status`` == INTRANS) AND
+      that ``pg_catalog.pg_current_xact_id()`` still returns the xid captured when the runner's
+      transaction started. A stray COMMIT or ROLLBACK leaves the connection idle (status check); a
+      ``COMMIT; BEGIN;`` pair forges INTRANS but cannot forge the xid. All four shapes verified
+      against a live PG16. On detection the runner aborts WITHOUT recording the migration — but
+      statements the hijacking COMMIT already committed cannot be un-committed; the error says so
+      and names the file. A bare ``BEGIN`` or ``SAVEPOINT`` inside a body is tolerated: verified
+      live, both leave the runner's transaction and xid intact (BEGIN inside a transaction is a
+      server-side no-op warning), so atomicity is unharmed.
+    * Files are read as BYTES and rejected at discovery if they contain a NUL byte (libpq
+      transports the query as a C string, so everything after a NUL would silently not execute
+      while the checksum covers the whole file — verified in round 3), start with a UTF-8 BOM
+      (PostgreSQL rejects it as an identifier, but with a confusing server-side error), or are not
+      valid UTF-8.
     * Re-running a migration whose file changed since it was applied raises ChecksumMismatch rather
       than silently diverging from what is actually in the database.
-    * ``--allow-destructive`` is required for any migration classified destructive, and ``--dry-run``
-      evaluates that gate too — so a deploy's plan step aborts on a pending destructive migration
-      instead of discovering it halfway through applying.
+    * ``--allow-destructive`` is required for any migration whose filename is marked destructive,
+      and ``--dry-run`` evaluates that gate too — so a deploy's plan step aborts on a pending
+      destructive migration instead of discovering it halfway through applying.
+    * Concurrent runners serialize on a Postgres advisory lock (session-scoped, released on
+      disconnect) instead of racing to confusing mid-deploy SQL errors.
     * Migration sessions run with statement_timeout = 0. Large indexes and backfills take as long as
       they take; atomicity, not a timeout, is what protects us.
 
+LIMITATION
+    Because each migration runs inside a transaction, statements that refuse to run in one —
+    ``CREATE INDEX CONCURRENTLY``, ``VACUUM`` — cannot appear in a migration. At this database's
+    size that is fine; if CIC is ever needed, it needs a separate out-of-band path, not a migration.
+
 EXIT CODES
-    0 success or no-op · 1 validation failure · 2 SQL execution failure · 3 connection failure
+    0 success or no-op · 1 validation failure (including CLI usage errors and a detected
+    transaction hijack) · 2 SQL execution failure · 3 connection failure
 """
 
 from __future__ import annotations
@@ -42,6 +88,7 @@ from pathlib import Path
 
 try:
     import psycopg
+    from psycopg.pq import TransactionStatus
 except ModuleNotFoundError:  # pragma: no cover - surfaced as a clear message, not a traceback
     print("migrate: psycopg (v3) is required. pip install 'psycopg[binary]'", file=sys.stderr)
     raise SystemExit(3) from None
@@ -54,22 +101,45 @@ EXIT_VALIDATION = 1
 EXIT_SQL = 2
 EXIT_CONNECTION = 3
 
-# Zero-padded so a lexical sort is also a numeric sort. At version 1000 either widen every existing
-# filename to 4 digits or switch to an integer sort — do not mix widths.
-FILENAME_RE = re.compile(r"^(?P<version>\d{3,})_(?P<name>[a-z0-9_]+)\.(?P<dir>up|down)\.sql$")
+# Serializes concurrent runners (two `up`s racing plan the same pending set and die mid-deploy on
+# duplicate-key errors otherwise). Session-scoped: released automatically when the connection
+# closes, even on a crash. The constant is arbitrary but must never change: it is the lock
+# identity. (ASCII "RHMIGR01" as a 64-bit int.)
+MIGRATION_LOCK_KEY = 0x5248_4D49_4752_3031
 
-# Top-level transaction control. The runner owns the transaction (see module docstring).
-TX_CONTROL_RE = re.compile(
-    r"\b(BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION|SAVEPOINT|RELEASE\s+SAVEPOINT)\b",
-    re.IGNORECASE,
+# THE single source of truth for a migration's identity AND destructiveness. Version is zero-padded
+# so a lexical sort is also a numeric sort — discovery REJECTS a mixed-width set (e.g. 999 alongside
+# 1000) because lexical order would silently diverge from numeric order; at version 1000, widen
+# every existing filename to 4 digits in one commit. The name charset excludes '.', so the
+# `.destructive` marker cannot be smuggled into (or faked by) a name — `001_x.destructiv.up.sql`
+# and `001_x.up.destructive.sql` both fail to match and are rejected loudly.
+FILENAME_RE = re.compile(
+    # \Z, not $: in Python `$` also matches before a trailing newline, so "002_x.up.sql\n" would
+    # pass the grammar (round 4 NIT-1).
+    r"^(?P<version>\d{3,})_(?P<name>[a-z0-9_]+)(?P<destructive>\.destructive)?\.(?P<dir>up|down)\.sql\Z"
 )
 
-# Fallback destructive sniff. Deliberately does NOT match DROP INDEX / TYPE / CONSTRAINT: those are
-# recreatable and lose no rows. Shapes this misses (mass DELETE FROM, DROP COLUMN) are why the
-# explicit directive below exists and takes precedence.
-DESTRUCTIVE_RE = re.compile(r"\b(DROP\s+TABLE|DROP\s+SCHEMA|DROP\s+DATABASE|TRUNCATE)\b", re.IGNORECASE)
+# Discovery must never SKIP a plausible migration silently (round 4 R4-S2: an uppercase `.SQL`
+# file was dropped by a `.suffix != ".sql"` check, so `up` printed "no pending migrations" and
+# exited 0 while the migration never ran). Anything version-prefixed is treated as an intended
+# migration and must match FILENAME_RE or die loudly.
+_VERSION_PREFIX_RE = re.compile(r"\d+_")
 
-DIRECTIVE_RE = re.compile(r"^\s*--\s*migrate:\s*(destructive|non-destructive)\s*$", re.IGNORECASE | re.MULTILINE)
+# BEST-EFFORT secondary net behind the filename marker: these keywords in a file NOT marked
+# destructive refuse the whole run at discovery. Keywords may be separated by whitespace OR by SQL
+# comments — `drop/**/table` is a valid DROP TABLE because PostgreSQL's lexer treats a comment as
+# a token separator (round 4 R4-B1) — so _SEP mirrors that: whitespace, `-- …` line comments, and
+# one level of `/* … */` block comments. Searched on the RAW text on purpose — no comment or
+# literal stripping, so 'DROP TABLE' in a comment or string over-fires, and the fix is a rename or
+# rewording. Deliberately does NOT match DROP INDEX / TYPE / CONSTRAINT / VIEW / ROLE
+# (recreatable, no stored rows lost). KNOWN HOLES, accepted on purpose: mass DELETE FROM, DROP
+# COLUMN, nested block-comment separators (PostgreSQL block comments nest; a regex cannot), and
+# dynamically built SQL (EXECUTE 'DR'||'OP TABLE …'), which no text rule can decide. Those shapes
+# are gated ONLY by the author marking the filename — this net just cheapens forgetting to.
+_SEP = r"(?:[ \t\r\n\f\v]|--[^\n]*(?:\n|$)|/\*(?:[^*]|\*(?!/))*\*/)+"
+DESTRUCTIVE_SNIFF_RE = re.compile(
+    rf"\b(?:DROP{_SEP}(?:TABLE|SCHEMA|DATABASE|OWNED|MATERIALIZED)|TRUNCATE)\b", re.IGNORECASE
+)
 
 BOOKKEEPING_DDL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -92,7 +162,7 @@ class MissingPair(MigrationError):
 
 
 class TxControlInMigration(MigrationError):
-    pass
+    """A migration body committed or rolled back the runner's transaction (detected post-hoc)."""
 
 
 class ChecksumMismatch(MigrationError):
@@ -103,71 +173,8 @@ class DestructiveBlocked(MigrationError):
     pass
 
 
-class ConflictingDestructiveMarkers(MigrationError):
-    pass
-
-
-# ── SQL text stripping ────────────────────────────────────────────────────────────────────────
-# Three levels, and the differences between them are load-bearing. Read the comment on each before
-# changing which one a check uses.
-
-def strip_sql_comments(sql: str) -> str:
-    """Remove line and block comments. String literals are left intact."""
-    sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
-    sql = re.sub(r"--[^\n]*", " ", sql)
-    return sql
-
-
-def strip_sql_noise(sql: str) -> str:
-    """Remove comments AND string literals (single-quoted and dollar-quoted).
-
-    Used only by the transaction-control detector. Without stripping dollar-quoted bodies, every
-    PL/pgSQL block (``DO $$ BEGIN … END $$``) would trip the BEGIN check; without stripping ordinary
-    literals, ``COMMENT ON … IS 'we commit to …'`` would too.
-    """
-    sql = re.sub(r"\$(\w*)\$.*?\$\1\$", " ", sql, flags=re.DOTALL)
-    sql = strip_sql_comments(sql)
-    sql = re.sub(r"'(?:[^']|'')*'", " ", sql)
-    return sql
-
-
-def _strip_string_literals_only(sql: str) -> str:
-    """Remove string literals but KEEP comments.
-
-    Used by the directive scanner, so a literal containing the text ``-- migrate: non-destructive``
-    cannot forge a directive. The real directive lives in a comment, which is why comments survive.
-    """
-    return re.sub(r"'(?:[^']|'')*'", " ", sql)
-
-
-def contains_top_level_tx_control(sql: str) -> bool:
-    return bool(TX_CONTROL_RE.search(strip_sql_noise(sql)))
-
-
-def explicit_destructiveness(sql: str) -> bool | None:
-    """True/False from an explicit directive, or None when the file declares nothing."""
-    found = {m.group(1).lower() for m in DIRECTIVE_RE.finditer(_strip_string_literals_only(sql))}
-    if len(found) > 1:
-        raise ConflictingDestructiveMarkers(
-            "file declares both 'migrate: destructive' and 'migrate: non-destructive'; "
-            "there is no safe default — pick one"
-        )
-    if not found:
-        return None
-    return found.pop() == "destructive"
-
-
-def is_destructive(sql: str) -> bool:
-    """Explicit directive wins; otherwise sniff the body.
-
-    The sniff deliberately does NOT strip string literals. A false positive costs one
-    ``--allow-destructive`` flag; a false negative costs data. For a gate guarding data loss,
-    erring toward false positives is the correct asymmetry.
-    """
-    declared = explicit_destructiveness(sql)
-    if declared is not None:
-        return declared
-    return bool(DESTRUCTIVE_RE.search(strip_sql_comments(sql)))
+class UnmarkedDestructiveSql(MigrationError):
+    """Destructive keywords in a file whose filename does not carry the `.destructive` marker."""
 
 
 # ── model ─────────────────────────────────────────────────────────────────────────────────────
@@ -177,23 +184,44 @@ class Migration:
     name: str
     up_path: Path
     down_path: Path
+    # From the FILENAME only — nothing inside a file can influence these (ADR-002).
+    up_destructive: bool
+    down_destructive: bool
+    # Read once at discovery. The text validated and checksummed is the text executed — a file
+    # edited between discovery and execution cannot swap unvalidated SQL into the transaction.
+    up_sql: str
+    down_sql: str
+    checksum: str  # SHA-256 of the UP body. The down body is not checksummed: rolling back deletes
+    # its bookkeeping row outright, so there is no stored state for a down-edit to diverge from.
 
-    @property
-    def up_sql(self) -> str:
-        return self.up_path.read_text(encoding="utf-8")
 
-    @property
-    def down_sql(self) -> str:
-        return self.down_path.read_text(encoding="utf-8")
+def _read_sql_file(path: Path) -> str:
+    """Read one migration file, rejecting byte-level hazards before any analysis.
 
-    @property
-    def checksum(self) -> str:
-        """SHA-256 of the UP body only.
-
-        The down body is not checksummed: rolling back deletes its bookkeeping row outright, so
-        there is no stored state for a down-file edit to diverge from.
-        """
-        return hashlib.sha256(self.up_sql.encode("utf-8")).hexdigest()
+    * NUL byte: libpq transports the query as a C string, so PostgreSQL would execute only the text
+      BEFORE the first NUL while the runner checksums and records the whole file — a silent
+      partial apply (demonstrated end-to-end in round 3, REVIEW_FIXES_b1_residual.md NEW2-S2).
+    * UTF-8 BOM: PostgreSQL does not skip it; the server error ("syntax error at or near ...") is
+      cryptic, so refuse it here with a message that names the actual problem.
+    * Invalid UTF-8: turned into a MigrationError so the CLI reports one clean line, not a
+      UnicodeDecodeError traceback.
+    """
+    data = path.read_bytes()
+    nul_at = data.find(b"\x00")
+    if nul_at != -1:
+        raise MigrationError(
+            f"{path.name}: contains a NUL byte at offset {nul_at}. libpq would silently "
+            "truncate the query there, executing only part of the file — remove it."
+        )
+    if data.startswith(b"\xef\xbb\xbf"):
+        raise MigrationError(
+            f"{path.name}: starts with a UTF-8 BOM, which PostgreSQL rejects as a stray "
+            "character — save the file without a BOM."
+        )
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise MigrationError(f"{path.name}: not valid UTF-8 ({exc})") from None
 
 
 def discover_migrations(migrations_dir: Path) -> list[Migration]:
@@ -201,47 +229,125 @@ def discover_migrations(migrations_dir: Path) -> list[Migration]:
     if not migrations_dir.is_dir():
         raise MigrationError(f"migrations directory not found: {migrations_dir}")
 
-    pairs: dict[str, dict[str, Path]] = {}
+    paths: dict[str, dict[str, Path]] = {}
+    destructive: dict[str, dict[str, bool]] = {}
     names: dict[str, str] = {}
 
     for path in sorted(migrations_dir.iterdir()):
-        if not path.is_file() or path.suffix != ".sql":
-            continue
         m = FILENAME_RE.match(path.name)
-        if not m:
+        if m is None:
+            # Round 4 R4-S2: a near-miss dropped here silently makes `up` report "no pending
+            # migrations" and exit 0 while the SQL never runs — success reported, schema change
+            # lost. So anything that plausibly WANTS to be a migration (a version-like prefix, or
+            # a .sql-like extension in any case / with trailing dot-space-newline junk) refuses
+            # the run loudly. The grammar is all-lowercase and exact everywhere else (name
+            # charset, marker); accepting `.SQL` case-insensitively would fork the grammar and
+            # invite `002_x.up.sql` + `002_x.up.SQL` ambiguity, so near-misses are rejected, not
+            # adopted. Genuinely unrelated entries (README.md, subdirectories) are still ignored.
+            if path.is_dir():
+                continue
+            sql_like = path.name.casefold().rstrip(" .\t\r\n").endswith(".sql")
+            if sql_like or _VERSION_PREFIX_RE.match(path.name):
+                raise MigrationError(
+                    f"{path.name}: does not match NNN_name[.destructive].up.sql / "
+                    "NNN_name[.destructive].down.sql (3+ digits, lowercase snake_case name, "
+                    "lowercase .sql). Refusing to skip it: a silently ignored file would let "
+                    "`up` report success while this migration never runs."
+                )
+            continue
+        if not path.is_file():
+            # A directory or dangling symlink NAMED like a migration would previously be skipped
+            # by an is_file() check — the same silent-success failure mode as above. Refuse.
             raise MigrationError(
-                f"{path.name}: does not match NNN_name.up.sql / NNN_name.down.sql "
-                "(3+ digits, lowercase snake_case name)"
+                f"{path.name}: matches the migration filename grammar but is not a regular "
+                "file — refusing to skip it silently."
             )
         version, name, direction = m.group("version"), m.group("name"), m.group("dir")
         if names.setdefault(version, name) != name:
             raise MigrationError(f"version {version} used by two different names: {names[version]!r} and {name!r}")
-        slot = pairs.setdefault(version, {})
+        slot = paths.setdefault(version, {})
         if direction in slot:
             raise MigrationError(f"duplicate {direction} file for version {version}")
         slot[direction] = path
+        destructive.setdefault(version, {})[direction] = m.group("destructive") is not None
+
+    # Mixed widths would make the lexical sort diverge from numeric order ("1000" < "999"
+    # lexically) and silently apply migrations out of order. A comment cannot enforce that; this
+    # check does.
+    widths = {len(v) for v in paths}
+    if len(widths) > 1:
+        raise MigrationError(
+            f"mixed version widths {sorted(widths)} — lexical order would diverge from numeric "
+            "order. Widen every existing filename to the larger width in one commit."
+        )
 
     migrations: list[Migration] = []
-    for version in sorted(pairs):
-        slot = pairs[version]
+    for version in sorted(paths):
+        slot = paths[version]
         if "up" not in slot or "down" not in slot:
             missing = "down" if "up" in slot else "up"
             raise MissingPair(f"version {version} ({names[version]}) has no .{missing}.sql — both directions are required")
-        mig = Migration(version=version, name=names[version], up_path=slot["up"], down_path=slot["down"])
+        up_sql = _read_sql_file(slot["up"])
+        down_sql = _read_sql_file(slot["down"])
 
-        # Validate BOTH bodies now, so a bad file cannot reach the database even if an earlier
-        # migration in the same run would have succeeded.
-        for direction, sql, path in (("up", mig.up_sql, mig.up_path), ("down", mig.down_sql, mig.down_path)):
-            if contains_top_level_tx_control(sql):
-                raise TxControlInMigration(
-                    f"{path.name}: contains top-level transaction control. The runner owns the "
-                    "transaction — remove BEGIN/COMMIT/ROLLBACK/SAVEPOINT. (PL/pgSQL 'DO $$ BEGIN … END $$' is fine.)"
+        # Best-effort sniff, BOTH directions, before the database is ever touched. The filename is
+        # the classification; this net only refuses the mislabelings it can see (the common
+        # literal shapes — see DESTRUCTIVE_SNIFF_RE for the holes it deliberately has).
+        for sql, path, marked in (
+            (up_sql, slot["up"], destructive[version]["up"]),
+            (down_sql, slot["down"], destructive[version]["down"]),
+        ):
+            hit = DESTRUCTIVE_SNIFF_RE.search(sql)
+            if hit and not marked:
+                stem = path.name.removesuffix(".sql")
+                direction = stem.rsplit(".", 1)[-1]
+                # A comment-separated hit can span an arbitrarily long comment; keep the message
+                # one readable line.
+                matched = hit.group(0) if len(hit.group(0)) <= 60 else hit.group(0)[:60] + "…"
+                raise UnmarkedDestructiveSql(
+                    f"{path.name}: contains {matched!r} but its filename is not marked "
+                    f"destructive. Rename it to {version}_{names[version]}.destructive."
+                    f"{direction}.sql (or reword, if the match is only in a comment or string — "
+                    "this check reads the raw text and refuses on purpose: a false positive "
+                    "costs a rename, a false negative costs data)."
                 )
-            explicit_destructiveness(sql)  # raises on conflicting markers
-            del direction
-        migrations.append(mig)
+
+        migrations.append(
+            Migration(
+                version=version,
+                name=names[version],
+                up_path=slot["up"],
+                down_path=slot["down"],
+                up_destructive=destructive[version]["up"],
+                down_destructive=destructive[version]["down"],
+                up_sql=up_sql,
+                down_sql=down_sql,
+                checksum=hashlib.sha256(up_sql.encode("utf-8")).hexdigest(),
+            )
+        )
 
     return migrations
+
+
+def validate_target(target: str | None, command: str, migrations: list[Migration]) -> str | None:
+    """Reject a --target that is not a discovered version (plus the all-zeros sentinel on down).
+
+    Versions are zero-padded strings compared lexically; an unpadded target ("2") would silently
+    over-apply on up and silently no-op on down. Fail loudly instead of either.
+    """
+    if target is None or command == "status":
+        return None
+    versions = [m.version for m in migrations]
+    width = len(versions[0]) if versions else 3
+    allowed = set(versions)
+    if command == "down":
+        allowed.add("0" * width)  # sentinel: roll back everything
+    if target not in allowed:
+        raise MigrationError(
+            f"invalid --target {target!r}: must be one of {', '.join(sorted(allowed))} "
+            "(zero-padded, exactly as in the filenames)"
+        )
+    return target
 
 
 # ── database helpers ──────────────────────────────────────────────────────────────────────────
@@ -258,17 +364,39 @@ def _runner_principal() -> str:
 
 def connect_from_env() -> psycopg.Connection:
     dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        raise MigrationError(
-            "DATABASE_URL is not set. Expected e.g. "
-            "postgresql://user:pass@rh-db:5432/robinhood_agentic"
-        )
-    conn = psycopg.connect(dsn, autocommit=True, application_name="rh-migrate")
-    # Session-scoped (not SET LOCAL) so they survive across each migration's own transaction. A
-    # CREATE INDEX on a 300M-row table will outlive any sane statement_timeout.
-    with conn.cursor() as cur:
-        cur.execute("SET statement_timeout = 0")
-        cur.execute("SET idle_in_transaction_session_timeout = 0")
+    if dsn is None:
+        if os.environ.get("PGHOST"):
+            # libpq assembles the connection from PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE.
+            # Preferred by bin/db_migrate.sh: no URL string means no percent-encoding hazards from
+            # credentials containing '@', '/', or '%'.
+            dsn = ""
+        else:
+            raise MigrationError(
+                "no connection configured: set DATABASE_URL, or PGHOST (+PGUSER/PGPASSWORD/"
+                "PGDATABASE) for libpq-style env configuration"
+            )
+    raw_timeout = os.environ.get("MIGRATE_CONNECT_TIMEOUT", "10")
+    try:
+        connect_timeout = int(raw_timeout)
+    except ValueError:
+        raise MigrationError(f"MIGRATE_CONNECT_TIMEOUT must be an integer, got {raw_timeout!r}") from None
+    # connect_timeout: libpq's default is wait-forever; a wedged-but-routable host must fail the
+    # runner (and any deploy script above it) in seconds, not hang it indefinitely.
+    conn = psycopg.connect(
+        dsn, autocommit=True, application_name="rh-migrate", connect_timeout=connect_timeout
+    )
+    try:
+        # Session-scoped (not SET LOCAL) so they survive across each migration's own transaction. A
+        # CREATE INDEX on a 300M-row table will outlive any sane statement_timeout — this
+        # deliberately overrides the server default (60s, set in docker-compose.db.yml).
+        with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = 0")
+            cur.execute("SET idle_in_transaction_session_timeout = 0")
+            # Serialize concurrent runners; blocks until the peer finishes. See MIGRATION_LOCK_KEY.
+            cur.execute("SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_KEY,))
+    except psycopg.Error:
+        conn.close()  # do not leak the connection when session setup fails
+        raise
     return conn
 
 
@@ -284,13 +412,52 @@ def applied_migrations(conn: psycopg.Connection) -> dict[str, str]:
         return {row[0]: row[1] for row in cur.fetchall()}
 
 
+def _assert_tx_intact(conn: psycopg.Connection, cur: psycopg.Cursor, filename: str, xid_before: int) -> None:
+    """Server-side proof that the runner's transaction survived the migration body.
+
+    Called after the body executes, BEFORE the bookkeeping row is written. Two checks, both from
+    the backend rather than from any reading of the SQL text (all verified live on PG16):
+
+    * ``transaction_status`` must be INTRANS. A stray COMMIT or ROLLBACK leaves the connection
+      IDLE (both observed live). INERROR cannot be observed here — a failing statement raises out
+      of ``cur.execute`` before this function runs — but any non-INTRANS status fails the check.
+    * ``pg_catalog.pg_current_xact_id()`` must equal the xid captured when the runner's
+      transaction started. ``COMMIT; BEGIN;`` restores INTRANS but was observed live to change the
+      xid — the status check alone would pass, this one cannot. Schema-qualified so a search_path
+      change inside the body cannot shadow it with a user function. A bare BEGIN or SAVEPOINT
+      keeps both status and xid intact (observed live) and is therefore tolerated: neither breaks
+      the body+bookkeeping atomicity this check protects.
+
+    Raising here aborts without writing the bookkeeping row; psycopg's transaction-block exit then
+    rolls back whatever transaction is open (verified: after COMMIT;BEGIN, the hijacker's second
+    transaction is rolled back; after a stray COMMIT the connection is idle and the exit rollback
+    is a harmless no-op). Statements committed by the hijacking COMMIT itself are already durable
+    and CANNOT be undone — the error message says so.
+    """
+    status = TransactionStatus(conn.info.transaction_status)
+    same_xid = False
+    if status == TransactionStatus.INTRANS:
+        cur.execute("SELECT pg_catalog.pg_current_xact_id()")
+        same_xid = cur.fetchone()[0] == xid_before
+    if status != TransactionStatus.INTRANS or not same_xid:
+        raise TxControlInMigration(
+            f"{filename}: the migration issued its own transaction control (COMMIT/ROLLBACK — "
+            f"post-body status {status.name}, runner transaction "
+            f"{'replaced' if status == TransactionStatus.INTRANS else 'gone'}). "
+            "The runner owns the transaction; nothing was recorded in schema_migrations, but any "
+            "statements the stray COMMIT already committed are durable — inspect the database "
+            "and clean up manually before re-running."
+        )
+
+
 def apply_one(conn: psycopg.Connection, mig: Migration) -> int:
     """Apply one migration. Body + bookkeeping row commit or abort together."""
     with conn.transaction():
         with conn.cursor() as cur:
-            cur.execute("SELECT clock_timestamp()")
-            started = cur.fetchone()[0]
+            cur.execute("SELECT pg_catalog.pg_current_xact_id(), clock_timestamp()")
+            xid_before, started = cur.fetchone()
             cur.execute(mig.up_sql)
+            _assert_tx_intact(conn, cur, mig.up_path.name, xid_before)
             cur.execute("SELECT clock_timestamp()")
             finished = cur.fetchone()[0]
             duration_ms = int((finished - started).total_seconds() * 1000)
@@ -305,14 +472,26 @@ def apply_one(conn: psycopg.Connection, mig: Migration) -> int:
 def rollback_one(conn: psycopg.Connection, mig: Migration) -> int:
     with conn.transaction():
         with conn.cursor() as cur:
-            cur.execute("SELECT clock_timestamp()")
-            started = cur.fetchone()[0]
+            cur.execute("SELECT pg_catalog.pg_current_xact_id(), clock_timestamp()")
+            xid_before, started = cur.fetchone()
             cur.execute(mig.down_sql)
+            _assert_tx_intact(conn, cur, mig.down_path.name, xid_before)
             cur.execute("SELECT clock_timestamp()")
             finished = cur.fetchone()[0]
             duration_ms = int((finished - started).total_seconds() * 1000)
             cur.execute("DELETE FROM schema_migrations WHERE version = %s", (mig.version,))
     return duration_ms
+
+
+def _warn_orphans(applied: dict[str, str], migrations: list[Migration]) -> None:
+    """A row in schema_migrations with no file in the repo: loud on every command, not only status."""
+    orphans = sorted(set(applied) - {m.version for m in migrations})
+    if orphans:
+        logger.warning(
+            "applied migration(s) with no file in the repo: %s — the database contains a change "
+            "nobody can reproduce or roll back (see `status`)",
+            ", ".join(orphans),
+        )
 
 
 # ── commands ──────────────────────────────────────────────────────────────────────────────────
@@ -346,6 +525,7 @@ def cmd_up(
 ) -> int:
     ensure_bookkeeping(conn)
     applied = applied_migrations(conn)
+    _warn_orphans(applied, migrations)
 
     # Checksum every already-applied migration before planning anything. An edited applied file
     # means the database and the repo disagree, and nothing after this point is trustworthy.
@@ -365,8 +545,8 @@ def cmd_up(
         return EXIT_OK
 
     # Evaluate the destructive gate at PLAN time, including on --dry-run, so a deploy aborts here
-    # rather than partway through applying.
-    blocked = [m for m in pending if is_destructive(m.up_sql)]
+    # rather than partway through applying. Classification is the filename, nothing else.
+    blocked = [m for m in pending if m.up_destructive]
     if blocked and not allow_destructive:
         names = ", ".join(f"{m.version}_{m.name}" for m in blocked)
         raise DestructiveBlocked(
@@ -375,7 +555,7 @@ def cmd_up(
         )
 
     for mig in pending:
-        tag = " (DESTRUCTIVE)" if is_destructive(mig.up_sql) else ""
+        tag = " (DESTRUCTIVE)" if mig.up_destructive else ""
         if dry_run:
             print(f"would apply: {mig.version}_{mig.name}{tag}")
             continue
@@ -395,6 +575,7 @@ def cmd_down(
 ) -> int:
     ensure_bookkeeping(conn)
     applied = applied_migrations(conn)
+    _warn_orphans(applied, migrations)
 
     candidates = [m for m in migrations if m.version in applied]
     if not candidates:
@@ -408,8 +589,8 @@ def cmd_down(
         logger.info("nothing to roll back above target %s", target)
         return EXIT_OK
 
-    # A down body is destructive by nature, so the gate applies to every rollback, not just to
-    # bodies that happen to trip the sniff.
+    # A down body is destructive by nature (it discards the schema its up created, and any data in
+    # it), so the gate applies to EVERY rollback — not only to downs whose filename is marked.
     if not allow_destructive:
         names = ", ".join(f"{m.version}_{m.name}" for m in to_revert)
         raise DestructiveBlocked(
@@ -427,27 +608,48 @@ def cmd_down(
 
 
 # ── entrypoint ────────────────────────────────────────────────────────────────────────────────
+class _Parser(argparse.ArgumentParser):
+    """argparse exits 2 on usage errors, which the exit-code contract reserves for SQL failures.
+
+    A deploy script branching on exit codes must never read a typo as "go look at the database" —
+    usage errors are validation failures, exit 1.
+    """
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        print(f"{self.prog}: error: {message}", file=sys.stderr)
+        raise SystemExit(EXIT_VALIDATION)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="migrate", description="3b database migration runner")
+    p = _Parser(prog="migrate", description="3b database migration runner")
     p.add_argument("command", choices=("status", "up", "down"))
     p.add_argument(
         "--migrations-dir",
         type=Path,
         default=Path(__file__).parent / "migrations",
-        help="directory holding NNN_name.{up,down}.sql (default: db/migrations)",
+        help="directory holding NNN_name[.destructive].{up,down}.sql (default: db/migrations)",
     )
-    p.add_argument("--dry-run", action="store_true", help="print the plan; never opens a write transaction")
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the plan without applying it (still creates the schema_migrations bookkeeping table if absent)",
+    )
     p.add_argument("--allow-destructive", action="store_true", help="required for destructive migrations and all rollbacks")
     p.add_argument("--target", help="up: apply through this version inclusive. down: roll back everything above it.")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    try:
+        args = build_parser().parse_args(argv)
+    except SystemExit as exc:  # argparse exits: 0 for --help, EXIT_VALIDATION for usage errors
+        return int(exc.code or 0)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     try:
         migrations = discover_migrations(args.migrations_dir)
+        target = validate_target(args.target, args.command, migrations)
     except MigrationError as exc:
         logger.error("%s", exc)
         return EXIT_VALIDATION
@@ -462,6 +664,8 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_CONNECTION
 
     try:
+        # `with conn:` closes the connection on both success and exception paths (psycopg3) — no
+        # separate finally needed, and close() releases the advisory lock.
         with conn:
             if args.command == "status":
                 return cmd_status(conn, migrations)
@@ -470,13 +674,13 @@ def main(argv: list[str] | None = None) -> int:
                     conn, migrations,
                     dry_run=args.dry_run,
                     allow_destructive=args.allow_destructive,
-                    target=args.target,
+                    target=target,
                 )
             return cmd_down(
                 conn, migrations,
                 dry_run=args.dry_run,
                 allow_destructive=args.allow_destructive,
-                target=args.target,
+                target=target,
             )
     except MigrationError as exc:
         logger.error("%s", exc)
@@ -484,8 +688,6 @@ def main(argv: list[str] | None = None) -> int:
     except psycopg.Error as exc:
         logger.error("migration failed: %s", exc)
         return EXIT_SQL
-    finally:
-        conn.close()
 
 
 if __name__ == "__main__":

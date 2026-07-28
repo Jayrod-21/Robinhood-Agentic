@@ -12,8 +12,7 @@
 # Result is written to `.env.ports` (consumed by docker-compose) and echoed. Re-running yields
 # different ports, proving the draw is random.
 #
-# Contrast with bin/pick_db_port.sh, which picks ONCE and persists — a database's port must stay
-# stable across restarts, whereas the dashboard's is intentionally not.
+# The database needs no port picking at all — it publishes no host port (ADR-001).
 
 set -euo pipefail
 

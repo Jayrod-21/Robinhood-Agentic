@@ -89,18 +89,27 @@ The guarantees are the valuable part:
 
 - Each migration runs in **one transaction**, and the `schema_migrations` bookkeeping row is written
   **in that same transaction** — partial application is impossible.
-- **The runner owns the transaction.** Migration files may not contain top-level `BEGIN`/`COMMIT`/
-  `ROLLBACK`/`SAVEPOINT`, and discovery *rejects* any file that does — so a buggy migration can't
-  silently truncate the runner's transaction.
+- **The runner owns the transaction.** Enforced by the server, not by reading SQL: after a body
+  executes and before the bookkeeping row is written, the runner asserts libpq still reports the
+  transaction it opened (`transaction_status` INTRANS **and** an unchanged
+  `pg_current_xact_id()`) — a stray `COMMIT`/`ROLLBACK`, or even `COMMIT; BEGIN;`, is detected and
+  the migration is never recorded. (3b originally rejected transaction keywords by scanning the
+  SQL text; three verification rounds forged that scanner, see ADR-002.)
 - **Checksums.** Re-running a migration whose file changed since it was applied raises
   `ChecksumMismatch` rather than silently diverging.
-- **A destructive gate.** `--allow-destructive` is required for any migration classified destructive.
-  Classification prefers an *explicit* `-- migrate: destructive` / `-- migrate: non-destructive`
-  directive and only falls back to sniffing for `DROP TABLE`/`TRUNCATE`/etc. The explicit marker
-  catches destructive shapes sniffing misses (mass `DELETE FROM`, `DROP COLUMN`) without forcing the
-  flag onto a merely `DROP`-mentioning additive migration.
-- `--dry-run` never opens a write transaction but **does** evaluate the destructive gate, so a
-  deploy aborts at the dry-run step rather than mid-apply.
+- **A destructive gate.** `--allow-destructive` is required for any destructive migration, and
+  destructiveness is declared **in the filename** (`NNN_name.destructive.up.sql` — ADR-002): a
+  filename cannot be influenced by anything inside the file, so the *classification* cannot be
+  forged from contents. A keyword sniff refuses `DROP TABLE`/`TRUNCATE`/etc. in any UNMARKED file
+  (even with SQL comments between the keywords), where a false positive costs only a rename — but
+  the sniff is best-effort, not a guarantee: it does not cover mass `DELETE FROM`, `DROP COLUMN`,
+  or dynamically built SQL (`EXECUTE 'DR'||'OP TABLE …'`), which no text rule can decide. The
+  author marking the filename correctly is the real control; the sniff only reduces the cost of
+  forgetting. (3b's original content-classified gate — a `-- migrate:` directive read out of the
+  SQL — was forged thirteen ways across three reviews; don't rebuild it.)
+- `--dry-run` applies nothing (it still creates the `schema_migrations` bookkeeping table if
+  absent) but **does** evaluate the destructive gate, so a deploy aborts at the dry-run step
+  rather than mid-apply.
 - Migration sessions set `statement_timeout = 0` — big indexes take a while, and atomicity, not a
   timeout, is what protects you.
 

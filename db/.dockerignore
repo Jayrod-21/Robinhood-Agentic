@@ -1,0 +1,11 @@
+# .dockerignore is resolved RELATIVE TO THE BUILD CONTEXT — the project-root .dockerignore is not
+# consulted when building with context db/, so this file must exist here. Above all it keeps
+# db/.env (the live database password) out of the daemon's build context: today no Dockerfile line
+# COPYs it, but this makes "no secret in this image" structural rather than one future `COPY . .`
+# away from a leak.
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+tests/

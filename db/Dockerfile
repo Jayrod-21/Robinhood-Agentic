@@ -14,9 +14,11 @@
 FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
 # psycopg[binary] ships the libpq wheel, so no build toolchain and no system libpq is needed.
-# Pinned exactly: an unpinned driver is one `docker build` away from changing behaviour under a
-# migration that has already been applied elsewhere.
-RUN pip install --no-cache-dir "psycopg[binary]==3.2.3"
+# Exact- and hash-pinned via requirements.txt (--require-hashes): an unpinned driver is one
+# `docker build` away from changing behaviour under a migration that has already been applied
+# elsewhere, and a version pin alone does not authenticate the artifact.
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 # Numeric non-root user, created before the entrypoint is set. Nothing here needs to write to the
 # image; the only writable path is the database itself.

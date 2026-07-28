@@ -2,28 +2,36 @@
 
 What's in the local market-data archive, where it came from, and what it can and can't support.
 
-`data/market/` is **gitignored** — 4.5 GB of licensed third-party exports has no business in git. This
+`data/market/` is **gitignored** — 23 GB of licensed third-party exports has no business in git. This
 document is the tracked record of what should be there, so a fresh clone knows what's missing.
 
-**Source:** the `T-Drive` external disk (233 GB, exfat), mounted at
-`/run/media/jared-williams/T-Drive`. Copied 2026-07-27 with `rsync -a`, excluding
-`System Volume Information`.
+**Sources — two drives, copied on two days:**
 
-**Verified after copy:** 262 files, 4,497,840,236 bytes — file count and byte total both match the
-source exactly, and a dry-run `rsync` finds nothing left to transfer.
+| Source | Contents | Copied | Verified |
+|---|---|---|---|
+| `T-Drive` (233 GB, exfat) | Bloomberg files, Wasden PDFs, and an 11-month minute-bar subset | 2026-07-27 | 262 files / 4,497,840,236 bytes, exact match |
+| `Extreme SSD` (931 GB, exfat) → `4. Stock Data/Emery 5 Year` | **the full 5-year minute-bar archive** | 2026-07-28 | 1,256 files / 24,447,484,929 bytes, exact match |
 
-To restore on another machine, re-mount the drive and:
+Both verified by file count, byte total, and a dry-run `rsync` reporting nothing left to transfer.
+
+**The T-Drive minute-bar subset has been deleted** (2026-07-28, reclaiming 4.2 GB). It was a strict
+subset of the 5-year set: all 229 files present in the new archive with identical sizes, and a
+20-file sha256 sample across the date range matched exactly. Verified before deletion, not assumed.
+
+To restore on another machine, re-mount the drives and:
 
 ```bash
 rsync -a --info=progress2 --exclude="System Volume Information" \
   /run/media/<user>/T-Drive/ "data/market/"
+rsync -a --info=progress2 \
+  "/run/media/<user>/Extreme SSD/4. Stock Data/Emery 5 Year/" "data/market/minute_bars_5y/"
 ```
 
 ---
 
-## 1. Minute bars — `2. Stock Data/Stocks_min_min_5_year/`
+## 1. Minute bars — `minute_bars_5y/`
 
-**4.2 GB · 229 gzipped daily CSVs · `YYYY/MM/YYYY-MM-DD.csv.gz`**
+**24 GB · 1,256 gzipped daily CSVs · `YYYY/MM/YYYY-MM-DD.csv.gz`**
 
 Polygon.io flat-file minute-aggregate format. Columns:
 
@@ -32,24 +40,30 @@ ticker, volume, open, close, high, low, window_start, transactions
 ```
 
 `window_start` is a **nanosecond** epoch (e.g. `1605191340000000000`). A sampled day file
-(`2020-11-12`) holds **1,435,677 rows** — this is the full US equity universe, not a watchlist — so
-the archive is on the order of **300 million rows**.
+(`2020-11-12`) holds **1,435,677 rows** — this is the full US equity universe, not a watchlist. Row
+count across the archive is estimated in "Coverage" below.
 
-### ⚠ The folder name is wrong, and it matters
+**Timestamps cross month boundaries.** Polygon day files carry post-market bars through 20:00 ET, so
+during EST (UTC−5) the late bars of the last trading day of a month have UTC timestamps in the *next*
+month. The loader must therefore create partitions for the file's actual `min(ts)..max(ts)`, not for
+its nominal date — see `ensure_price_bar_partitions()` in migration 002. Getting this wrong wedges
+ingest at the first EST month-end, which is 2020-11-30, about two months into a full load.
 
-Despite `5_year`, the actual coverage is **2020-10-02 → 2021-08-30 — about eleven months**, 229
-trading days (63 files in 2020, 166 in 2021). Two consequences worth deciding on before building
-anything on top of it:
+### Coverage
 
-- **It is a short history for ML.** 229 days of daily-resolution signal is thin, even though the
-  minute resolution makes the row count look enormous. Row count is not the same as independent
-  observations.
-- **It is one specific regime** — the post-COVID-crash recovery and the early-2021 meme-stock period.
-  A model fit only on this window learns that regime's behavior. Any evaluation must be walk-forward
-  within it, and results should not be read as a general-market edge.
+**2020-10-02 → 2025-10-02 — five years, 1,256 trading days.** Per year: 63 (2020, from October) ·
+252 (2021) · 251 (2022) · 250 (2023) · 252 (2024) · 188 (2025, through October).
 
-If a longer history matters, that's a reason to buy the paid FMP tier (or a Polygon subscription) and
-backfill, rather than to squeeze more out of these 11 months.
+At ~1.44M rows per file this is on the order of **1.5–1.8 billion rows** — which is what drove the
+monthly RANGE partitioning in migration 002, and why `price_bars_minute` carries no per-row audit
+columns (two `timestamptz` columns would cost ~26 GB for information already recorded once per file
+in `data_sources`).
+
+This window spans genuinely different regimes — the post-COVID recovery, the 2021 meme-stock period,
+the 2022 bear market, and the 2023-2025 recovery — which is what makes walk-forward evaluation
+meaningful rather than a single-regime artifact. It is still only five years: enough to evaluate a
+strategy honestly, not enough to claim an edge survives every market. The 30-year history in FMP's
+Premium tier is the complement, and it is daily rather than minute resolution.
 
 ## 2. Bloomberg fundamentals — `2_21_2026_thru_2_24_2026.csv`
 
@@ -93,12 +107,16 @@ work starts.
 | Goal | Supported? |
 |---|---|
 | Validate the screen against real Bloomberg fundamentals | **Yes** — §2, for 4 days |
-| Intraday microstructure features (minute bars) | **Yes** — §1, for 11 months |
-| Daily-bar backtest over a meaningful history | **No** — 11 months, one regime. Needs a backfill. |
-| Point-in-time fundamentals history | **No** — §2 is a 4-day snapshot, not a time series |
-| Train and evaluate an ML model | **Partly** — enough to build and test the pipeline end to end; not enough to trust an edge estimate |
+| Intraday microstructure features (minute bars) | **Yes** — §1, five years, full universe |
+| Backtest across multiple market regimes | **Yes** — 2020-2025 covers a recovery, a mania, a bear market, and a recovery |
+| Point-in-time *fundamentals* history | **No** — §2 is a 4-day snapshot. This is the real gap, and it is what FMP Premium's quarterly + 30-year history fills |
+| Train and evaluate an ML model | **Yes for the pipeline; qualified for the conclusion** — five years is enough to evaluate walk-forward honestly, not enough to claim an edge survives every market |
 
-The honest read: this is **enough to build and validate the whole infrastructure** — schema, ingest,
-feature store, evaluation harness, training loop — against real data rather than synthetic fixtures.
-It is not enough to conclude a strategy works. Those are different milestones and should not be
-conflated.
+The honest read: the **price** side is now genuinely sufficient — five years of full-universe minute
+bars across four distinct regimes will support a real backtest and a real evaluation harness.
+
+The **fundamentals** side is not. Four days of Bloomberg is a validation sample, not a history, so a
+fundamentals-driven strategy cannot yet be backtested at all — the screen can be checked for
+correctness against real values, but not evaluated over time. That gap is the entire argument for FMP
+Premium's quarterly fundamentals and 30-year depth, and it is worth being precise that these are two
+separate readiness states rather than one blended "we have data".

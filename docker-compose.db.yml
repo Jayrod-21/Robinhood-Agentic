@@ -7,16 +7,28 @@
 #     is only possible if the DB is not owned by either color's project.
 # This mirrors 9b Korean Master's shared/blue/green split.
 #
-# Brought up by bin/db_up.sh, which supplies DB_PORT (from .env.db, verified free at creation) and
-# the credentials from db/.env.
+# Brought up by bin/db_up.sh with credentials from db/.env (passed via --env-file, never sourced
+# as shell).
 #
-# Security posture, per SENIOR_ENGINEER_BAR §6.3/§6.4 and 9b's Deploy/SECURITY.md:
-#   * host port bound to 127.0.0.1 ONLY — nothing off-box may reach the database;
-#   * `rh-internal` is `internal: true`, so the DB container has NO egress. This is the defense
-#     against a malicious dump or SQL payload using `COPY ... FROM PROGRAM 'curl …'` to exfiltrate;
+# Reachability, stated precisely (verified 2026-07-28; see ADR-001):
+#   * NO host port is published — `rh-internal` is `internal: true`, and Docker silently ignores
+#     `ports:` on internal-only networks, so none is declared.
+#   * Off-box: unreachable. Containers on other bridges: unreachable (Docker inter-bridge
+#     isolation, verified).
+#   * ON-BOX: host processes CAN reach the container's bridge IP directly (e.g. 172.x.x.x:5432 —
+#     `internal: true` removes egress/NAT, not the host's own bridge interface). Those connections
+#     face scram-sha-256 auth, so the password in db/.env (mode 0600) is the on-box control. This
+#     is equivalent to a loopback bind guarded by a 0600 credential file — not stronger. The
+#     bridge IP is unstable across recreation; use bin/db_psql.sh, not the raw IP.
+#   * Egress: blocked, including DNS (verified: TCP out unreachable, external DNS SERVFAILs). This
+#     is the defense against a malicious dump or SQL payload using `COPY … FROM PROGRAM 'curl …'`
+#     to exfiltrate.
+#
+# Hardening, per SENIOR_ENGINEER_BAR §6.3/§6.4:
 #   * no-new-privileges + cap_drop ALL, with only the caps Postgres actually needs added back;
-#   * resource limits and log-size caps so a runaway query or log flood can't take down the host,
-#     which also runs 9b.
+#   * read-only rootfs — writable paths are exactly the data volume and two tmpfs mounts;
+#   * resource/pids/log caps so a runaway query or log flood can't take down the host, which also
+#     runs 9b (memswap = mem so the container cannot spill into host swap under 9b's GPU batches).
 
 services:
   db:
@@ -43,13 +55,16 @@ services:
       - shared_buffers=${DB_SHARED_BUFFERS:-512MB}
       - -c
       - work_mem=${DB_WORK_MEM:-16MB}
-      # The bulk minute-bar load is one long transaction; the default 30s/60s app-facing timeouts
-      # would kill it. Loader sessions raise these locally (SET LOCAL), so the server default stays
-      # sane for the app.
+      # Server-wide safety defaults (Bar §4.8): a runaway interactive query dies at 60s, and a
+      # session that opens a transaction and walks away cannot pin locks and the xmin horizon
+      # forever (that blocks vacuum cluster-wide and shows up days later as disk growth).
+      # Long-running work opts OUT per session: db/migrate.py runs SET statement_timeout = 0 on its
+      # own connection, and the bulk loader must SET LOCAL statement_timeout = 0 inside its load
+      # transaction.
       - -c
-      - statement_timeout=0
+      - statement_timeout=60s
       - -c
-      - idle_in_transaction_session_timeout=0
+      - idle_in_transaction_session_timeout=300s
       # Log slow queries so a missing index on a 300M-row table is visible rather than merely slow.
       - -c
       - log_min_duration_statement=1000
@@ -68,6 +83,14 @@ services:
     volumes:
       - rh_db_data:/var/lib/postgresql/data
 
+    # Read-only rootfs (Bar §6.3): with the data directory on the volume above, Postgres needs
+    # exactly two writable paths — its socket/pid dir and /tmp. uid 70 = the alpine image's
+    # `postgres` user.
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql:uid=70,gid=70,mode=0755,size=2m
+      - /tmp:mode=1777,size=64m
+
     networks:
       - rh-internal
 
@@ -75,11 +98,24 @@ services:
       # Probe 127.0.0.1 explicitly, not localhost: if the image resolves localhost to ::1 first and
       # the server is listening on IPv4, the check fails forever and the container never goes
       # healthy. 9b hit exactly this.
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER} -d ${POSTGRES_DB} -q"]
+      #
+      # psql, not pg_isready: pg_isready never authenticates and never opens the database, so it
+      # reports healthy even when the role or database does not exist (e.g. a volume initialised
+      # under different credentials). A real SELECT proves postmaster + role + database. No
+      # password needed: the image's pg_hba grants trust on in-container loopback (scram applies to
+      # every other source). During initdb the temporary server is socket-only, so this TCP probe
+      # correctly stays unhealthy until initialisation finishes — that is what makes start_period
+      # sufficient rather than a race. `$$` defers expansion to the container's own environment.
+      test: ["CMD-SHELL", "psql -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -qAtc 'SELECT 1' >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
+
+    # With shared_buffers=512MB the shutdown checkpoint can exceed Docker's 10s default grace and
+    # earn a SIGKILL plus crash recovery on next start. STOPSIGNAL is the image's SIGINT (fast
+    # shutdown); give it time to finish.
+    stop_grace_period: 60s
 
     security_opt:
       - no-new-privileges:true
@@ -94,11 +130,17 @@ services:
       - SETGID
       - SETUID
 
+    # memswap == mem disables swap for this container: without it, the 2g memory cap silently
+    # permits another 2g of host swap.
+    memswap_limit: ${DB_MEM_LIMIT:-2g}
     deploy:
       resources:
         limits:
           memory: ${DB_MEM_LIMIT:-2g}
           cpus: "${DB_CPU_LIMIT:-2.0}"
+          # A fork bomb via a compromised session must not exhaust the host's PID space (9b runs
+          # here too). Postgres needs ~1 process per connection plus workers; 512 is generous.
+          pids: 512
 
     logging:
       driver: json-file
@@ -119,4 +161,9 @@ volumes:
     # Name-pinned so the real Docker object is `rh_db_data`, not `<project>_rh_db_data`. Both the
     # dashboard project and (later) the purple/yellow colors must attach to the SAME volume, and a
     # project-prefixed name would silently give each its own empty database.
+    #
+    # external: compose never creates OR REMOVES it — `docker compose -p rh-db down -v` cannot
+    # delete the data. bin/db_up.sh creates the volume (docker volume create is idempotent) before
+    # compose runs.
     name: rh_db_data
+    external: true

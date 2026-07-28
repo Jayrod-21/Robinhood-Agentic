@@ -12,7 +12,8 @@
 #   bin/db_migrate.sh up --allow-destructive
 #   bin/db_migrate.sh down --allow-destructive --target 001
 #
-# Exit codes are the runner's: 0 ok · 1 validation · 2 SQL failure · 3 connection.
+# Exit codes are the runner's: 0 ok · 1 validation (incl. CLI usage errors) · 2 SQL failure ·
+# 3 connection.
 
 set -Eeuo pipefail
 
@@ -27,33 +28,54 @@ DB_HOST="rh-db"
 
 die() { echo "✗ $*" >&2; exit 1; }
 
+# read_env_value <key> — strict parse of db/.env. The file is DATA: `source` would execute it as
+# shell, turning a password containing `$(…)`, a backtick, or a space into command execution or a
+# silently truncated credential. grep+cut cannot execute anything.
+read_env_value() {
+  local line
+  line="$(grep -m1 -E "^$1=" "${DB_ENV}")" || return 1
+  printf '%s' "${line#*=}"
+}
+
 [[ -f "${DB_ENV}" ]] || die "db/.env missing — run bin/db_up.sh first"
 docker network inspect "${NETWORK}" >/dev/null 2>&1 || die "network ${NETWORK} missing — run bin/db_up.sh first"
 [[ "$(docker inspect --format '{{.State.Status}}' "${DB_HOST}" 2>/dev/null || echo missing)" == "running" ]] \
   || die "container ${DB_HOST} is not running — run bin/db_up.sh first"
 
-# Build only when the image is absent or its inputs changed. `docker build` is already
-# cache-efficient, but skipping the call entirely keeps `status` genuinely fast.
-if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+# Validate credentials BEFORE the build step: a missing variable should cost one grep, not an
+# image build.
+POSTGRES_USER="$(read_env_value POSTGRES_USER)" || die "POSTGRES_USER missing from db/.env"
+POSTGRES_PASSWORD="$(read_env_value POSTGRES_PASSWORD)" || die "POSTGRES_PASSWORD missing from db/.env"
+POSTGRES_DB="$(read_env_value POSTGRES_DB)" || die "POSTGRES_DB missing from db/.env"
+
+# Build when the image is absent OR its inputs changed. "Inputs changed" is real, not aspirational:
+# the build inputs (Dockerfile + requirements.txt) are hashed into an image label, and a mismatch
+# triggers a rebuild — bumping the psycopg pin cannot be silently ignored. migrate.py itself is not
+# an input: it is bind-mounted at run time, never baked in.
+inputs_sha="$(cat "${PROJECT_DIR}/db/Dockerfile" "${PROJECT_DIR}/db/requirements.txt" | sha256sum | cut -d' ' -f1)"
+current_sha="$(docker image inspect --format '{{index .Config.Labels "rh.build_inputs_sha256"}}' "${IMAGE}" 2>/dev/null || true)"
+if [[ "${current_sha}" != "${inputs_sha}" ]]; then
   echo "building ${IMAGE}…"
-  docker build -q -f "${PROJECT_DIR}/db/Dockerfile" -t "${IMAGE}" "${PROJECT_DIR}/db" >/dev/null
+  docker build -q -f "${PROJECT_DIR}/db/Dockerfile" \
+    --label "rh.build_inputs_sha256=${inputs_sha}" \
+    -t "${IMAGE}" "${PROJECT_DIR}/db" >/dev/null
 fi
 
-set -a
-# shellcheck disable=SC1090
-source "${DB_ENV}"
-set +a
+# libpq-style PG* variables, passed by NAME (--env with no value): the credential never appears in
+# any argv, and no URL is ever assembled — a password containing '@', '/', or '%' would redirect or
+# break a concatenated postgresql:// URL (psycopg parses the userinfo section by delimiter), and
+# percent-encoding by hand is exactly the kind of correctness nobody re-verifies. libpq reads these
+# directly with no parsing layer in between. Values derive from db/.env on every run, so a rotated
+# password cannot drift out of sync with a stale copy.
+export PGHOST="${DB_HOST}"
+export PGPORT=5432
+export PGUSER="${POSTGRES_USER}"
+export PGPASSWORD="${POSTGRES_PASSWORD}"
+export PGDATABASE="${POSTGRES_DB}"
 
-: "${POSTGRES_USER:?POSTGRES_USER missing from db/.env}"
-: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing from db/.env}"
-: "${POSTGRES_DB:?POSTGRES_DB missing from db/.env}"
-
-# DATABASE_URL is assembled here and passed via the environment, never on the command line, so the
-# password is not visible in `ps`. Derived from the primitives rather than stored, so a rotated
-# password cannot drift out of sync with a stale copy of the URL.
-export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:5432/${POSTGRES_DB}"
-
-docker_flags=(--rm --network "${NETWORK}" --env DATABASE_URL --volume "${PROJECT_DIR}:/repo:ro")
+docker_flags=(--rm --network "${NETWORK}"
+  --env PGHOST --env PGPORT --env PGUSER --env PGPASSWORD --env PGDATABASE
+  --volume "${PROJECT_DIR}:/repo:ro")
 [[ -t 0 ]] && docker_flags+=(--tty)
 
 exec docker run "${docker_flags[@]}" "${IMAGE}" "$@"

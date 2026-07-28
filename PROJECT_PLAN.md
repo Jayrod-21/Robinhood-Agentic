@@ -168,6 +168,34 @@ These are decisions already made. They bound every phase below.
 
 ---
 
+## 3a. The gate on spending money (restated 2026-07-28)
+
+Two workstreams must reach a polished state **before** the FMP Premium purchase and before any live
+testing resumes. Strategy tuning is explicitly deferred until then.
+
+**Workstream A — infrastructure the debate engine can actually reason over.** The agents must be able
+to read the **knowledge base and the database** and do real analysis, rather than reasoning from a
+prompt plus a live yfinance call. Today `backend/app/debate/` fetches yfinance at request time and has
+no database access and no knowledge-base retrieval at all. Closing that means: DB-backed context
+(fundamentals with their `known_at`, price history, prior decisions and the realized Sharpe/Sortino
+they earned), plus the knowledge-base read path that makes §3.2 and §3.3 of
+`docs/EVALUATION_FRAMEWORK.md` possible — a judge cannot review the outcome of its own prior judgment
+if nothing stores that outcome where it can read it.
+
+**Workstream B — the UI.** A localhost prototype exists (Portfolio / Scan / Pipeline / Debate). It
+needs features added and its flaws fixed so it is the thing Jared actually interacts with: talking to
+the agents, seeing the dilemmas, and reading the evidence behind a decision. First-class deliverable,
+not a viewer over the API. `BACKLOG.md` items 1, 3, 4, 5 and issue #21 (the Weight column reporting a
+share of equity while the charter's limit is a share of account value) belong here.
+
+**Then, and only then:** buy FMP Premium, load real fundamentals history, and begin testing.
+
+Note what this ordering buys: every phase below can be built and validated against the five years of
+minute bars already on disk, so the purchase happens when there is something ready to consume it
+rather than a subscription ticking while the pipeline is still being written.
+
+---
+
 ## 4. Build phases
 
 Sequenced so each phase is independently useful and testable, and so nothing depends on a phase
