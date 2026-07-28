@@ -348,6 +348,7 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         ("001", False, True),
         ("002", False, True),
         ("003", False, True),
+        ("004", False, True),
     ]
 
 
@@ -479,4 +480,113 @@ def test_real_migrations_up_down_up(db_url: str) -> None:
     assert q(db_url, "SELECT count(*) FROM pg_roles WHERE rolname = 'rh_app'")[0][0] == 0
     assert q(db_url, "SELECT count(*) FROM pg_proc WHERE proname = 'ensure_price_bar_partitions'")[0][0] == 0
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 3
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 4
+
+
+# ── 004: the evaluation tables ────────────────────────────────────────────────────────────────
+# EVALUATION_FRAMEWORK.md names two constraints that must hold at the schema level. Both are pinned
+# here, because both protect against a specific way of fooling yourself rather than a crash.
+
+
+def test_evaluation_schema_enforces_sample_size(db_url: str) -> None:
+    """A Sharpe or Sortino without its sample size must be unstorable.
+
+    Standard deviation is undefined for n < 2, so a ratio reported with fewer observations is
+    arithmetically impossible — not merely unreliable. The framework's concern is a persona that
+    looks brilliant over six days being ranked as if that meant something.
+    """
+    md = str(REPO_MIGRATIONS)
+    assert main(["up", "--migrations-dir", md]) == EXIT_OK
+
+    q(db_url, "INSERT INTO agents (agent_key, version, kind) VALUES ('blind', 1, 'blind')")
+    pid = q(
+        db_url,
+        "INSERT INTO paper_portfolios (kind, agent_id, inception_date) "
+        "SELECT 'blind', id, CURRENT_DATE FROM agents WHERE kind = 'blind' RETURNING id",
+    )[0][0]
+
+    # n_observations is NOT NULL: omitting it fails rather than defaulting to something.
+    with pytest.raises(psycopg.errors.NotNullViolation):
+        q(
+            db_url,
+            "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, inputs_as_of) "
+            "VALUES (%s, CURRENT_DATE - 10, CURRENT_DATE, now())",
+            (pid,),
+        )
+
+    # A Sharpe claimed on a single observation is rejected.
+    with pytest.raises(psycopg.errors.CheckViolation):
+        q(
+            db_url,
+            "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
+            "sharpe, inputs_as_of) VALUES (%s, CURRENT_DATE - 10, CURRENT_DATE, 1, 1.5, now())",
+            (pid,),
+        )
+
+    # With enough observations it stores.
+    q(
+        db_url,
+        "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
+        "sharpe, sortino, max_drawdown, hit_rate, inputs_as_of) "
+        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 1.42, 2.10, -0.18, 0.55, now())",
+        (pid,),
+    )
+    assert q(db_url, "SELECT count(*) FROM evaluation_runs")[0][0] == 1
+
+
+def test_evaluation_runs_are_append_only(db_url: str) -> None:
+    """Recomputing with different reward weights writes a NEW row.
+
+    If a weight change overwrote past scores, every comparison across time would silently become
+    meaningless — the history would always look as though the current weights had always applied.
+    """
+    md = str(REPO_MIGRATIONS)
+    assert main(["up", "--migrations-dir", md]) == EXIT_OK
+
+    q(db_url, "INSERT INTO agents (agent_key, version, kind) VALUES ('blind', 1, 'blind')")
+    pid = q(
+        db_url,
+        "INSERT INTO paper_portfolios (kind, agent_id, inception_date) "
+        "SELECT 'blind', id, CURRENT_DATE FROM agents WHERE kind = 'blind' RETURNING id",
+    )[0][0]
+
+    for weights in ('{"w_sortino": 0.5}', '{"w_sortino": 0.7}'):
+        q(
+            db_url,
+            "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
+            "sharpe, inputs_as_of, reward_weights) "
+            "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 1.42, now(), %s::jsonb)",
+            (pid, weights),
+        )
+
+    # Same portfolio, same window, two weightings — both retained.
+    assert q(db_url, "SELECT count(*) FROM evaluation_runs WHERE portfolio_id = %s", (pid,))[0][0] == 2
+
+
+def test_evaluation_schema_shape_constraints(db_url: str) -> None:
+    """The structural invariants that keep the counterfactual machinery honest."""
+    md = str(REPO_MIGRATIONS)
+    assert main(["up", "--migrations-dir", md]) == EXIT_OK
+
+    q(db_url, "INSERT INTO agents (agent_key, version, kind) VALUES ('bull', 1, 'persona')")
+    q(db_url, "INSERT INTO agents (agent_key, version, kind) VALUES ('blind', 1, 'blind')")
+
+    # The blind control is a singleton — two would make "the control" ambiguous.
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        q(db_url, "INSERT INTO agents (agent_key, version, kind) VALUES ('blind2', 1, 'blind')")
+
+    # A counterfactual portfolio without the proposal it came from is meaningless.
+    with pytest.raises(psycopg.errors.CheckViolation):
+        q(
+            db_url,
+            "INSERT INTO paper_portfolios (kind, agent_id, inception_date) "
+            "SELECT 'counterfactual', id, CURRENT_DATE FROM agents WHERE agent_key = 'bull'",
+        )
+
+    # A debate must record its point-in-time cutoff: "we forgot" and "there wasn't one" must differ.
+    with pytest.raises(psycopg.errors.NotNullViolation):
+        q(db_url, "INSERT INTO debates (scope) VALUES ('slate')")
+
+    # A ticker debate needs a security; a slate debate must not have one.
+    with pytest.raises(psycopg.errors.CheckViolation):
+        q(db_url, "INSERT INTO debates (scope, context_as_of) VALUES ('ticker', now())")
