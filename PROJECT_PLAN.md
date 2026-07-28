@@ -133,6 +133,15 @@ dependency errors. Not a git hook, so `--no-verify` does not skip it.
 
 ---
 
+**The learning signal:** `docs/EVALUATION_FRAMEWORK.md` specifies how the system scores a decision —
+Sharpe + Sortino as a risk-adjusted reward, applied at three points (post-trade feedback, judge
+self-review, per-persona counterfactual track records) plus a blind control agent. It drives the
+Phase 2 schema and is the definition of "quantifiable" for Phase 7.
+
+**The data on hand:** `docs/DATA_INVENTORY.md` — 4.5 GB of Polygon minute bars and Bloomberg
+fundamentals in `data/market/` (gitignored). Enough to build and validate the pipeline; not yet
+enough to trust an edge estimate.
+
 **Prior art:** `docs/PATTERNS_FROM_9B.md` surveys 9b Korean Master — which runs this same shape on M
 already — and records which of its deploy, database, test-gate, and security patterns to port, with
 the reasoning behind each. Phases 1, 2, and 6 below lean on it directly.
