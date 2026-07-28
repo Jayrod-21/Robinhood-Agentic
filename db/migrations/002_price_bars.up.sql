@@ -1,7 +1,5 @@
 -- 002_price_bars — OHLCV bars, range-partitioned by month.
 --
--- migrate: non-destructive
---
 -- Sizing drove the design. A single Polygon day file holds ~1.44M rows (the full US equity
 -- universe at minute resolution), so the archive on hand is ~300M rows for eleven months — and the
 -- full 5-year set (2020-10-02 → 2025-10-02, in data/market/minute_bars_5y/) is roughly 1.6

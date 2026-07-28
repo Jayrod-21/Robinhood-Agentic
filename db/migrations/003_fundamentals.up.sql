@@ -1,7 +1,5 @@
 -- 003_fundamentals — dated fundamentals snapshots, point-in-time by construction.
 --
--- migrate: non-destructive
---
 -- The Sprinkle Sauce screen reads this table. Two dates are stored and they are NOT the same:
 --
 --   period_end  — the fiscal period the numbers describe

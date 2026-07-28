@@ -130,19 +130,30 @@ What the above requires the database to hold. This is the part the Phase 2 schem
 |---|---|
 | `agents` | Persona registry — bull, bear, optimist, pessimist, Wasden lens, judges, **blind**. Versioned, since a prompt change makes it a different agent for scoring purposes. |
 | `debates` | One row per debate: inputs, timestamp, participants. |
-| `agent_proposals` | What each persona proposed in each debate — the target weights. The seed of every counterfactual portfolio. |
-| `judgments` | Which judge ruled what, and why. Joins to the realized outcome for §3.2. |
-| `paper_portfolios` | One per persona per debate (plus the real portfolio and the blind agent). |
+| `agent_proposals` | What each persona proposed in each debate — the target weights. The seed of every counterfactual portfolio. Per-proposal weights sum to ≤ 100% of account value (enforced). |
+| `judgments` | Which judge ruled what, and why — plus **which proposal it backed** (`chosen_proposal_id`) and **the book the ruling produced** (`resulting_portfolio_id`). Those two columns are the §3.2 join path from a judgment to its realized outcome. |
+| `paper_portfolios` | One per persona per debate (the counterfactual sleeve), **one standing `agent_composite` book per persona** — rebalanced at each new proposal, so a persona-level Sharpe is defined the same way the blind control's is (§3.4) — plus the real portfolio and the blind agent. `strategy_mode` labels buy-and-hold sleeves as such. |
+| `paper_portfolio_positions` | Lot-level holdings: entry, exit, exit reason, realized P&L. Makes `market_value` recomputable (Σ shares × price + cash) and gives §3.1's entry-thesis→exit→lesson its per-position record. |
 | `portfolio_returns_daily` | Daily marked return per portfolio, real and counterfactual alike. The observation table every metric reads. |
-| `evaluation_runs` | Computed metrics for a (portfolio, window): sharpe, sortino, max_dd, hit_rate, **n_observations**, window bounds, and the code version that produced them. |
-| `knowledge_base_entries` | The §3.1 lessons — decision, outcome, score, what was learned. |
+| `evaluation_runs` | Computed metrics for a (portfolio, window): sharpe, sortino, max_dd, hit_rate, **n_observations** (verified against the actual mark count), window bounds, the code version, **the rf/MAR/annualisation parameters that make the ratios reproducible**, the walk-forward `split` label (§3.5), and `min_n_for_ranking`/`is_rankable` (§2 rule 3). |
+| `guardrail_events` | Every guardrail trip: rule, threshold, observed value, action, override provenance. The data source for §5's `guardrail_breach_penalty`, and the query that makes a mis-set limit visible in seconds. |
+| `risk_free_rates` | Point-in-time risk-free rate observations, so a stored Sharpe's rf is sourced, not asserted from a config constant. |
+| `market_calendar` | Trading-day reference, so a gap in the marks is distinguishable from a holiday. |
+| `knowledge_base_entries` | The §3.1 lessons — decision, outcome, score, what was learned. Append-only; a correction is a new row via `supersedes_id`, because rewriting a lesson under its original `as_of` is leakage by edit. |
 
-Two constraints that must hold at the schema level:
+Constraints that hold at the schema level — enforced, not recorded:
 
-- **`n_observations` is NOT NULL on `evaluation_runs`.** A ratio without its sample size is not a
-  usable number, and making it nullable guarantees somebody eventually reads one that is.
-- **Every feature and metric row records the as-of timestamp of its inputs**, so a leakage audit is a
-  query rather than an archaeology project.
+- **`n_observations` is NOT NULL on `evaluation_runs` — and verified.** A trigger checks the
+  claimed n against the actual mark count in the window; a ratio without (or with a misstated)
+  sample size is unstorable.
+- **Every metric row records the as-of timestamp of its inputs, bounded by constraints:** marks
+  cannot be priced after their window (`priced_as_of` within trade_date + grace), returns cannot
+  predate inception, `context_as_of` cannot postdate the debate's start, a counterfactual cannot
+  be backdated past its debate's cutoff, and `inputs_as_of` cannot precede the window it claims to
+  describe. (Row-level input provenance — *which* rows a debate read — remains future work.)
+- **Append-only is enforced by grants, not comments:** the runtime role holds no UPDATE/DELETE on
+  proposals, judgments (except the outcome link), marks, metrics, guardrail events, rates, or
+  knowledge-base entries.
 
 ## 5. Reward composition
 

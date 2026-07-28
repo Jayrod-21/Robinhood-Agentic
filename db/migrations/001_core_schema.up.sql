@@ -1,8 +1,6 @@
 -- 001_core_schema — securities, data-source provenance, the shared updated_at trigger, and the
 -- least-privilege runtime role.
 --
--- migrate: non-destructive
---
 -- Everything else keys off `securities`. Provenance is here rather than bolted on later because
 -- "which pull produced this row" stops being answerable once the rows exist without it — and the
 -- evaluation framework's whole claim to honesty rests on being able to reconstruct what was known

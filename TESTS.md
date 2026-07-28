@@ -42,7 +42,7 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
 
 ### 3b. Migration runner unit + integration tests (needs Docker)
 - **Command:** `python3 -m pytest db/tests/ -q`
-- **Pass criteria:** all tests pass (currently 104). Three layers: discovery tests for the
+- **Pass criteria:** all tests pass (currently 117). Three layers: discovery tests for the
   filename-based destructive classification (ADR-002: `NNN_name.destructive.{up,down}.sql`),
   loud rejection of near-miss filenames (uppercase `.SQL`, trailing junk — never silently
   skipped), byte-level rejection (NUL / BOM / invalid UTF-8), the best-effort keyword sniff
@@ -53,8 +53,10 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
   proving the CLASSIFICATION cannot be forged from contents and the sniff still refuses the
   literal shapes, and the server-enforced transaction-ownership
   check — stray `COMMIT`/`ROLLBACK`/`COMMIT;BEGIN` detected via libpq status + xid); and the
-  ACTUAL migrations 001-003 through a full up → down → up cycle with schema-behavior assertions
-  (restatement coexistence, partition spillover, symbol grammar, append-only provenance).
+  ACTUAL migrations 001-004 through a full up → down → up cycle with schema-behavior assertions
+  (restatement coexistence, partition spillover, symbol grammar, append-only provenance, and the
+  evaluation-schema invariants: cascade/RESTRICT history protection, append-only grants,
+  verified n_observations, strategy-mode/kind tie).
 - **Network:** Docker only — testcontainers spins a throwaway postgres:16-alpine; the live rh-db
   is never touched.
 

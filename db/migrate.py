@@ -20,8 +20,11 @@ DESTRUCTIVE CLASSIFICATION — the filename is the single source of truth
     tell comments from literals from code. Thirteen distinct end-to-end forgeries later, the parser
     is GONE (ADR-002). A filename cannot be influenced by anything inside the file, so the entire
     forgery class is structurally impossible: no text a migration body contains can change its
-    classification. ``-- migrate:`` comments are inert; the ones still present in the applied
-    001-003 up bodies stay only because editing an applied migration would break its checksum.
+    classification. ``-- migrate:`` comments are inert, and none remain in the tree: the dead
+    directive lines were removed from the 001-003 up bodies during the 004 fix-pass (2026-07-28),
+    which cycled the schema-only, never-shipped database to 000 and re-applied it, re-recording
+    all four checksums (ADR-002, Consequences). The checksum rule itself is unchanged: editing an
+    applied migration without re-applying it still raises ChecksumMismatch.
 
     A keyword sniff backs the filename as a BEST-EFFORT secondary net: a file whose RAW TEXT
     contains DROP TABLE / DROP SCHEMA / DROP DATABASE / DROP OWNED / DROP MATERIALIZED / TRUNCATE

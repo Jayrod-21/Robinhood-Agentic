@@ -76,10 +76,17 @@ could manipulate, behind a lexer that had to match PostgreSQL's byte-for-byte, f
   literal `DROP TABLE`, so it is the sniff that stops them (round 4 R4-S3). An unmarked file
   whose destructive statement the sniff cannot see (dynamic SQL) still applies — that reality is
   itself pinned in the test suite, and the filename marker is the control for it.
-- `-- migrate:` directives are **dead**. The ones still present in the applied `001`–`003` up
-  bodies are inert comments left in place deliberately: the up body is checksummed and editing an
-  applied migration violates the checksum invariant. Down bodies are not checksummed, so the
-  directive lines were removed from the renamed down files.
+- `-- migrate:` directives are **dead**, and none remain in the tree. This ADR originally kept
+  the inert lines in the applied `001`–`003` up bodies, because the up body is checksummed and
+  editing an applied migration breaks its recorded checksum. **That keep-in-place decision was
+  reversed during the 004 fix-pass (2026-07-28):** the directive lines were removed from the
+  `001`–`003` up bodies, and the database — single-operator, schema-only, no row ever written —
+  was cycled to 000 and fully re-applied, re-recording all four checksums (`status` verified:
+  001–004 applied, checksums `ok`). The checksum invariant itself is unchanged and still stands
+  for future edits: editing an applied migration without re-applying it raises
+  `ChecksumMismatch`, and on any database that has shipped data the rule remains "never edit an
+  applied migration". Down bodies are not checksummed, so the directive lines in the renamed down
+  files were simply removed.
 - The three down files were renamed to `*.destructive.down.sql`. This cannot orphan
   `schema_migrations` rows: the marker sits outside `FILENAME_RE`'s `name` capture group, so the
   recorded `version`/`name` are unchanged (verified live: `status` shows 001–003 applied,
