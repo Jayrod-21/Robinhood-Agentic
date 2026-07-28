@@ -1,0 +1,122 @@
+# Postgres for the 3b market-data / evaluation store.
+#
+# A SEPARATE compose project from the dashboard, deliberately:
+#   * the database must outlive a dashboard redeploy — `docker compose down` on the app must not
+#     take the data store with it;
+#   * the purple/yellow (blue/green) work needs BOTH colors pointing at one shared database, which
+#     is only possible if the DB is not owned by either color's project.
+# This mirrors 9b Korean Master's shared/blue/green split.
+#
+# Brought up by bin/db_up.sh, which supplies DB_PORT (from .env.db, verified free at creation) and
+# the credentials from db/.env.
+#
+# Security posture, per SENIOR_ENGINEER_BAR §6.3/§6.4 and 9b's Deploy/SECURITY.md:
+#   * host port bound to 127.0.0.1 ONLY — nothing off-box may reach the database;
+#   * `rh-internal` is `internal: true`, so the DB container has NO egress. This is the defense
+#     against a malicious dump or SQL payload using `COPY ... FROM PROGRAM 'curl …'` to exfiltrate;
+#   * no-new-privileges + cap_drop ALL, with only the caps Postgres actually needs added back;
+#   * resource limits and log-size caps so a runaway query or log flood can't take down the host,
+#     which also runs 9b.
+
+services:
+  db:
+    # Pinned by digest as well as tag: a tag is mutable, and "it worked yesterday" should not depend
+    # on what postgres:16-alpine happens to point at today. Matches 9b's Postgres major so operator
+    # habits and pg_dump/pg_restore compatibility carry across both stacks on this box.
+    # Digest resolved by `docker pull postgres:16-alpine` on 2026-07-28. To bump: pull, read
+    # `docker inspect --format='{{index .RepoDigests 0}}' postgres:16-alpine`, update here.
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    container_name: rh-db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER missing — is db/.env present?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing — is db/.env present?}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB missing — is db/.env present?}
+      # Deterministic collation. Left to the host locale, index ordering can differ between machines
+      # and a restored dump can end up subtly inconsistent with its indexes.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${DB_SHARED_BUFFERS:-512MB}
+      - -c
+      - work_mem=${DB_WORK_MEM:-16MB}
+      # The bulk minute-bar load is one long transaction; the default 30s/60s app-facing timeouts
+      # would kill it. Loader sessions raise these locally (SET LOCAL), so the server default stays
+      # sane for the app.
+      - -c
+      - statement_timeout=0
+      - -c
+      - idle_in_transaction_session_timeout=0
+      # Log slow queries so a missing index on a 300M-row table is visible rather than merely slow.
+      - -c
+      - log_min_duration_statement=1000
+
+    # NO `ports:` stanza, deliberately — see docs/adr/ADR-001-db-network-isolation.md.
+    #
+    # A container attached only to an `internal: true` network gets NO host port bindings. Docker
+    # accepts a `ports:` declaration and then silently does nothing with it, which is worse than an
+    # error: the compose file reads as though loopback access works. (9b Korean Master has exactly
+    # this — `127.0.0.1:5432:5432` declared on km-db, nothing listening on 5432. Its tooling all
+    # goes through `docker exec`, so the dead declaration was never noticed.)
+    #
+    # We keep the isolation and reach the database the way it actually works: `bin/db_psql.sh` for
+    # interactive/host use, and containers attached to rh-internal for migrations and bulk loads.
+
+    volumes:
+      - rh_db_data:/var/lib/postgresql/data
+
+    networks:
+      - rh-internal
+
+    healthcheck:
+      # Probe 127.0.0.1 explicitly, not localhost: if the image resolves localhost to ::1 first and
+      # the server is listening on IPv4, the check fails forever and the container never goes
+      # healthy. 9b hit exactly this.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER} -d ${POSTGRES_DB} -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # Postgres drops from root to the `postgres` user at startup; without these the entrypoint
+      # cannot chown the data directory or switch user on first init.
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+
+    deploy:
+      resources:
+        limits:
+          memory: ${DB_MEM_LIMIT:-2g}
+          cpus: "${DB_CPU_LIMIT:-2.0}"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  rh-internal:
+    name: rh-internal
+    driver: bridge
+    # No egress. The database has no legitimate reason to reach the internet, and this is what turns
+    # a `COPY ... FROM PROGRAM` payload from an exfiltration into a failed syscall.
+    internal: true
+
+volumes:
+  rh_db_data:
+    # Name-pinned so the real Docker object is `rh_db_data`, not `<project>_rh_db_data`. Both the
+    # dashboard project and (later) the purple/yellow colors must attach to the SAME volume, and a
+    # project-prefixed name would silently give each its own empty database.
+    name: rh_db_data

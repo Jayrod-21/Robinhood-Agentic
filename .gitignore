@@ -38,3 +38,6 @@ SENIOR_ENGINEER_BAR.md
 # Never committed: too large for git, and it is licensed third-party data.
 # Ingested into Postgres by the loaders; the DB is the working copy, this is the archive.
 data/market/
+
+# Postgres credentials (bin/db_up.sh generates this on first run).
+db/.env

@@ -41,7 +41,7 @@ command -v docker >/dev/null 2>&1 || DOCKER="docker.exe"
 COMPOSE_FILE="${AGENTIC_COMPOSE_FILE:-${PROJECT_DIR}/docker-compose.yml}"
 set -a; [ -f "${PROJECT_DIR}/.env.ports" ] && source "${PROJECT_DIR}/.env.ports"; set +a
 
-cd "${PROJECT_DIR}"
+cd "${PROJECT_DIR}" || exit 1
 "${DOCKER}" compose -f "${COMPOSE_FILE}" exec -T backend python -m app.jobs.cycle "${phase}" "$@"
 
 echo "=== done @ $(date -u +%FT%TZ) ==="
