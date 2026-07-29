@@ -57,6 +57,7 @@ import os
 import re
 import sys
 import time
+import zlib
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from datetime import time as dtime
@@ -88,6 +89,16 @@ EXPECTED_HEADER = ["ticker", "volume", "open", "close", "high", "low", "window_s
 
 class LoadError(Exception):
     """A failure this module raises deliberately."""
+
+
+class CorruptArchive(LoadError):
+    """A gzip member that will not decompress.
+
+    Its own type because it means something different from every other failure: the DATA is bad,
+    not the code or the database. A run must report it, skip the file, and carry on — 15 corrupt
+    files out of 1,256 were found in this archive, and crashing on the first would have hidden the
+    other 14 behind a traceback.
+    """
 
 
 @dataclass(slots=True)
@@ -167,6 +178,23 @@ def trade_date_from_name(path: Path) -> date:
     return date.fromisoformat(m.group(1))
 
 
+def _rows_or_corrupt(reader, path: Path):
+    """Yield CSV rows, converting a mid-stream decompression failure into CorruptArchive.
+
+    gzip surfaces corruption lazily — a member can decompress for hundreds of thousands of rows and
+    then fail on a bad block, so the failure has to be caught around the ITERATION, not the open.
+    """
+    while True:
+        try:
+            yield next(reader)
+        except StopIteration:
+            return
+        except (OSError, EOFError, zlib.error) as exc:
+            # OSError covers gzip.BadGzipFile and a genuine read error alike: both mean this file
+            # cannot be read, which is what the caller needs to act on.
+            raise CorruptArchive(f"{path.name}: corrupt gzip stream mid-file: {exc}") from exc
+
+
 def aggregate_file(path: Path) -> tuple[dict[tuple[str, date], DayBar], int, int]:
     """Stream one day file and fold it into per-symbol regular-session bars."""
     bars: dict[tuple[str, date], DayBar] = {}
@@ -175,16 +203,28 @@ def aggregate_file(path: Path) -> tuple[dict[tuple[str, date], DayBar], int, int
     trade_date = trade_date_from_name(path)
     lo_ns, hi_ns = session_bounds_ns(trade_date)
 
-    with gzip.open(path, "rt", newline="", encoding="utf-8") as fh:
+    try:
+        fh = gzip.open(path, "rt", newline="", encoding="utf-8")
+    except (OSError, EOFError, zlib.error) as exc:
+        raise CorruptArchive(f"{path.name}: cannot open as gzip: {exc}") from exc
+
+    with fh:
         reader = csv.reader(fh)
-        header = next(reader, None)
+        try:
+            header = next(reader, None)
+        except (OSError, EOFError, zlib.error) as exc:
+            # gzip.open is lazy, so a bad magic number surfaces HERE rather than at open, and
+            # gzip.BadGzipFile subclasses OSError rather than zlib.error.
+            raise CorruptArchive(f"{path.name}: corrupt gzip stream at header: {exc}") from exc
         if header != EXPECTED_HEADER:
             raise LoadError(
                 f"{path.name}: unexpected header {header!r}; expected {EXPECTED_HEADER!r} — the "
                 "provider's column set changed and the parser must be reviewed before loading."
             )
 
-        for row in reader:
+        # The decompression error surfaces mid-iteration, so the loop body is wrapped rather than
+        # the open: a file can decompress for 800k rows and fail on the next block.
+        for row in _rows_or_corrupt(reader, path):
             rows_read += 1
             if len(row) != 8:
                 skipped += 1
@@ -360,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_CONNECTION
 
     total = total_skipped = derived = already = 0
+    corrupt: list[str] = []
     started = time.monotonic()
     try:
         for i, path in enumerate(files, 1):
@@ -368,6 +409,12 @@ def main(argv: list[str] | None = None) -> int:
             except psycopg.Error as exc:
                 logger.error("%s: %s", path.name, exc)
                 return EXIT_SQL
+            except CorruptArchive as exc:
+                # The DATA is bad, not the code. Report it, count it, keep going — one unreadable
+                # file must not hide the state of the other 1,255.
+                corrupt.append(path.name)
+                logger.error("CORRUPT %s", exc)
+                continue
             except LoadError as exc:
                 logger.error("%s: %s", path.name, exc)
                 return EXIT_VALIDATION
@@ -391,6 +438,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     if total_skipped:
         logger.warning("%s minute row(s) were skipped — see per-file detail with --verbose", f"{total_skipped:,}")
+    if corrupt:
+        # Non-zero exit: the archive is incomplete and every downstream date range is affected.
+        # Silence here would let a gap in the price series look like a market holiday.
+        logger.error("%d CORRUPT file(s) could not be read: %s", len(corrupt), ", ".join(corrupt))
+        logger.error("Those trading days are ABSENT from the daily series. Re-copy them from the "
+                     "source drive and re-run; the loader resumes by content hash.")
+        return EXIT_VALIDATION
     return EXIT_OK
 
 

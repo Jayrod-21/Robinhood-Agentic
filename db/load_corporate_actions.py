@@ -233,16 +233,45 @@ def cmd_adjust(conn: psycopg.Connection, _args: argparse.Namespace) -> int:
     logger.info("%d securities carry at least one split", n_split_secs)
 
     # Securities WITH splits: the real adjustment. Small set, so the per-row function call is cheap.
+    #
+    # The FACTOR is always written; adj_close only where the level is representable. Serial
+    # reverse-splitters (WHLR 16 splits, UVXY 13, NUWE with a cumulative factor near 1e-10) imply
+    # adjusted prices around 1e13, and NUMERIC(30,10) tops out below that. Writing NULL there is
+    # correct rather than lossy: the factor carries the full information, and returns computed as
+    # (close/f) ratios never need the level. See migration 006.
     with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE price_bars_daily d
-            SET adj_close = ROUND(d.close / split_factor_after(d.security_id, d.trade_date), 6)
-            WHERE d.security_id IN (SELECT DISTINCT security_id FROM corporate_actions WHERE action_type='split')
+            SET split_adj_factor = f.factor,
+                adj_close = CASE
+                    WHEN d.close / f.factor < 1e19 THEN ROUND(d.close / f.factor, 10)
+                    ELSE NULL
+                END
+            FROM (
+                SELECT d2.security_id, d2.trade_date,
+                       split_factor_after(d2.security_id, d2.trade_date) AS factor
+                FROM price_bars_daily d2
+                WHERE d2.security_id IN (
+                    SELECT DISTINCT security_id FROM corporate_actions WHERE action_type='split')
+            ) f
+            WHERE d.security_id = f.security_id AND d.trade_date = f.trade_date
             """
         )
         adjusted = cur.rowcount
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM price_bars_daily "
+            "WHERE split_adj_factor IS NOT NULL AND adj_close IS NULL"
+        )
+        unrepresentable = cur.fetchone()[0]
     logger.info("adjusted %s bars for split-affected securities", f"{adjusted:,}")
+    if unrepresentable:
+        logger.warning(
+            "%s bar(s) have a factor but no representable adj_close (serial reverse-splitters). "
+            "Their returns are still computable from split_adj_factor.", f"{unrepresentable:,}",
+        )
 
     # Everything else: adj_close = close. Batched by primary-key range rather than one statement,
     # because a single UPDATE over ~11M rows holds one enormous transaction and doubles the table's
@@ -254,11 +283,11 @@ def cmd_adjust(conn: psycopg.Connection, _args: argparse.Namespace) -> int:
                 """
                 WITH batch AS (
                     SELECT security_id, trade_date FROM price_bars_daily
-                    WHERE adj_close IS NULL
+                    WHERE split_adj_factor IS NULL
                     LIMIT 500000
                 )
                 UPDATE price_bars_daily d
-                SET adj_close = d.close
+                SET adj_close = d.close, split_adj_factor = 1
                 FROM batch b
                 WHERE d.security_id = b.security_id AND d.trade_date = b.trade_date
                 """
@@ -270,7 +299,7 @@ def cmd_adjust(conn: psycopg.Connection, _args: argparse.Namespace) -> int:
         logger.info("  … %s unsplit bars set (%s total)", f"{n:,}", f"{total_plain:,}")
 
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FILTER (WHERE adj_close IS NULL), count(*) FROM price_bars_daily")
+        cur.execute("SELECT count(*) FILTER (WHERE split_adj_factor IS NULL), count(*) FROM price_bars_daily")
         remaining, total = cur.fetchone()
 
     logger.info(
@@ -278,7 +307,7 @@ def cmd_adjust(conn: psycopg.Connection, _args: argparse.Namespace) -> int:
         f"{total:,}", f"{remaining:,}", time.monotonic() - started,
     )
     if remaining:
-        logger.warning("%s bars have no adj_close — investigate before trusting any return", f"{remaining:,}")
+        logger.warning("%s bars have no split_adj_factor — investigate before trusting any return", f"{remaining:,}")
         return EXIT_VALIDATION
     return EXIT_OK
 

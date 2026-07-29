@@ -26,3 +26,47 @@
 2026-07-29 17:10:19,813 INFO load_daily_bars: [475/1256] 2022-08-22.csv.gz — 10,648 bars in 4.7s
 2026-07-29 17:12:18,866 INFO load_daily_bars: [500/1256] 2022-09-27.csv.gz — 11,026 bars in 4.9s
 2026-07-29 17:14:16,361 INFO load_daily_bars: [525/1256] 2022-11-01.csv.gz — 10,842 bars in 4.9s
+2026-07-29 17:16:14,183 INFO load_daily_bars: [550/1256] 2022-12-07.csv.gz — 10,608 bars in 4.9s
+2026-07-29 17:18:10,168 INFO load_daily_bars: [575/1256] 2023-01-13.csv.gz — 10,602 bars in 4.6s
+2026-07-29 17:20:05,036 INFO load_daily_bars: [600/1256] 2023-02-21.csv.gz — 10,540 bars in 4.7s
+2026-07-29 17:22:03,626 INFO load_daily_bars: [625/1256] 2023-03-28.csv.gz — 10,311 bars in 4.5s
+2026-07-29 17:23:57,828 INFO load_daily_bars: [650/1256] 2023-05-03.csv.gz — 10,226 bars in 4.7s
+2026-07-29 17:25:52,167 INFO load_daily_bars: [675/1256] 2023-06-08.csv.gz — 10,251 bars in 4.5s
+2026-07-29 17:27:46,167 INFO load_daily_bars: [700/1256] 2023-07-17.csv.gz — 10,211 bars in 4.6s
+2026-07-29 17:29:40,472 INFO load_daily_bars: [725/1256] 2023-08-21.csv.gz — 10,160 bars in 4.5s
+2026-07-29 17:31:30,184 INFO load_daily_bars: [750/1256] 2023-09-26.csv.gz — 10,117 bars in 4.3s
+2026-07-29 17:33:24,180 INFO load_daily_bars: [775/1256] 2023-10-31.csv.gz — 10,107 bars in 4.7s
+2026-07-29 17:35:19,181 INFO load_daily_bars: [800/1256] 2023-12-06.csv.gz — 10,149 bars in 4.7s
+2026-07-29 17:37:17,921 INFO load_daily_bars: [825/1256] 2024-01-12.csv.gz — 10,068 bars in 4.5s
+2026-07-29 17:39:16,361 INFO load_daily_bars: [850/1256] 2024-02-20.csv.gz — 10,177 bars in 4.8s
+2026-07-29 17:41:14,977 INFO load_daily_bars: [875/1256] 2024-03-26.csv.gz — 10,180 bars in 4.7s
+2026-07-29 17:43:14,023 INFO load_daily_bars: [900/1256] 2024-05-01.csv.gz — 10,068 bars in 4.7s
+2026-07-29 17:45:08,042 INFO load_daily_bars: [925/1256] 2024-06-06.csv.gz — 10,120 bars in 4.5s
+2026-07-29 17:47:00,464 INFO load_daily_bars: [950/1256] 2024-07-15.csv.gz — 10,244 bars in 4.8s
+2026-07-29 17:48:55,716 INFO load_daily_bars: [975/1256] 2024-08-19.csv.gz — 10,215 bars in 4.4s
+2026-07-29 17:50:48,517 INFO load_daily_bars: [1000/1256] 2024-09-24.csv.gz — 10,258 bars in 4.5s
+2026-07-29 17:52:41,722 INFO load_daily_bars: [1025/1256] 2024-10-29.csv.gz — 10,295 bars in 4.6s
+2026-07-29 17:54:41,927 INFO load_daily_bars: [1050/1256] 2024-12-04.csv.gz — 10,395 bars in 5.0s
+Traceback (most recent call last):
+  File "/repo/db/load_daily_bars.py", line 398, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/repo/db/load_daily_bars.py", line 367, in main
+    result = load_file(conn, path, dry_run=args.dry_run)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/repo/db/load_daily_bars.py", line 261, in load_file
+    bars, rows_read, skipped = aggregate_file(path)
+                               ^^^^^^^^^^^^^^^^^^^^
+  File "/repo/db/load_daily_bars.py", line 187, in aggregate_file
+    for row in reader:
+               ^^^^^^
+  File "/usr/local/lib/python3.12/gzip.py", line 351, in read1
+    return self._buffer.read1(size)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/_compression.py", line 68, in readinto
+    data = self.read(len(byte_view))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/gzip.py", line 554, in read
+    uncompress = self._decompressor.decompress(b"", size)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+zlib.error: Error -3 while decompressing data: invalid block type
