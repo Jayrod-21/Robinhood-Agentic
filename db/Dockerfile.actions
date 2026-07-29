@@ -1,0 +1,21 @@
+# Corporate-actions loader image.
+#
+# Separate from db/Dockerfile (the migration runner) on purpose: this one carries yfinance and its
+# dependency tree, and the migration runner has no business shipping a market-data client. Keeping
+# them apart also means a provider-library CVE never forces a rebuild of the thing that applies
+# migrations.
+#
+# Digest from `docker pull python:3.12-slim` on 2026-07-28; bump with the runner image together.
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+
+# Not hash-pinned like db/requirements.txt: yfinance pulls a wide transitive tree (pandas, numpy,
+# curl_cffi) whose hash set would need regenerating on every bump. This image touches no secret and
+# is short-lived, so the version pins are the control here. The migration runner, which does touch
+# the schema, keeps its --require-hashes install.
+RUN pip install --no-cache-dir \
+      "psycopg[binary]==3.3.4" \
+      "yfinance==1.5.2"
+
+RUN useradd --uid 1001 --create-home --shell /usr/sbin/nologin runner
+WORKDIR /repo
+ENTRYPOINT ["python"]
