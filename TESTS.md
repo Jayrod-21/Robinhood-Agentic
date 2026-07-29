@@ -2,6 +2,21 @@
 
 Consumed by `/testcheck`. Each suite lists its command and pass criteria.
 
+**The authoritative gate is `bin/local_test.sh`**, which runs every suite in a container pinned to
+CI's toolchain (`python:3.12-slim`, `node:20-slim`). Run it before any commit you care about:
+
+```bash
+bash bin/local_test.sh          # all six hard gates
+bash bin/local_test.sh --fast   # skips database + frontend. NOT a gate — inner loop only.
+```
+
+Why it exists: this host runs Python **3.14** while CI and the deploy containers run **3.12**. A
+green `.venv/bin/python -m pytest` is a claim about the host, not about what ships. Every suite
+below is reproduced there under CI's versions, so a green run means CI will be green for the same
+reasons rather than by coincidence. **If you bump an image or a tool version, bump it in
+`.github/workflows/ci.yml` and `bin/local_test.sh` in the same commit** — the moment they drift,
+this gate stops meaning anything.
+
 **Setup:** run from the project root with the venv active (`python3 -m venv .venv && .venv/bin/pip
 install -r backend/requirements.txt ruff`, or `make venv`). Commands below say `python3`; use
 `.venv/bin/python` if the venv isn't activated — the backend suite needs `fastapi`/`pydantic`, which

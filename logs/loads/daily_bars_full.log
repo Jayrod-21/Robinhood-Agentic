@@ -1,0 +1,17 @@
+2026-07-29 16:33:32,946 INFO load_daily_bars: 1256 file(s) to consider under data/market/minute_bars_5y
+2026-07-29 16:33:32,970 INFO load_daily_bars: skip 2020-10-02.csv.gz — already derived (source_id=7, 8672 bars)
+2026-07-29 16:33:32,980 INFO load_daily_bars: skip 2020-10-05.csv.gz — already derived (source_id=8, 8729 bars)
+2026-07-29 16:33:32,991 INFO load_daily_bars: skip 2020-10-06.csv.gz — already derived (source_id=9, 8761 bars)
+2026-07-29 16:33:33,002 INFO load_daily_bars: skip 2020-10-07.csv.gz — already derived (source_id=10, 8688 bars)
+2026-07-29 16:33:33,013 INFO load_daily_bars: skip 2020-10-08.csv.gz — already derived (source_id=11, 8727 bars)
+2026-07-29 16:33:33,023 INFO load_daily_bars: skip 2020-10-09.csv.gz — already derived (source_id=12, 8717 bars)
+2026-07-29 16:34:51,252 INFO load_daily_bars: [25/1256] 2020-11-05.csv.gz — 8,817 bars in 4.2s
+2026-07-29 16:36:38,297 INFO load_daily_bars: [50/1256] 2020-12-11.csv.gz — 9,091 bars in 4.4s
+2026-07-29 16:38:29,259 INFO load_daily_bars: [75/1256] 2021-01-20.csv.gz — 9,316 bars in 4.6s
+2026-07-29 16:40:30,612 INFO load_daily_bars: [100/1256] 2021-02-25.csv.gz — 9,673 bars in 5.2s
+2026-07-29 16:42:31,127 INFO load_daily_bars: [125/1256] 2021-04-01.csv.gz — 9,977 bars in 4.6s
+2026-07-29 16:44:24,265 INFO load_daily_bars: [150/1256] 2021-05-07.csv.gz — 10,111 bars in 4.6s
+2026-07-29 16:46:19,973 INFO load_daily_bars: [175/1256] 2021-06-14.csv.gz — 10,291 bars in 4.6s
+2026-07-29 16:48:17,094 INFO load_daily_bars: [200/1256] 2021-07-20.csv.gz — 10,335 bars in 4.8s
+2026-07-29 16:50:11,918 INFO load_daily_bars: [225/1256] 2021-08-24.csv.gz — 10,455 bars in 4.7s
+2026-07-29 16:52:09,673 INFO load_daily_bars: [250/1256] 2021-09-29.csv.gz — 10,415 bars in 4.7s
