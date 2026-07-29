@@ -68,6 +68,24 @@ services:
       # Log slow queries so a missing index on a 300M-row table is visible rather than merely slow.
       - -c
       - log_min_duration_statement=1000
+      # Bulk-load tuning. The minute-bar archive is ~2 billion rows and a single day file writes
+      # ~600 MB of heap plus index. At the 1 GB default, checkpoints fire several times per FILE,
+      # and because full_page_writes is on, the first write to each page after a checkpoint copies
+      # the whole page into WAL — so frequent checkpoints multiply write volume rather than just
+      # adding pauses. Measured: 22k rows/s at the default.
+      #
+      # A larger max_wal_size trades recovery time after a crash for write throughput. That is the
+      # right trade here: the loader is resumable by content hash, so the worst case is re-loading
+      # one file.
+      - -c
+      - max_wal_size=8GB
+      - -c
+      - min_wal_size=1GB
+      - -c
+      - checkpoint_timeout=30min
+      # Spread checkpoint I/O across the interval instead of a spike that stalls the COPY.
+      - -c
+      - checkpoint_completion_target=0.9
 
     # NO `ports:` stanza, deliberately — see docs/adr/ADR-001-db-network-isolation.md.
     #

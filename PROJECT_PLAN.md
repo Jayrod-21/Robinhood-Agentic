@@ -1,377 +1,223 @@
 # 3b — Project Plan
 
-**Status as of 2026-07-27.** This is the living plan: what is broken right now, what gets built next
-and in what order, how each phase is tested, and how the work is tracked. `PROJECT.md` says what the
-project *is*; this says what happens next. Update it as phases land.
-
-The destination is stated in one line: **do what 3a (Sprinkle Sauce / Wasden Watch) does — the same
-brains, on better data — but live on my own Robinhood account, hosted on M.**
+**Rewritten 2026-07-28.** The previous version's phases predated the evaluation framework, the data
+landing, and the reordering around infrastructure-then-UI. This one starts from a stated end state
+and works backwards.
 
 ---
 
-## 1. Where the project actually is
+## 1. What "done" means
 
-Built and working: the Sprinkle Sauce screen on yfinance, the forward-thesis layer, Robinhood
-execution through the MCP, the append-only `logs/` archive, a Dockerized dashboard (FastAPI +
-Next.js) with a 10-agent jury debate engine, the host-side refresh bridge, and a prod deploy
-topology with a twice-daily cron cycle.
+Concretely, so it can be checked rather than felt:
 
-Verified live on M on 2026-07-27: `.venv` installs clean, 87 tests pass, the frontend builds, the
-Docker stack comes up on random ports, all four pages serve, and both the container scan endpoint
-and the `src.daily_scan` CLI return real yfinance fundamentals.
+> Every trading day, on M, the system pulls the account, refreshes market data, runs the Sprinkle
+> Sauce screen over a real universe, holds a debate whose agents can read the database and the
+> knowledge base, scores every proposal — winning and losing — against a risk-adjusted reward, writes
+> the outcome back where the next debate will read it, and surfaces all of it in a UI Jared uses to
+> see the dilemma, the evidence, and each agent's track record. Orders are proposed by the system and
+> confirmed by a human. Nothing acts on a stale or unreconciled book.
 
-What that verification did **not** cover, because it can't yet: anything touching the live account.
+Two properties matter more than any feature:
 
----
+- **It can tell you when it is wrong.** Reconciliation against the broker, sample sizes beside every
+  ratio, guardrails that announce what they blocked and why.
+- **Its numbers survive scrutiny.** No lookahead, no survivorship bias, no unreproducible metric.
 
-## 2. Current problems
-
-Ordered by what blocks the most downstream work. IDs are stable — reference them in commits and
-issues.
-
-### P1 — The `robinhood-trading` MCP needs its OAuth completed  🔴 blocking
-
-Every live-account path depends on it: the Portfolio page, the Refresh button, `bin/refresh_once.sh`,
-and the twice-daily cycle job. Without it `/api/account` returns 503 and `/api/health` reports
-`snapshot_present: false`.
-
-**Registered 2026-07-27** at user scope — `https://agent.robinhood.com/mcp/trading`. `claude mcp list`
-now reports it as `! Needs authentication`. The remaining step is interactive and cannot be scripted:
-run `claude` on M and complete the Robinhood OAuth when prompted.
-
-Two related bugs found while wiring this up, both now fixed: `bin/refresh_daemon.sh` hard-coded
-`MCP_CWD="/root/Jared"` — the projects root on the retired WSL box — so every headless refresh `cd`'d
-into a nonexistent path and exited 1, which is indistinguishable from "the MCP isn't authenticated".
-It now defaults to the project root. And `SERVER_DEPLOY.md` recorded only a `...` placeholder for the
-URL, which is why it was unrecoverable; the real URL is now in the docs.
-
-### P2 — The live slate has run unmonitored for ~7 weeks  🔴 real money
-
-Seven positions (TSM, VST, NVDA, V, CVX, GEV, QCOM) were deployed 2026-06-03. The last cycle report
-is `logs/reports/2026-06-16-close.md`. There is no crontab on M, so nothing has refreshed, debated,
-or checked a stop since. Blocked on P1. Nobody knows the current P&L — and the charter's discipline
-rules (stops, exit-before-entry, cash floor) have had no enforcement in that window.
-
-### P3 — No position monitoring or stop discipline  🟠
-
-The dashboard reports state; it does not *watch* it. There are no stop levels, no target levels, no
-drift-from-target alerts, and no alerting path at all. This is the unchecked roadmap item in
-`PROJECT.md`, and it is what would have made P2 harmless.
-
-### P4 — No outcome logging or lesson capture  🟠
-
-Closing a position writes nothing back. The journal is the "self-learning substrate" in name, but
-there is no structured record of *entry thesis → exit → what actually happened → what we learned*.
-Every debate is therefore reasoning from scratch rather than from a track record.
-
-### P5 — yfinance is the only data source  🟠
-
-Unofficial, rate-limited, and schema-unstable. It is also the reason the screen is thin: the
-Piotroski inputs and several Wasden signals are approximated from whatever `.info` happens to
-return. FMP replaces it (§4, Phase B).
-
-### P6 — No local database  🟠
-
-Everything is JSON files and markdown. That is fine for a journal and fatal for backtesting,
-time-series portfolio value, and any ML. There is no price history, no fundamentals history, and no
-positions history — so `BACKLOG.md` item 5 (the portfolio value chart) has nothing to plot.
-
-### P7 — Deploy is documented for a server that no longer exists  🟠
-
-`SERVER_DEPLOY.md` and `deploy/` target a generic Ubuntu box with Caddy + basic auth. The actual
-target is now M behind a Cloudflare Tunnel on a `jaredstudio.com` subdomain, matching 9b. Basic auth
-in front of a live brokerage view is also weaker than what 9b already does for a language app.
-
-### P8 — No security threat model  🟡
-
-There is no `SECURITY.md` anywhere in the repo. 9b has six. For an app that fronts a live brokerage
-account, a snapshot of real holdings, an Anthropic API key, and a side-effecting refresh endpoint —
-and that is about to gain an order-placement path (`BACKLOG.md` item 2) — that gap should close
-before it goes on the public internet, not after.
-
-### P9 — Host tooling gaps on M  🟡
-
-`make` is not installed even though the Makefile is the documented entry point. Host Python is 3.14
-while containers are 3.12, so "passes locally" and "passes in CI" are not the same statement; 9b
-solved this by running every suite in a pinned container. No `ANTHROPIC_API_KEY` in `backend/.env`,
-so debates and pipeline 503.
-
-### P11 — Fourteen concrete security findings from the 2026-07-27 review  🔴 partly fixed
-
-An adversarial review against 9b's threat models turned up 14 verified findings, recorded in
-`docs/SECURITY_FINDINGS_2026-07-27.md` and each confirmed against the source. **Three were live
-exposures and are fixed** in the same commit that recorded them:
-
-- **F2 (fixed)** — `bin/up.sh` ran `chmod -R a+rwX` on `data/` and `logs/`, leaving them `0777` and
-  `logs/events.jsonl` `0666`. That made the holdings snapshot world-readable *and* let any local
-  account forge `data/refresh.request`, which the daemon acts on purely because it exists — bypassing
-  the API cooldown entirely. Root cause was a uid mismatch (container 1001 vs host 1000); fixed by
-  running the container as the host user and setting the directories `0700`.
-- **F3 (fixed)** — `docker-compose.yml` published both services on `0.0.0.0`. The dev stack has no
-  auth in front of it, so anything on the LAN could read `/api/account` and POST `/api/refresh`. Now
-  bound to `127.0.0.1`.
-- **F14 (fixed)** — the stale `MCP_CWD` described under P1.
-
-**Still open**, tracked as issues: F1 CSRF on `POST /api/refresh` (no `Origin`/`Sec-Fetch-Site` check
-anywhere, and HTTP Basic has no `SameSite` equivalent — this becomes forced order placement the day
-the Commit button ships); F4 no rate limit on `/api/scan/run-stream` while the adjacent paid
-endpoints share a limiter; F5 upstream exception text streamed verbatim to clients; F6 held tickers
-logged at INFO; F7 no log redaction filter; F8 fully unpinned dependencies with no vulnerability
-scanning; F9 no container hardening in either compose; F10 no security response headers; F11 Caddy
-basic-auth with no lockout and a default `admin` username; F12 `TICKER_RE` accepts `A..`; F13 the
-snapshot schema permits negative quantities and never checks `schema_version`.
-
-The recommendation on auth is to replace basic-auth-only with the same shape 9b runs — Argon2id, an
-opaque `SameSite=Strict` session cookie, and mandatory TOTP — keeping Caddy basic-auth as an outer
-gate. The asset being protected is not the ~$200 balance; it is order-placement authority against a
-real brokerage account, plus a host-side Claude session already OAuth'd to that broker.
-
-### P10 — The global pre-push hook false-fails on M  🟡
-
-It runs pytest in the system interpreter without the project venv, so it blocks `git push` with
-dependency errors. Not a git hook, so `--no-verify` does not skip it.
+The system is *not* done when it makes money. It is done when a good decision and a lucky one are
+distinguishable.
 
 ---
 
-**The learning signal:** `docs/EVALUATION_FRAMEWORK.md` specifies how the system scores a decision —
-Sharpe + Sortino as a risk-adjusted reward, applied at three points (post-trade feedback, judge
-self-review, per-persona counterfactual track records) plus a blind control agent. It drives the
-Phase 2 schema and is the definition of "quantifiable" for Phase 7.
+## 2. Where we actually are
 
-**The data on hand:** `docs/DATA_INVENTORY.md` — 4.5 GB of Polygon minute bars and Bloomberg
-fundamentals in `data/market/` (gitignored). Enough to build and validate the pipeline; not yet
-enough to trust an edge estimate.
+| Built and verified | Status |
+|---|---|
+| Postgres on M — isolated, hardened, digest-pinned | ✅ |
+| Migration runner — filename-marked destructive gate, server-enforced transaction integrity | ✅ (5 review rounds) |
+| Schema 001–004 — securities, provenance, partitioned bars, point-in-time fundamentals, 13 evaluation tables | ✅ |
+| 5-year minute-bar archive on disk, verified byte-exact | ✅ 1,256 files / 24 GB |
+| Minute-bar loader — streaming, resumable, partition-aware | ✅ 6 files loaded as proof |
+| Robinhood MCP connected; account readable | ✅ |
+| Dashboard prototype (Portfolio / Scan / Pipeline / Debate) | ⚠️ exists, unpolished |
+| 204 tests, CI green | ✅ |
 
-**Prior art:** `docs/PATTERNS_FROM_9B.md` surveys 9b Korean Master — which runs this same shape on M
-already — and records which of its deploy, database, test-gate, and security patterns to port, with
-the reasoning behind each. Phases 1, 2, and 6 below lean on it directly.
+**The honest summary: we have a trustworthy place to put data, and almost nothing that produces it.**
 
 ---
 
-## 3. Guiding constraints
+## 3. What we were missing
 
-These are decisions already made. They bound every phase below.
+This is the part the old plan got wrong. These are components nothing in the repo produces, several
+of which other components already assume exist.
+
+### 3.1 Silent-correctness gaps — highest risk, because they produce plausible wrong numbers
+
+| Gap | Why it bites |
+|---|---|
+| **Corporate actions / splits** | `price_bars_daily.adj_close` exists, its comment says "returns use this", 004's marking job is specified as `Σ shares × adj_close + cash` — and **nothing populates it**. NVDA split 10:1 in June 2024, inside our window. An unadjusted return across a split is wrong by 10× and looks like a triumph. |
+| **Market calendar** | Table exists, empty. Without it, "trading days" is guesswork: return series get holes on holidays, and `n_observations` counts calendar days instead of sessions. |
+| **Risk-free rates** | Table exists, empty. Every Sharpe needs one. Until it is populated, no ratio can be computed at all. |
+| **Benchmark series** | Information ratio and "did we beat SPY" both need it. Nothing fetches it. |
+| **Delisting detection** | `securities.delisted_at` exists and the loader deliberately never sets it. Until something does, the universe silently accumulates survivorship bias. |
+
+### 3.2 Compute that doesn't exist yet
+
+| Gap | Note |
+|---|---|
+| **The marking job** | Values every paper portfolio daily. **The entire evaluation layer depends on it and no plan listed it.** Without it `portfolio_returns_daily` stays empty and every metric is uncomputable. |
+| **Metric computation** | The tables hold Sharpe/Sortino; nothing calculates them. |
+| **Feature store** | Between raw bars and any model. Must enforce as-of correctness or leakage returns. |
+| **The real screen** | `src/screen.py` is a thin yfinance approximation. 3a's `screening_engine.py` + `piotroski.py` is the intended brain. |
+| **Backtest engine** | Port from 3a. Needs the calendar, adjusted prices, and point-in-time fundamentals to be honest. |
+| **Reconciliation** | #22. The book already drifted once, undetected, for seven weeks. |
+
+### 3.3 Agent and app work
+
+Debate DB + knowledge-base access (#25) · outcome logging (#4) · order path with guardrails ·
+the UI itself, which is a workstream rather than four backlog items.
+
+### 3.4 Operations
+
+Scheduler (what runs when, and what happens when a run fails) · alerting · DB backup and restore ·
+deployment as purple/yellow behind the tunnel · the Phase-1 security baseline.
+
+---
+
+## 4. Phases
+
+Each has an entry condition, an exit criterion that can be checked, and a reason for its position.
+**Phases A–C are the gate on buying FMP Premium.**
+
+### Phase A — Data foundation *(in progress)*
+
+*Everything downstream reads this. Nothing else can be trusted until it is right.*
+
+1. **Daily bars** derived from the minute archive — ~11M rows, minutes to load, versus 25 hours for
+   the full minute set. The evaluation framework computes on daily returns, so this unblocks the most
+   per hour spent.
+2. **Corporate actions** — source split/dividend history and populate `adj_close`. Until this exists,
+   any computed return is provisionally wrong.
+3. **Market calendar** and **risk-free rates** loaders — small, and everything numeric waits on them.
+4. **Benchmark series** (SPY, QQQ) as securities with daily bars.
+5. Minute bars, later and in the background, when intraday features are actually needed.
+
+**Exit:** a return series for any security over any window is computable, split-adjusted, on real
+trading days — and a test proves a known split (NVDA 2024-06) produces a continuous series.
+
+### Phase B — The evaluation engine
+
+*Turns the 13 tables from storage into a working loop.*
+
+1. **The marking job** — value every paper portfolio daily from holdings × adjusted close + cash.
+2. **Metric computation** — Sharpe, Sortino, drawdown, hit rate, information ratio, with `n`,
+   convention, and reward weights recorded per run.
+3. **Outcome logging** (#4) — entry thesis → exit → realized score → lesson, into the knowledge base.
+4. **Backfill** — replay historical proposals to give the counterfactual records enough observations
+   to be readable.
+
+**Exit:** a paper portfolio with a real proposal produces a Sharpe and a Sortino you can recompute by
+hand from the stored inputs, and a judge can query the realized score of its own prior ruling.
+
+### Phase C — The debate can reason, and the UI is usable
+
+*The two workstreams you named. They run in parallel.*
+
+**C1 — agents:** DB-backed context (fundamentals filtered on `known_at`, price history, positions,
+prior decisions with scores) · knowledge-base retrieval · an analysis surface so agents request
+computed statistics rather than eyeballing prompt text · third-party text delimited as data, never
+instructions.
+
+**C2 — UI:** the Weight-denominator bug (#21) · debate detail with full reasoning (#26) · full
+fundamentals on Scan (#27) · pipeline history (#28) · portfolio chart with benchmarks (#29) ·
+agent track-record views showing `n` beside every ratio.
+
+**Exit:** a debate runs entirely from the database with no live scraping, and Jared can read a
+decision, its evidence, and each agent's record without opening psql.
+
+### → FMP Premium purchase happens here
+
+With A–C done there is a pipeline ready to consume real fundamentals history. Buying earlier means
+paying while the consumer is still being written.
+
+### Phase D — The real screen and the backtest
+
+Port 3a's screening engine and Piotroski onto FMP's full statements · port the backtesting engine ·
+**a dedicated lookahead test** — the single test that decides whether any backtest result means
+anything.
+
+**Exit:** the screen reproduces 3a's ranking on shared tickers, and a ≥5-year walk-forward backtest
+reports return, drawdown, and Sharpe against SPY with no lookahead.
+
+### Phase E — Risk, execution, reconciliation
+
+Charter rules as code (≤25%/name, 10–20% cash, exit-before-entry, no averaging down) — tunable,
+observable, overridable, never a silent block · stops and targets · broker reconciliation with
+halt-on-mismatch · the order path with per-order step-up auth and an idempotency key · kill switch.
+
+**Exit:** a simulated breach of each rule produces the right decision *and* a legible explanation; a
+valid trade is never blocked; a deliberate book/broker mismatch halts the cycle.
+
+### Phase F — Hosting and operations
+
+Purple/yellow on M behind the Cloudflare Tunnel · the Phase-1 security baseline (#11 CSRF first) ·
+scheduler · alerting · DB backup, restore, and a tested restore drill.
+
+**Exit:** reachable at its subdomain, origin not directly reachable, a scheduled cycle runs unattended
+and alerts on failure, and a restore from backup has actually been performed once.
+
+### Phase G — ML
+
+Feature store with enforced as-of correctness · GBM baseline first · then the neural work, measured
+against that baseline and against the blind agent.
+
+**Exit:** a model beats the GBM baseline *and* the blind agent on risk-adjusted out-of-sample
+performance — or is honestly reported as not doing so.
+
+---
+
+## 5. Critical path
+
+```
+daily bars ─┐
+splits ─────┼─→ marking job ─→ metrics ─→ counterfactual records ─→ agents can reason
+calendar ───┤                                                              │
+rf rates ───┘                                                              ↓
+                                                                    UI shows it
+```
+
+**Splits and the marking job are the two nobody had listed, and everything numeric sits behind
+them.** The screen, the backtest, and the ML phases are all downstream of a correct return series.
+
+---
+
+## 6. Standing constraints
 
 | Constraint | Detail |
 |---|---|
-| **Solo and private** | One user, one account. No team governance, no multi-user auth, no public signup. Drop 3a's override/jury/approval UI. |
-| **Local-first** | Postgres in Docker on M. No Supabase, no cloud DB, no paid cloud infra. |
-| **FMP free tier for now** | **250 API calls per day.** Cache aggressively, fixture-back every test, never loop the universe against live FMP. Paid license (~300 calls/min) comes once the build is ready to use it. |
-| **Guardrails must not block valid trades** | Jared lost ~$4k to mis-set guardrails. Every risk rule must be tunable, observable, and overridable — never a silent block. A guardrail that fires must say which rule, on what input, and how to override. |
-| **Hosting = M + Cloudflare Tunnel + `jaredstudio.com`** | Same shape as 9b. Named tunnel, not a Quick Tunnel. Subdomain TBD. |
-| **Zero-downtime deploys — "purple/yellow"** | 3b runs a live UI that Jared interacts with, so redeploys must not drop it. Port 9b's two-color machinery under **purple/yellow** naming (distinct from 9b's blue/green): deploy-inactive → validate → switch, with a split-brain gate and auto-rollback on failed post-switch health. |
-| **UI correctness comes before the debate engine** | The 10-agent jury is deprioritized — it spends Anthropic tokens and is not what's blocking. Get the dashboard and the non-debate paths right first. |
-| **Verify a host port is free before creating a container** | M hosts several live stacks at once (9b holds 1840–1843 plus its DB). On a collision, pick a **new** port — never take over the one in use. `bin/pick_ports.sh` already does this correctly and is the reference: socket bind + `ss` + `docker ps`. |
-| **`SENIOR_ENGINEER_BAR.md`** | The canonical quality contract at the projects root, symlinked into this repo. **§7.2 covers live-money algorithmic trading** and is binding here: `Decimal` never float for money, kill switch, unique client order id, reconcile with the broker before any resubmit, no-lookahead backtests. |
-| **Robinhood's API keeps growing** | Re-check what the MCP exposes before designing around a limitation. A capability that was missing in June may exist now. |
-| **/fixpass on everything created** | Every feature: build → tests → `/fixpass` (independent reviewers → aggregate → independent fix-pass agent → independent re-review agent) → then merge. All four stages, every time, per feature group — never batched at the end, never shortcut. |
+| **UI + infra before FMP** | Phases A–C gate the purchase. |
+| **No live trading meanwhile** | Reconciliation is a record-keeping task, not a trading one, until Phase E. |
+| **`/fixpass` on everything created** | All four phases, every time. It has caught 20+ blockers so far, most of them claims that didn't survive testing. |
+| **`SENIOR_ENGINEER_BAR.md`** | §7.2 binds the order path: `Decimal` not float, kill switch, unique client order id, reconcile before resubmit. |
+| **Verify a host port before creating a container** | M runs 9b alongside; on collision take a new port. |
+| **Guardrails must not silently block** | The ~$4k lesson. Tunable, observable, overridable. |
+| **Free FMP tier meanwhile** | 250 calls/day. Cache to Postgres; fixture-back tests. |
 
 ---
 
-## 3a. The gate on spending money (restated 2026-07-28)
+## 7. Risks worth stating
 
-Two workstreams must reach a polished state **before** the FMP Premium purchase and before any live
-testing resumes. Strategy tuning is explicitly deferred until then.
+**Point-in-time fundamentals may be unobtainable.** Robinhood's financials carry `period_end_date`
+but no filing date, and FMP's historicals may be as-restated rather than as-first-reported. If
+neither supplies a filing date, no fundamentals backtest can honestly claim point-in-time
+correctness — the ceiling on what we can assert would drop, and it is better to know that before the
+purchase than after. **Ask FMP directly.**
 
-**Workstream A — infrastructure the debate engine can actually reason over.** The agents must be able
-to read the **knowledge base and the database** and do real analysis, rather than reasoning from a
-prompt plus a live yfinance call. Today `backend/app/debate/` fetches yfinance at request time and has
-no database access and no knowledge-base retrieval at all. Closing that means: DB-backed context
-(fundamentals with their `known_at`, price history, prior decisions and the realized Sharpe/Sortino
-they earned), plus the knowledge-base read path that makes §3.2 and §3.3 of
-`docs/EVALUATION_FRAMEWORK.md` possible — a judge cannot review the outcome of its own prior judgment
-if nothing stores that outcome where it can read it.
+**Five years is one sample.** It covers four regimes, which is enough to evaluate honestly and not
+enough to prove an edge survives every market.
 
-**Workstream B — the UI.** A localhost prototype exists (Portfolio / Scan / Pipeline / Debate). It
-needs features added and its flaws fixed so it is the thing Jared actually interacts with: talking to
-the agents, seeing the dilemmas, and reading the evidence behind a decision. First-class deliverable,
-not a viewer over the API. `BACKLOG.md` items 1, 3, 4, 5 and issue #21 (the Weight column reporting a
-share of equity while the charter's limit is a share of account value) belong here.
+**The 20–40% monthly target is extraordinary.** The reward function stops the system reaching for it
+recklessly; it cannot make it achievable. If the honest long-run answer is that the target is
+unreachable without ruin risk, this framework's job is to say so legibly.
 
-**Then, and only then:** buy FMP Premium, load real fundamentals history, and begin testing.
-
-Note what this ordering buys: every phase below can be built and validated against the five years of
-minute bars already on disk, so the purchase happens when there is something ready to consume it
-rather than a subscription ticking while the pipeline is still being written.
-
----
-
-## 4. Build phases
-
-Sequenced so each phase is independently useful and testable, and so nothing depends on a phase
-that hasn't landed. **Phase 0 is not optional** — everything after it either touches money or
-depends on data that doesn't exist yet.
-
-### Phase 0 — Restore live operation and make it safe to leave running
-
-*Closes P1, P2, P9, P10. Prerequisite for everything else.*
-
-1. Re-add and authenticate the `robinhood-trading` MCP at user scope (§6).
-2. Refresh the snapshot; run `python -m app.jobs.cycle close` for a full account + scan + debate
-   report. **Find out where the seven positions actually stand.**
-3. Review each position against its thesis in `docs/THESES.md`. Anything whose thesis has broken
-   gets an explicit decision, journaled.
-4. Install the twice-daily cron cycle on M so the gap cannot silently reopen.
-5. Host tooling: `sudo apt install make`; `ANTHROPIC_API_KEY` into `backend/.env`; fix the pre-push
-   gate so it uses the project venv.
-
-**Done when:** the Portfolio page shows the real account, a cycle report exists for today, and cron
-is installed and has fired at least once.
-
-### Phase 1 — Security baseline
-
-*Closes P8. Comes before public exposure, not after.*
-
-Port 9b's per-surface `SECURITY.md` model: one at `deploy/` for the hosting surface, one at
-`backend/` for the app surface. Enumerate **attack vector → defense** for authentication, the
-refresh endpoint (it has side effects and is currently reachable by anyone who can reach the
-backend), the account snapshot at rest, API key handling, CORS, rate limiting, dependency
-vulnerabilities, and logging. Add a `.gitleaks.toml` with `[extend] useDefault = true` — the
-gitleaks workflow already exists, but a future custom config without that line would silently
-disable all scanning.
-
-**Done when:** both SECURITY.md files exist with every listed surface covered, and each stated
-defense is either verified in code or filed as an issue.
-
-### Phase 2 — Data foundation: FMP + local Postgres
-
-*Closes P5, P6. The structural lift the rest of the platform stands on.*
-
-- A **provider interface** with two implementations: the existing yfinance path and a new FMP path.
-  This matters — it keeps yfinance usable as a free fallback and lets the 250/day tier be swapped
-  for the paid one without a rewrite.
-- **Postgres in Docker on M**, loopback-bound, on an internal network with no egress (9b's posture).
-  Schema: securities, fundamentals snapshots (dated), price history, positions history, portfolio
-  value points, and scan/debate run records.
-- A **caching layer that treats API calls as the scarce resource they are.** Fundamentals get
-  fetched once per day per ticker and read from Postgres thereafter. Every test is fixture-backed;
-  a live-FMP test is opt-in behind an explicit flag.
-- Backfill price history from yfinance (free, bulk) so backtesting has something to run on from day
-  one rather than accumulating forward.
-
-**Done when:** a scan runs entirely from Postgres with zero live API calls on a warm cache, and the
-daily call budget is logged and enforced with a hard stop.
-
-### Phase 3 — Brains: port 3a's screening engine
-
-*Deepens the screen. Depends on Phase 2 for the inputs it needs.*
-
-Adapt (not copy) 3a's `screening_engine.py` and `piotroski.py`. FMP supplies the full statements a
-real Piotroski score needs, so the approximations in `src/screen.py` can become the actual metric.
-Keep 3b's leaner shape; drop 3a's team-governance coupling.
-
-**Done when:** the ported screen reproduces 3a's ranking on a shared set of tickers, with any
-divergence explained.
-
-### Phase 4 — Backtesting
-
-*Depends on Phase 2's price history and Phase 3's screen.*
-
-Port 3a's `backtesting/`. The first real question to answer: **does the Sprinkle Sauce screen
-actually beat buy-and-hold SPY over the backtest window, after costs?** Point-in-time correctness is
-the thing to get right — a backtest that screens on today's fundamentals against past prices is
-lookahead bias and will lie confidently.
-
-**Done when:** a backtest runs over ≥5 years, reports return/drawdown/Sharpe against SPY and QQQ,
-and has an explicit test proving no lookahead.
-
-### Phase 5 — Guardrails and position monitoring
-
-*Closes P3, P4. Where the charter's risk rules become code.*
-
-- Encode the charter rules: ≤25% per name, 10–20% cash floor, exit-before-entry, no averaging down.
-- Per-position stops and targets, tracked and evaluated each cycle.
-- **Every guardrail is tunable, observable, and overridable** — config-driven thresholds, a log line
-  naming the rule and the input whenever one fires, and a documented override. This is the ~$4k
-  lesson; a silent block is a bug, not a safety feature.
-- Outcome logging on close: entry thesis → exit reason → realized P&L → lesson, written back to the
-  journal and the DB so future debates can read the track record.
-
-**Done when:** a simulated position breaching each rule produces the right decision *and* a legible
-explanation, and a closed position writes a complete outcome record.
-
-### Phase 6 — Hosting on M
-
-*Closes P7. Depends on Phase 1.*
-
-Rework `deploy/` from the generic-Ubuntu + Caddy + basic-auth shape to 9b's: named Cloudflare Tunnel
-to a `jaredstudio.com` subdomain, only the LB binding a non-loopback port, everything else
-loopback-only or no host port, no public DNS A record at the host IP, `X-Forwarded-Proto https`
-since TLS terminates at the edge. Port 9b's `local-test.sh` idea — run every suite in a container
-pinned to the container toolchain (python:3.12), so M's host 3.14 can't produce a false pass.
-
-**Done when:** the dashboard is reachable at its subdomain through the tunnel, the origin is not
-reachable directly, and the local test gate runs in pinned containers.
-
-### Phase 7 — Monitoring, alerting, ML
-
-*The long tail. Deliberately last.*
-
-Alerting on stop breaches and cycle failures. The dashboard backlog features (`BACKLOG.md` 1, 3, 4,
-5 — the portfolio value chart becomes easy once Phase 2 stores value points). Then the auto-tuner /
-ML experiments, which need Phase 4's backtest as their fitness function to be anything but guessing.
-
-**`BACKLOG.md` item 2 — the Commit button — is deliberately unscheduled.** It crosses the app's
-read-only boundary and spends real money. It should land after Phase 5's guardrails exist to
-constrain it, and it gets its own `/fixpass`.
-
----
-
-## 5. Testing strategy
-
-The gate that already exists, and where it needs to grow.
-
-**Today** (`TESTS.md`, all green on M): ruff lint pinned via `pyproject.toml`; 18 screen tests; 69
-backend tests; frontend production build. CI runs all four on push and PR, with ruff pinned to
-0.16.0 so a new ruff release cannot redden an unchanged branch.
-
-**Per-phase additions:**
-
-| Phase | What gets tested, and the trap to avoid |
-|---|---|
-| 0 | Cycle job end-to-end against the real MCP. Assert the snapshot's mtime actually advanced — "the command exited 0" is not evidence it refreshed. |
-| 1 | A test per claimed defense. A security doc whose claims aren't tested is a wish list. |
-| 2 | Provider-interface conformance run against **both** implementations. Fixture-backed by default; live-FMP opt-in behind a flag. An explicit test that a warm cache issues zero API calls. |
-| 3 | Golden-file comparison against 3a's output on shared tickers. **Use real corpus data, not synthetic placeholders** — a screen that passes on hand-made fundamentals and breaks on a real `.info` payload is the failure mode that already bit 9b. |
-| 4 | A dedicated lookahead-bias test. This is the one test that decides whether the backtest is worth anything. |
-| 5 | Table-driven cases per rule, asserting both the decision **and** the explanation. Plus the inverse: a valid trade must not be blocked — that regression is the ~$4k lesson in test form. |
-| 6 | Suites in containers pinned to the deploy toolchain. Post-deploy: tunnel reachable, origin *not* directly reachable. |
-
-**Standing rules.** Run `/fixpass` after each phase — all four stages, no shortcuts. For any
-schema-touching or cross-cutting change, the reviewers and the re-review run the **full** suite, not
-the changed slice. Keep `TESTS.md` current as suites are added, since `/testcheck` reads it.
-
----
-
-## 6. What needs Jared
-
-1. **The `robinhood-trading` MCP URL.** Everything in Phase 0 waits on this. Then:
-   ```bash
-   claude mcp add --scope user --transport http robinhood-trading <URL>
-   claude    # complete the Robinhood OAuth when prompted
-   ```
-   User scope matters — it makes the MCP reachable from any working directory, which the headless
-   `bin/refresh_once.sh` needs.
-2. **`sudo apt install make`** — the Makefile is the documented dev entry point.
-3. **`ANTHROPIC_API_KEY`** into `backend/.env` (copy `backend/.env.example`) to enable debates.
-4. **FMP API key** — not needed until Phase 2. Free tier is fine to start; 250 calls/day.
-5. **Subdomain choice** for the `jaredstudio.com` tunnel — not needed until Phase 6.
-
-Recurring chore: the Robinhood MCP OAuth token expires. When a scheduled refresh logs "snapshot NOT
-updated", re-auth by running `claude` on M. The dashboard keeps serving the last snapshot with live
-prices in the meantime, so this degrades rather than breaks.
-
----
-
-## 7. Tracking
-
-Repo: `Jayrod-21/Robinhood-Agentic` (private, SSH).
-
-- **Phases** become GitHub milestones; **problems P1–P10** become issues, labeled and linked to the
-  phase that closes them.
-- Work lands on a branch and merges via PR, so CI runs before anything reaches `master` — the same
-  discipline used on 3a and the Stats Website.
-- `/fixpass` paper trails go in `docs/fixpass/`, following 9b's convention:
-  `BUILD_<feature>.md` → `REVIEW_<area>.md` → `FIX_REPORT_<feature>.md` → `REVIEW_FIXES_<feature>.md`.
-- This document is the index. When a phase completes, update §2 and §4 rather than letting the plan
-  drift out of date.
+**Scope.** Phases D–G are each substantial. The plan is deliberately ordered so that stopping after
+any phase leaves something coherent rather than half a system.

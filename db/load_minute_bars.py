@@ -339,6 +339,12 @@ def connect_from_env() -> psycopg.Connection:
         # Bulk COPY into a partitioned table sorts and builds index entries; the default 16 MB
         # makes that spill to disk unnecessarily. Session-scoped, so nothing else is affected.
         cur.execute("SET maintenance_work_mem = '256MB'")
+        # Do not wait for WAL fsync on each commit. This weakens durability ONLY for this session:
+        # an OS crash could lose recently-committed files. That is acceptable precisely because the
+        # loader is resumable by content hash — a lost file is detected as absent and re-loaded,
+        # whereas a lost row would not be. Do not copy this setting into anything that writes
+        # account or order state, where a silently-lost commit is unrecoverable.
+        cur.execute("SET synchronous_commit = off")
     return conn
 
 
