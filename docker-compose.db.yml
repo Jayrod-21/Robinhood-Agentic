@@ -41,6 +41,12 @@ services:
     container_name: rh-db
     restart: unless-stopped
 
+    # Docker defaults /dev/shm to 64 MB, and Postgres uses it for parallel-query shared memory.
+    # A parallel hash join over the 12.8M-row daily table hit "could not resize shared memory
+    # segment: No space left on device" — which reads like a disk-full error while the disk had
+    # 688 GB free. Raising it removes a whole class of confusing failure as query volume grows.
+    shm_size: 1gb
+
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER missing — is db/.env present?}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing — is db/.env present?}

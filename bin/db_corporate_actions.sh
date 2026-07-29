@@ -77,4 +77,6 @@ flags=(
 )
 [[ -t 0 ]] && flags+=(--tty)
 
-exec docker run "${flags[@]}" "${IMAGE}" /repo/db/load_corporate_actions.py "$@"
+# LOADER_SCRIPT lets this wrapper serve any loader that needs BOTH the database and egress.
+SCRIPT="${LOADER_SCRIPT:-/repo/db/load_corporate_actions.py}"
+exec docker run "${flags[@]}" "${IMAGE}" "${SCRIPT}" "$@"
