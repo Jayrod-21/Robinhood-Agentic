@@ -69,6 +69,11 @@ GAP_LOW, GAP_HIGH = 0.75, 1.3333
 # Post-adjustment, a gap this large is reported for review rather than silently accepted.
 VERIFY_LOW, VERIFY_HIGH = 0.60, 1.6667
 
+# Below this the tick size is a large fraction of the price, so ordinary moves land on round
+# split ratios by coincidence. Sub-dollar warrants generated every false positive in the first
+# verification run.
+MIN_PRICE_FOR_SPLIT_CHECK = 1.00
+
 
 class LoadError(Exception):
     """A failure raised deliberately."""
@@ -150,12 +155,37 @@ def fetch_actions(symbol: str) -> tuple[list[tuple[date, float]], list[tuple[dat
     return splits, divs
 
 
+def warn_if_archive_incomplete(conn: psycopg.Connection) -> None:
+    """Refuse to let gap selection run silently against a partially-loaded archive.
+
+    Learned the expensive way: the first fetch ran while the daily loader was still working, so the
+    bars only reached 2022-12 and candidate selection could only see gaps in that window. Every
+    security whose anomalous move fell in 2023-2025 was never queried — 2,809 of them, a third of the
+    eventual candidate set. The splits were sitting in the provider the whole time (AGZD's 2023
+    2-for-1 among them); we simply never asked.
+
+    Nothing here can know the archive's intended end date, so this reports the coverage it found and
+    makes the operator confirm it looks complete, rather than pretending to validate it.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT min(trade_date), max(trade_date), count(DISTINCT trade_date) FROM price_bars_daily")
+        lo, hi, n = cur.fetchone()
+    if lo is None:
+        raise LoadError("price_bars_daily is empty — run the daily loader before fetching actions")
+    logger.info("gap selection will scan %s trading dates, %s → %s", f"{n:,}", lo, hi)
+    logger.info(
+        "If the daily loader is STILL RUNNING, stop now: candidates are chosen from the bars that "
+        "exist at this moment, and anything outside that range will be silently skipped."
+    )
+
+
 def cmd_fetch(conn: psycopg.Connection, args: argparse.Namespace) -> int:
     if args.symbols:
         cands = candidates_named(conn, args.symbols)
     elif args.candidates == "all":
         cands = candidates_all(conn)
     else:
+        warn_if_archive_incomplete(conn)
         cands = candidates_from_gaps(conn)
 
     if not cands:
@@ -338,26 +368,43 @@ def cmd_verify(conn: psycopg.Connection, _args: argparse.Namespace) -> int:
         )
         n_gaps, n_secs = cur.fetchone()
 
-        # Gaps landing near a round split ratio are the suspicious ones — a genuine market move has
-        # no reason to cluster at exactly 1/2, 1/3, 1/4, or 1/10.
+        # Gaps near a round split ratio, filtered by the two things that distinguish a real split
+        # from noise. Without both filters this list is dominated by penny warrants and is useless:
+        # the first run returned 40 rows that were almost entirely sub-$0.20 warrants oscillating
+        # ±50-170% in BOTH directions, where a ratio of exactly 0.5000 is tick-size coincidence
+        # ($0.08 to $0.04) rather than a corporate action. An alert nobody trusts gets ignored.
+        #
+        #   1. PRICE FLOOR. Below ~$1 the tick size is a large fraction of the price, so ordinary
+        #      moves land on round ratios by chance. A split on a $0.10 warrant is also not
+        #      something this system would ever act on.
+        #   2. PERSISTENCE. A split is permanent and one-directional. Noise reverts. Requiring the
+        #      new level to still hold 5 sessions later removes the oscillators, which is what
+        #      AACIW, ABLVW and friends all were.
         cur.execute(
             """
             WITH r AS (
                 SELECT security_id, trade_date, adj_close,
-                       lag(adj_close) OVER (PARTITION BY security_id ORDER BY trade_date) AS prev
+                       lag(adj_close)  OVER w AS prev,
+                       lead(adj_close, 5) OVER w AS later
                 FROM price_bars_daily WHERE adj_close IS NOT NULL
+                WINDOW w AS (PARTITION BY security_id ORDER BY trade_date)
             ), g AS (
-                SELECT r.security_id, s.symbol, r.trade_date, r.adj_close/r.prev AS ratio
+                SELECT r.security_id, s.symbol, r.trade_date,
+                       r.adj_close/r.prev AS ratio,
+                       r.prev, r.adj_close, r.later
                 FROM r JOIN securities s ON s.id = r.security_id
-                WHERE r.prev IS NOT NULL AND r.prev > 0
+                WHERE r.prev IS NOT NULL AND r.prev >= %s AND r.later IS NOT NULL
             )
-            SELECT symbol, trade_date, round(ratio, 4), round(1/ratio, 3)
+            SELECT symbol, trade_date, round(ratio, 4), round(1/ratio, 3), prev, adj_close
             FROM g
-            WHERE abs(1/ratio - 2)  < 0.05 OR abs(1/ratio - 3)  < 0.08
-               OR abs(1/ratio - 4)  < 0.10 OR abs(1/ratio - 10) < 0.25
+            WHERE (abs(1/ratio - 2)  < 0.05 OR abs(1/ratio - 3)  < 0.08
+                OR abs(1/ratio - 4)  < 0.10 OR abs(1/ratio - 10) < 0.25)
+              -- Still near the new level a week later: the move stuck, so it is not noise.
+              AND later BETWEEN adj_close * 0.7 AND adj_close * 1.43
             ORDER BY symbol, trade_date
             LIMIT 40
-            """
+            """,
+            (MIN_PRICE_FOR_SPLIT_CHECK,),
         )
         suspicious = cur.fetchall()
 
@@ -367,8 +414,8 @@ def cmd_verify(conn: psycopg.Connection, _args: argparse.Namespace) -> int:
             "%d gap(s) still sit near a round split ratio — likely actions this pass missed:",
             len(suspicious),
         )
-        for sym, d, ratio, inv in suspicious[:20]:
-            logger.warning("    %-8s %s  ratio=%s  (≈1-for-%s)", sym, d, ratio, inv)
+        for sym, d, ratio, inv, prev, now in suspicious[:20]:
+            logger.warning("    %-8s %s  $%s → $%s  ratio=%s  (≈1-for-%s)", sym, d, prev, now, ratio, inv)
         logger.warning("Confirm with the provider: python db/load_corporate_actions.py fetch --symbols <SYM>...")
     else:
         logger.info("no residual gaps near a round split ratio")

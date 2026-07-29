@@ -1,0 +1,3 @@
+2026-07-29 21:28:00,376 INFO corporate_actions: 1728 securities carry at least one split
+2026-07-29 21:31:37,701 INFO corporate_actions: adjusted 1,657,727 bars for split-affected securities
+2026-07-29 21:31:43,710 INFO corporate_actions: adjust complete — 12,840,439 bars total, 0 still NULL, 223s
