@@ -69,4 +69,5 @@ docker_flags=(
 )
 [[ -t 0 ]] && docker_flags+=(--tty)
 
-exec docker run "${docker_flags[@]}" "${IMAGE}" /repo/db/load_minute_bars.py "$@"
+SCRIPT="${LOADER_SCRIPT:-/repo/db/load_minute_bars.py}"
+exec docker run "${docker_flags[@]}" "${IMAGE}" "${SCRIPT}" "$@"
