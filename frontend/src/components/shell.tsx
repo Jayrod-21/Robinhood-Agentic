@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Gavel, LayoutDashboard, ListFilter } from "lucide-react";
+import { Activity, Gavel, LayoutDashboard, LineChart, ListFilter } from "lucide-react";
 import { cn } from "@/lib/format";
 
 const NAV = [
   { href: "/", label: "Portfolio", icon: LayoutDashboard },
+  { href: "/performance", label: "Performance", icon: LineChart },
   { href: "/scan", label: "Scan", icon: ListFilter },
   { href: "/pipeline", label: "Pipeline", icon: Activity },
   { href: "/debate", label: "Debate", icon: Gavel },
