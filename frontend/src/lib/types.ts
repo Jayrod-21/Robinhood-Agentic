@@ -115,6 +115,30 @@ export interface DebateDetail {
   markdown?: string;
 }
 
+/** One row from GET /api/pipeline/history (issue #28): a persisted pipeline run with the
+ *  entry-vs-current price comparison computed server-side. Backed by the interim JSONL store
+ *  (see backend/app/debate/records.py) until the DB evaluation tables are wired. */
+export interface PipelineRunView {
+  id: string;
+  ticker: string;
+  created_at: string;
+  /** Links to /debate/[id] for the full stage-by-stage record of the wrapped debate. */
+  debate_id: string | null;
+  price_at_run: number | null;
+  screen_passed: boolean | null;
+  screen_composite: number | null;
+  screen_reason: string | null;
+  decision: Decision | null;
+  escalated: boolean;
+  /** Live mark from the shared yfinance layer; null when the symbol couldn't be priced. */
+  current_price: number | null;
+  /** current_price - price_at_run, dollars. Null when either side is missing. */
+  delta: number | null;
+  /** Same move in percent of the entry price. */
+  delta_pct: number | null;
+  priced: boolean;
+}
+
 export interface ScanResult {
   ticker: string;
   ok: boolean;
