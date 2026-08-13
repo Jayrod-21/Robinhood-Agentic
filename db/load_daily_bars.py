@@ -5,8 +5,8 @@ WHY DERIVE RATHER THAN LOAD MINUTES AND AGGREGATE IN SQL
     so daily bars are on the critical path and minute bars are not. Loading the full minute archive
     is ~2 billion rows, ~25 hours, and ~290 GB — measured, and bottlenecked on index maintenance
     rather than WAL (an unindexed COPY runs 150k rows/s against 24k indexed). Deriving daily
-    directly from the same files is ~11 million rows and roughly an hour, and unblocks the marking
-    job, every metric, and the backtest.
+    directly from the same files is ~12.8 million rows (12,840,439 loaded) and roughly an hour,
+    and unblocks the marking job, every metric, and the backtest.
 
     Minute bars remain valuable for intraday microstructure features. That is a later phase, and
     this loader does not depend on them being present.
@@ -16,26 +16,48 @@ THE SESSION DECISION — the one that changes the numbers
     built from ALL of them would open at the 04:00 pre-market print, which matches no standard daily
     series anywhere and would silently disagree with every other source we might reconcile against.
 
-    So a daily bar here is the REGULAR SESSION only — 09:30:00 to 15:59:59 ET — which is the
-    convention every daily OHLCV feed uses:
+    So a daily bar here is the REGULAR SESSION only — 09:30:00 to 15:59:59 ET:
 
         open   = the open of the first regular-session minute
         high   = max high across regular-session minutes
         low    = min low across regular-session minutes
-        close  = the close of the LAST regular-session minute
+        close  = the close of the LAST regular-session minute (the 15:59 bar)
         volume = sum of regular-session volume
 
     Extended-hours activity is deliberately excluded, not lost — it remains in the minute archive.
+
+    THE STORED CLOSE IS NOT THE OFFICIAL CLOSE, AND CANNOT BE MADE SO FROM THIS ARCHIVE.
+    The official daily close everywhere else is the closing-auction print, which is stamped inside
+    the 16:00 ET minute bucket — outside this window — and its position within that bucket is not
+    fixed (it was the bucket's HIGH on SPY 2025-04-09 and its OPEN on MSFT 2023-12-15, because the
+    bucket also contains post-close continuous prints). No rule over 1-minute aggregates recovers
+    it. Measured against the official series (semantics review, 2026-07-29): only 6.8% of 1,241 SPY
+    closes match to half a cent; worst single-day deviation 95.7 bps; mean signed difference
+    −0.165 bps (no systematic bias); volume ~15% low (median ours/official 0.853) because extended
+    hours AND the closing cross are excluded. The OPEN, by contrast, matches to the cent — the
+    opening auction lands in the 09:30 bucket, which IS inside the window.
+
+    Do NOT "fix" this by moving SESSION_LAST_MINUTE to 16:00: the 16:00 bucket's close is a
+    post-close print (SPY 2025-04-09: bucket close 544.30 vs official 548.62), so that change
+    trades one wrong number for a different wrong number. The correct fix is a source that carries
+    the official close (Polygon's daily-aggregates endpoint returns it directly); until then this
+    column is honestly a "15:59 ET close" and every reconciliation against official data is
+    expected to differ within the bounds above. Half-days are BETTER, not worse: on 13:00 ET early
+    closes Polygon emits nothing between 13:01 and 15:59, so the 13:00 auction bucket is the last
+    one inside the window and the auction IS captured.
+
+    ADV, participation-rate, and slippage models must NOT be calibrated on this volume column
+    without accounting for the ~15% understatement.
 
     The session boundary is computed in America/New_York, so it follows DST rather than assuming a
     fixed UTC offset. That matters: the same archive already proved that a fixed-offset assumption
     about ET breaks at month ends (see load_minute_bars.py). 09:30 ET is 13:30 UTC in summer and
     14:30 UTC in winter.
 
-    `adj_close` is left NULL. Nothing in this project computes split/dividend adjustment yet — see
-    issue #35. Until it does, returns derived from `close` are UNADJUSTED and wrong across any split.
-    Leaving the column NULL rather than copying `close` into it keeps that gap visible instead of
-    burying an unadjusted number in a field whose name promises otherwise.
+    `adj_close` and `split_adj_factor` are left NULL by this loader — they are populated by
+    `load_corporate_actions.py adjust` (migrations 005-007), which must be re-run after any load
+    that adds bars. Until it runs, returns derived from `close` are UNADJUSTED and wrong across any
+    split; the adjust pass exits non-zero while any factor is NULL, which is the loud signal.
 
 MEMORY
     One day at a time, one accumulator per symbol (~9,000-10,400 of them). Trivial next to the 1.6M
@@ -61,6 +83,7 @@ import zlib
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from datetime import time as dtime
+from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -101,6 +124,22 @@ class CorruptArchive(LoadError):
     """
 
 
+# Everything a corrupt-but-present gzip member can raise while being read as CSV text:
+#   OSError            — gzip.BadGzipFile (bad magic / CRC) and genuine read errors alike
+#   EOFError           — a truncated member
+#   zlib.error         — an invalid deflate stream mid-member
+#   UnicodeDecodeError — the stream inflates but the bytes are not UTF-8: gzip.open("rt") decodes
+#                        decompressed chunks BEFORE the member CRC is checked, and this is a
+#                        ValueError subclass, NOT an OSError — the original tuple missed it
+#   csv.Error          — inflated garbage that decodes as text (long NUL runs decode fine) can
+#                        produce a field beyond csv.field_size_limit(), raised from next(reader)
+# Of the 15 corrupt members observed so far (measured 2026-07-29): 14 raise gzip.BadGzipFile (an
+# OSError) at the first read and one (2024-12-10) raises zlib.error mid-stream. EOFError,
+# UnicodeDecodeError and csv.Error have not fired on this archive yet — they are the corruption
+# patterns not seen, which is the whole point of a wide handler.
+CORRUPT_STREAM_ERRORS = (OSError, EOFError, zlib.error, UnicodeDecodeError, csv.Error)
+
+
 @dataclass(slots=True)
 class DayBar:
     """Accumulator for one symbol's regular session.
@@ -108,16 +147,28 @@ class DayBar:
     Timestamps are held as raw nanosecond epochs, not datetimes: they are only ever compared, and
     ~9,000 of these exist per file. `slots=True` because they are the one structure that scales with
     the universe.
+
+    PRICES TRAVEL AS SOURCE STRINGS. open/close always did; high/low now carry the source string of
+    the winning row alongside the float used for comparison, so the value WRITTEN to the NUMERIC
+    column is the provider's own decimal text and never a float round-trip (Bar §7.2: never float
+    for money — the float here is only an ordering key, same as ns).
+
+    minute_mask is a bitmask of claimed minute buckets within the session (int of ≤390 bits): two
+    rows with the same window_start would otherwise double-count volume silently, with open/close
+    arbitrarily keeping the first-seen row. aggregate_file uses it to skip-and-count duplicates.
     """
     first_ns: int
     last_ns: int
     open: str
     high: float
     low: float
+    high_s: str
+    low_s: str
     close: str
     volume: int
+    minute_mask: int
 
-    def update(self, ns: int, o: str, h: float, low: float, c: str, v: int) -> None:
+    def update(self, ns: int, o: str, h: float, h_s: str, low: float, low_s: str, c: str, v: int) -> None:
         # Bars can arrive out of order, so open and close track the extreme TIMESTAMPS rather than
         # first-and-last-seen. Assuming file order would be a silent correctness bug.
         if ns < self.first_ns:
@@ -125,17 +176,22 @@ class DayBar:
         if ns > self.last_ns:
             self.last_ns, self.close = ns, c
         if h > self.high:
-            self.high = h
+            self.high, self.high_s = h, h_s
         if low < self.low:
-            self.low = low
+            self.low, self.low_s = low, low_s
         self.volume += v
 
 
 def sha256_of(path: Path) -> str:
     h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            h.update(chunk)
+    try:
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+    except OSError as exc:
+        # A vanished or unreadable file gets the same report-skip-continue channel as a corrupt
+        # one: the operator needs the filename and the reason, not a traceback.
+        raise CorruptArchive(f"{path.name}: cannot read file bytes: {exc}") from exc
     return h.hexdigest()
 
 
@@ -189,9 +245,10 @@ def _rows_or_corrupt(reader, path: Path):
             yield next(reader)
         except StopIteration:
             return
-        except (OSError, EOFError, zlib.error) as exc:
+        except CORRUPT_STREAM_ERRORS as exc:
             # OSError covers gzip.BadGzipFile and a genuine read error alike: both mean this file
-            # cannot be read, which is what the caller needs to act on.
+            # cannot be read, which is what the caller needs to act on. See the tuple's comment for
+            # why UnicodeDecodeError and csv.Error must be listed explicitly.
             raise CorruptArchive(f"{path.name}: corrupt gzip stream mid-file: {exc}") from exc
 
 
@@ -205,14 +262,14 @@ def aggregate_file(path: Path) -> tuple[dict[tuple[str, date], DayBar], int, int
 
     try:
         fh = gzip.open(path, "rt", newline="", encoding="utf-8")
-    except (OSError, EOFError, zlib.error) as exc:
+    except CORRUPT_STREAM_ERRORS as exc:
         raise CorruptArchive(f"{path.name}: cannot open as gzip: {exc}") from exc
 
     with fh:
         reader = csv.reader(fh)
         try:
             header = next(reader, None)
-        except (OSError, EOFError, zlib.error) as exc:
+        except CORRUPT_STREAM_ERRORS as exc:
             # gzip.open is lazy, so a bad magic number surfaces HERE rather than at open, and
             # gzip.BadGzipFile subclasses OSError rather than zlib.error.
             raise CorruptArchive(f"{path.name}: corrupt gzip stream at header: {exc}") from exc
@@ -255,14 +312,25 @@ def aggregate_file(path: Path) -> tuple[dict[tuple[str, date], DayBar], int, int
                 skipped += 1
                 continue
 
+            # Which minute bucket of the ≤390-minute session this row claims. A second row with
+            # the same window_start for one symbol would double-count volume silently (open/close
+            # would arbitrarily keep the first-seen row), so duplicates are skipped and counted.
+            # A bitmask instead of a per-key set: ~9,000 keys x one ≤390-bit int is near-free,
+            # where 9,000 sets of ints would cost hundreds of MB across a 1.6M-row file.
+            minute_bit = 1 << int((ns - lo_ns) // 60_000_000_000)
+
             key = (symbol, trade_date)
             existing = bars.get(key)
             if existing is None:
                 # ns is kept as the ordering key rather than a datetime: only comparisons are needed,
                 # and constructing ~500k datetimes per file to compare them would be wasteful.
-                bars[key] = DayBar(ns, ns, open_, h, low_v, close, v)
+                bars[key] = DayBar(ns, ns, open_, h, low_v, high, low, close, v, minute_bit)
             else:
-                existing.update(ns, open_, h, low_v, close, v)
+                if existing.minute_mask & minute_bit:
+                    skipped += 1  # duplicate window_start — never fold it in twice
+                    continue
+                existing.minute_mask |= minute_bit
+                existing.update(ns, open_, h, high, low_v, low, close, v)
 
     return bars, rows_read, skipped
 
@@ -284,8 +352,10 @@ def resolve_symbols(conn: psycopg.Connection, symbols: set[str], source_id: int,
         return {r[0]: r[1] for r in cur.fetchall()}
 
 
-def load_file(conn: psycopg.Connection, path: Path, *, dry_run: bool) -> tuple[int, int, float] | None:
-    """Aggregate and load one day file. Returns None if already loaded."""
+def load_file(conn: psycopg.Connection, path: Path, *, dry_run: bool) -> tuple[int, int, int, float] | None:
+    """Aggregate and load one day file. Returns (written, skipped_minute_rows, dropped_day_bars,
+    seconds), or None if already loaded. The two skip counters are different units and are
+    reported separately."""
     started = time.monotonic()
     digest = sha256_of(path)
 
@@ -312,7 +382,7 @@ def load_file(conn: psycopg.Connection, path: Path, *, dry_run: bool) -> tuple[i
             path.name, f"{len(bars):,}", f"{rows_read:,}", f"{len(symbols):,}",
             ", ".join(sorted(str(d) for d in trade_dates)),
         )
-        return len(bars), skipped, el
+        return len(bars), skipped, 0, el
 
     with conn.transaction():
         with conn.cursor() as cur:
@@ -327,6 +397,7 @@ def load_file(conn: psycopg.Connection, path: Path, *, dry_run: bool) -> tuple[i
         symbol_ids = resolve_symbols(conn, symbols, source_id, min(trade_dates))
 
         written = 0
+        dropped = 0  # DAY bars dropped here — a different unit from the skipped MINUTE rows above
         with conn.cursor() as cur:
             with cur.copy(
                 "COPY price_bars_daily (security_id, trade_date, open, high, low, close, volume, source_id) FROM STDIN"
@@ -334,20 +405,25 @@ def load_file(conn: psycopg.Connection, path: Path, *, dry_run: bool) -> tuple[i
                 for (symbol, trade_date), b in bars.items():
                     sec_id = symbol_ids.get(symbol)
                     if sec_id is None:
-                        skipped += 1
+                        dropped += 1
                         continue
                     # The table's CHECK requires open and close within [low, high]. A provider row
-                    # violating that would abort the COPY, so drop and count it instead.
-                    o, c = float(b.open), float(b.close)
-                    if not (b.low <= o <= b.high) or not (b.low <= c <= b.high):
-                        skipped += 1
+                    # violating that would abort the COPY, so drop and count it instead. Decimal,
+                    # not float: the screen fronts an exact-NUMERIC CHECK, and a float comparison
+                    # one ulp from the boundary would pass here and abort the whole file's COPY.
+                    o, c = Decimal(b.open), Decimal(b.close)
+                    lo_d, hi_d = Decimal(b.low_s), Decimal(b.high_s)
+                    if not (lo_d <= o <= hi_d) or not (lo_d <= c <= hi_d):
+                        dropped += 1
                         continue
-                    cp.write_row((sec_id, trade_date, b.open, b.high, b.low, b.close, b.volume, source_id))
+                    # high_s/low_s: the provider's own decimal text, so the money path is
+                    # string-to-NUMERIC end to end — the floats were only comparison keys.
+                    cp.write_row((sec_id, trade_date, b.open, b.high_s, b.low_s, b.close, b.volume, source_id))
                     written += 1
 
             cur.execute("UPDATE data_sources SET row_count=%s WHERE id=%s", (written, source_id))
 
-    return written, skipped, time.monotonic() - started
+    return written, skipped, dropped, time.monotonic() - started
 
 
 def connect_from_env() -> psycopg.Connection:
@@ -365,10 +441,18 @@ def connect_from_env() -> psycopg.Connection:
     return conn
 
 
+def positive_int(raw: str) -> int:
+    """argparse type: an int >= 1. `--limit 0` used to silently mean 'no limit' via falsiness."""
+    v = int(raw)
+    if v < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {v}")
+    return v
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="load_daily_bars", description="Derive daily bars from the minute archive")
     p.add_argument("--root", type=Path, default=Path("data/market/minute_bars_5y"))
-    p.add_argument("--limit", type=int, help="process at most N files")
+    p.add_argument("--limit", type=positive_int, help="process at most N files")
     p.add_argument("--dry-run", action="store_true", help="aggregate and report; write nothing")
     p.add_argument("--verbose", action="store_true")
     return p
@@ -399,13 +483,18 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("could not connect: %s", exc)
         return EXIT_CONNECTION
 
-    total = total_skipped = derived = already = 0
+    total = total_skipped = total_dropped = derived = already = 0
     corrupt: list[str] = []
     started = time.monotonic()
     try:
         for i, path in enumerate(files, 1):
             try:
                 result = load_file(conn, path, dry_run=args.dry_run)
+            except psycopg.OperationalError as exc:
+                # The connection died (server restart, network drop) — an infrastructure failure,
+                # not a SQL one, so it maps to the connection exit code.
+                logger.error("%s: connection lost: %s", path.name, exc)
+                return EXIT_CONNECTION
             except psycopg.Error as exc:
                 logger.error("%s: %s", path.name, exc)
                 return EXIT_SQL
@@ -422,10 +511,11 @@ def main(argv: list[str] | None = None) -> int:
             if result is None:
                 already += 1
                 continue
-            written, skipped, el = result
+            written, skipped, dropped, el = result
             derived += 1
             total += written
             total_skipped += skipped
+            total_dropped += dropped
             if args.verbose or i % 25 == 0 or i == len(files):
                 logger.info("[%d/%d] %s — %s bars in %.1fs", i, len(files), path.name, f"{written:,}", el)
     finally:
@@ -433,11 +523,14 @@ def main(argv: list[str] | None = None) -> int:
 
     elapsed = time.monotonic() - started
     logger.info(
-        "done — %d file(s) derived, %d already present, %s daily bars, %s minute rows skipped, %.1fs",
-        derived, already, f"{total:,}", f"{total_skipped:,}", elapsed,
+        "done — %d file(s) derived, %d already present, %s daily bars, "
+        "%s minute rows skipped, %s day bars dropped, %.1fs",
+        derived, already, f"{total:,}", f"{total_skipped:,}", f"{total_dropped:,}", elapsed,
     )
     if total_skipped:
         logger.warning("%s minute row(s) were skipped — see per-file detail with --verbose", f"{total_skipped:,}")
+    if total_dropped:
+        logger.warning("%s day bar(s) were dropped (unresolvable symbol or OHLC-consistency screen)", f"{total_dropped:,}")
     if corrupt:
         # Non-zero exit: the archive is incomplete and every downstream date range is affected.
         # Silence here would let a gap in the price series look like a market holiday.

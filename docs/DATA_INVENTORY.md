@@ -108,12 +108,37 @@ work starts.
 |---|---|
 | Validate the screen against real Bloomberg fundamentals | **Yes** — §2, for 4 days |
 | Intraday microstructure features (minute bars) | **Yes** — §1, five years, full universe |
-| Backtest across multiple market regimes | **Yes** — 2020-2025 covers a recovery, a mania, a bear market, and a recovery |
+| Backtest across multiple market regimes | **Yes for a curated watchlist** — 2020-2025 covers a recovery, a mania, a bear market, and a recovery; universe-wide backtests need the caveats below |
 | Point-in-time *fundamentals* history | **No** — §2 is a 4-day snapshot. This is the real gap, and it is what FMP Premium's quarterly + 30-year history fills |
 | Train and evaluate an ML model | **Yes for the pipeline; qualified for the conclusion** — five years is enough to evaluate walk-forward honestly, not enough to claim an edge survives every market |
 
-The honest read: the **price** side is now genuinely sufficient — five years of full-universe minute
-bars across four distinct regimes will support a real backtest and a real evaluation harness.
+The honest read (re-scoped 2026-07-29 after the Phase A semantics review): the **price** side is
+sufficient **for a curated-watchlist backtest, not a universe backtest**. For liquid,
+currently-listed names that the provider resolves cleanly, the series is trustworthy: the split
+adjustment was verified exact against an independent provider (yfinance, mean level error under
+0.2 bps over 1,241 sessions on the reference set), and that comparison is now a standing,
+runnable check rather than a one-off finding — `db/verify_daily_series.py --provider` compares
+adjusted-to-adjusted per session (checks 2–4), while its offline check 5 is a *staleness* check
+of stored factors against our own recorded actions, not an independent one. For the full universe it is not,
+and the limits are known and quantified:
+
+- **Corporate-action coverage is partial.** Gap-based candidate selection finds splits, not
+  dividends — dividend coverage is ~5% of securities (SPY: zero rows), so any computed return is
+  price-only until a `--candidates all` fetch or a real corporate-actions feed lands
+  (`evaluation_runs.return_basis` exists so a price-only figure can never be stored as a total
+  return). Sampled residual: a large share of >40% post-adjustment gaps in the older cohort have
+  no recorded split — some are real moves, some are missed actions, and the archive cannot yet
+  tell them apart (`verify` reports the round-ratio subset).
+- **The stored daily close is the 15:59 ET bar, not the official closing auction** (worst observed
+  SPY deviation 95.7 bps; volume ~15% low). See migration 007's comment on
+  `price_bars_daily.close` and `db/verify_daily_series.py` for the documented bounds.
+- **Delisted and recycled identities are now modelled** (splice + inference + FMP dates,
+  `db/load_delistings.py`), but a delisted identity's corporate actions cannot be fetched from
+  yfinance (it only speaks for a symbol's current holder), so dead names' series remain
+  unadjusted where they carried splits.
+- **`securities` metadata is unpopulated** (name/exchange/type/sector all NULL), so a universe
+  query cannot yet exclude warrants/rights/preferreds except by symbol-form heuristics, and
+  `first_seen` is left-censored at 2020-10-02 for ~8,700 names.
 
 The **fundamentals** side is not. Four days of Bloomberg is a validation sample, not a history, so a
 fundamentals-driven strategy cannot yet be backtested at all — the screen can be checked for

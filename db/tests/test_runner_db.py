@@ -1,5 +1,5 @@
 """Integration tests: the runner against a real throwaway Postgres (testcontainers), and the
-ACTUAL repo migrations 001-004 through a full up → down → up cycle.
+ACTUAL repo migrations 001-007 through a full up → down → up cycle.
 
 Never touches the live rh-db — the container here is ephemeral and dies with the session.
 
@@ -349,6 +349,10 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         ("002", False, True),
         ("003", False, True),
         ("004", False, True),
+        ("005", False, True),
+        ("006", False, True),
+        ("007", False, True),
+        ("008", False, True),
     ]
 
 
@@ -482,7 +486,7 @@ def test_real_migrations_up_down_up(db_url: str) -> None:
     # 004's trigger functions leave no residue either.
     assert q(db_url, "SELECT count(*) FROM pg_proc WHERE proname LIKE 'enforce\\_%%'")[0][0] == 0
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 4
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 8
 
 
 # ── 004: the evaluation tables ────────────────────────────────────────────────────────────────
@@ -538,14 +542,33 @@ def _seed_scored_portfolio(db_url: str, ids: dict[str, int], deb: int, prop: int
         (ids["bull"], deb, prop),
     )[0][0]
     _mark_daily(db_url, pid, days=30)
+    _seed_calendar(db_url)
     q(
         db_url,
         "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-        "min_n_for_ranking, risk_free_annual, sharpe, sortino, max_drawdown, hit_rate, inputs_as_of) "
-        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 0.0525, 1.42, 2.10, -0.18, 0.55, now())",
+        "min_n_for_ranking, risk_free_annual, sharpe, sortino, max_drawdown, hit_rate, inputs_as_of, "
+        "return_basis, rf_conversion, expected_sessions) "
+        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 0.0525, 1.42, 2.10, -0.18, 0.55, now(), "
+        "'price_only', 'simple', 31)",
         (pid,),
     )
     return pid
+
+
+def _seed_calendar(db_url: str, days_back: int = 60) -> None:
+    """market_calendar coverage for the test windows — every day a trading day, so a window's
+    expected_sessions is simply its calendar-day count. 007's trigger refuses metrics over
+    windows the calendar cannot describe, exactly so a coverage hole cannot hide."""
+    q(
+        db_url,
+        "INSERT INTO market_calendar (trade_date, is_trading_day, session_open, session_close) "
+        "SELECT d::date, true, "
+        "       (d::date + time '09:30') AT TIME ZONE 'America/New_York', "
+        "       (d::date + time '16:00') AT TIME ZONE 'America/New_York' "
+        "FROM generate_series(CURRENT_DATE - %s, CURRENT_DATE, interval '1 day') AS d "
+        "ON CONFLICT (trade_date) DO NOTHING",
+        (days_back,),
+    )
 
 
 def _mark_daily(db_url: str, pid: int, days: int) -> None:
@@ -596,27 +619,36 @@ def test_evaluation_schema_enforces_sample_size(db_url: str) -> None:
             q(
                 db_url,
                 f"INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-                f"min_n_for_ranking, risk_free_annual, {ratio_col}, inputs_as_of) "
-                f"VALUES (%s, CURRENT_DATE - 10, CURRENT_DATE, 1, 21, 0.05, 1.5, now())",
+                f"min_n_for_ranking, risk_free_annual, {ratio_col}, inputs_as_of, "
+                f"return_basis, rf_conversion, expected_sessions) "
+                f"VALUES (%s, CURRENT_DATE - 10, CURRENT_DATE, 1, 21, 0.05, 1.5, now(), "
+                f"'price_only', 'simple', 11)",
                 (pid,),
             )
 
     # With enough observations (and the marks to prove them) it stores, and is_rankable reflects
     # the recorded ranking floor.
     _mark_daily(db_url, pid, days=30)
+    _seed_calendar(db_url)
     q(
         db_url,
         "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-        "min_n_for_ranking, risk_free_annual, sharpe, sortino, max_drawdown, hit_rate, inputs_as_of) "
-        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 0.0525, 1.42, 2.10, -0.18, 0.55, now())",
+        "min_n_for_ranking, risk_free_annual, sharpe, sortino, max_drawdown, hit_rate, inputs_as_of, "
+        "return_basis, rf_conversion, expected_sessions) "
+        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 0.0525, 1.42, 2.10, -0.18, 0.55, now(), "
+        "'price_only', 'simple', 31)",
         (pid,),
     )
     assert q(db_url, "SELECT is_rankable FROM evaluation_runs")[0][0] is True
+    # 007: coverage is now a stored fact on the row — 30 of 31 sessions marked.
+    assert q(db_url, "SELECT coverage_ratio FROM evaluation_runs")[0][0] == Decimal("0.967742")
     q(
         db_url,
         "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-        "min_n_for_ranking, risk_free_annual, sharpe, inputs_as_of) "
-        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 63, 0.0525, 1.42, now())",
+        "min_n_for_ranking, risk_free_annual, sharpe, inputs_as_of, "
+        "return_basis, rf_conversion, expected_sessions) "
+        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 63, 0.0525, 1.42, now(), "
+        "'price_only', 'simple', 31)",
         (pid,),
     )
     assert q(db_url, "SELECT is_rankable FROM evaluation_runs WHERE min_n_for_ranking = 63")[0][0] is False
@@ -640,13 +672,16 @@ def test_evaluation_runs_are_append_only(db_url: str) -> None:
         (ids["blind"],),
     )[0][0]
     _mark_daily(db_url, pid, days=30)
+    _seed_calendar(db_url)
 
     for weights in ('{"w_sortino": 0.5}', '{"w_sortino": 0.7}'):
         q(
             db_url,
             "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-            "min_n_for_ranking, risk_free_annual, sharpe, inputs_as_of, reward_weights) "
-            "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 0.05, 1.42, now(), %s::jsonb)",
+            "min_n_for_ranking, risk_free_annual, sharpe, inputs_as_of, reward_weights, "
+            "return_basis, rf_conversion, expected_sessions) "
+            "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 0.05, 1.42, now(), %s::jsonb, "
+            "'price_only', 'simple', 31)",
             (pid, weights),
         )
     # Same portfolio, same window, two weightings — both retained.
@@ -841,12 +876,15 @@ def test_evaluation_ratio_parameters_are_recorded(db_url: str) -> None:
     _mark_daily(db_url, pid, days=30)
 
     # risk_free_annual is NOT NULL: a run that does not state its rf convention is unstorable.
+    # (007's return_basis/rf_conversion/expected_sessions are supplied so THIS insert's only
+    # omission is the rf itself.)
     with pytest.raises(psycopg.errors.NotNullViolation):
         q(
             db_url,
             "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-            "min_n_for_ranking, sharpe, inputs_as_of) "
-            "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 1.42, now())",
+            "min_n_for_ranking, sharpe, inputs_as_of, return_basis, rf_conversion, expected_sessions) "
+            "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 1.42, now(), "
+            "'price_only', 'simple', 31)",
             (pid,),
         )
 
@@ -1042,11 +1080,14 @@ def test_reward_needs_weights_and_guardrails_have_a_home(db_url: str) -> None:
         (ids["blind"],),
     )[0][0]
     _mark_daily(db_url, pid, days=30)
+    _seed_calendar(db_url)
 
     base = (
         "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-        "min_n_for_ranking, risk_free_annual, reward_total, reward_weights, inputs_as_of) "
-        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 0.05, 3.912, %s::jsonb, now())"
+        "min_n_for_ranking, risk_free_annual, reward_total, reward_weights, inputs_as_of, "
+        "return_basis, rf_conversion, expected_sessions) "
+        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 0.05, 3.912, %s::jsonb, now(), "
+        "'price_only', 'simple', 31)"
     )
     with pytest.raises(psycopg.errors.CheckViolation):  # reward with NO weights (the old default)
         q(db_url, base, (pid, "{}"))
@@ -1067,7 +1108,8 @@ def test_reward_needs_weights_and_guardrails_have_a_home(db_url: str) -> None:
         db_url,
         "INSERT INTO guardrail_events (portfolio_id, rule_key, severity, threshold, observed, "
         "action_taken, override_by, override_reason) "
-        "VALUES (%s, 'cash_floor', 'block', 10.0, 6.5, 'overridden', 'jared', 'deliberate add-on buy')",
+        "VALUES (%s, 'cash_floor', 'block', 10.0, 6.5, 'overridden', 'test-operator', "
+        "'deliberate add-on buy')",
         (pid,),
     )
     assert q(db_url, "SELECT count(*) FROM guardrail_events WHERE rule_key = 'cash_floor'")[0][0] == 1
@@ -1087,6 +1129,7 @@ def test_n_observations_is_verified(db_url: str) -> None:
         (ids["blind"],),
     )[0][0]
     _mark_daily(db_url, pid, days=9)
+    _seed_calendar(db_url)
 
     # An absurd claim (n=5000 in a 31-day window) dies at the arithmetic CHECK; a PLAUSIBLE false
     # claim — 29 against 9 actual marks, the off-by-N marking bug shape — needs the count trigger.
@@ -1094,16 +1137,32 @@ def test_n_observations_is_verified(db_url: str) -> None:
         q(
             db_url,
             "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-            "min_n_for_ranking, risk_free_annual, inputs_as_of) "
-            "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 5000, 21, 0.05, now())",
+            "min_n_for_ranking, risk_free_annual, inputs_as_of, "
+            "return_basis, rf_conversion, expected_sessions) "
+            "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 5000, 21, 0.05, now(), "
+            "'price_only', 'simple', 31)",
             (pid,),
         )
     with pytest.raises(psycopg.errors.CheckViolation, match="claims n_observations"):
         q(
             db_url,
             "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-            "min_n_for_ranking, risk_free_annual, inputs_as_of) "
-            "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 29, 21, 0.05, now())",
+            "min_n_for_ranking, risk_free_annual, inputs_as_of, "
+            "return_basis, rf_conversion, expected_sessions) "
+            "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 29, 21, 0.05, now(), "
+            "'price_only', 'simple', 31)",
+            (pid,),
+        )
+    # 007: a truthful n with a FALSE expected_sessions claim is refused against the calendar —
+    # the check that finally makes a coverage hole (15 missing sessions) undeclarable.
+    with pytest.raises(psycopg.errors.CheckViolation, match="claims expected_sessions"):
+        q(
+            db_url,
+            "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
+            "min_n_for_ranking, risk_free_annual, inputs_as_of, "
+            "return_basis, rf_conversion, expected_sessions) "
+            "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 9, 21, 0.05, now(), "
+            "'price_only', 'simple', 9)",
             (pid,),
         )
     # hit_rate at n=1 is a coin flip wearing four decimals — gated like the ratios.
@@ -1111,19 +1170,24 @@ def test_n_observations_is_verified(db_url: str) -> None:
         q(
             db_url,
             "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-            "min_n_for_ranking, risk_free_annual, hit_rate, inputs_as_of) "
-            "VALUES (%s, CURRENT_DATE, CURRENT_DATE, 1, 21, 0.05, 1.0, now())",
+            "min_n_for_ranking, risk_free_annual, hit_rate, inputs_as_of, "
+            "return_basis, rf_conversion, expected_sessions) "
+            "VALUES (%s, CURRENT_DATE, CURRENT_DATE, 1, 21, 0.05, 1.0, now(), "
+            "'price_only', 'simple', 1)",
             (pid,),
         )
-    # The truthful claim stores.
+    # The truthful claim stores, with its coverage shortfall visible on the row.
     q(
         db_url,
         "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-        "min_n_for_ranking, risk_free_annual, inputs_as_of) "
-        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 9, 21, 0.05, now())",
+        "min_n_for_ranking, risk_free_annual, inputs_as_of, "
+        "return_basis, rf_conversion, expected_sessions) "
+        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 9, 21, 0.05, now(), "
+        "'price_only', 'simple', 31)",
         (pid,),
     )
     assert q(db_url, "SELECT count(*) FROM evaluation_runs")[0][0] == 1
+    assert q(db_url, "SELECT coverage_ratio FROM evaluation_runs")[0][0] == Decimal("0.290323")
 
 
 def test_walk_forward_split_is_labelled(db_url: str) -> None:
@@ -1139,11 +1203,14 @@ def test_walk_forward_split_is_labelled(db_url: str) -> None:
         (ids["blind"],),
     )[0][0]
     _mark_daily(db_url, pid, days=30)
+    _seed_calendar(db_url)
 
     base = (
         "INSERT INTO evaluation_runs (portfolio_id, window_start, window_end, n_observations, "
-        "min_n_for_ranking, risk_free_annual, inputs_as_of{cols}) "
-        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 0.05, now(){vals})"
+        "min_n_for_ranking, risk_free_annual, inputs_as_of, "
+        "return_basis, rf_conversion, expected_sessions{cols}) "
+        "VALUES (%s, CURRENT_DATE - 30, CURRENT_DATE, 30, 21, 0.05, now(), "
+        "'price_only', 'simple', 31{vals})"
     )
     with pytest.raises(psycopg.errors.CheckViolation):  # unknown split label
         q(db_url, base.format(cols=", split", vals=", 'vibes'"), (pid,))

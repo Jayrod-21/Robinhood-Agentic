@@ -23,17 +23,36 @@ THE CALENDAR MUST NOT BE DERIVED FROM DATA COVERAGE
     simpler mechanism reaching the same answer. `report` is what confirms the rules match reality.
 
 RISK-FREE RATE
-    FRED's DTB3 (3-Month Treasury Bill, secondary market, daily). Fetched from the CSV endpoint,
-    which needs no API key.
+    FRED's DGS3MO (3-Month Treasury, constant maturity, INVESTMENT basis). Fetched from the CSV
+    endpoint, which needs no API key.
 
-    `known_at` is set to the day AFTER `effective_date`, because FRED publishes with a lag and the
-    real release timestamp is not in the CSV. That is an APPROXIMATION and is recorded as such: a
-    genuine point-in-time claim needs actual release times, and until then a backtest reading rates
-    at same-day resolution is very slightly optimistic. The error is a single day on a rate that
-    moves in basis points, which is immaterial next to the equity returns it offsets — but it is a
-    known approximation rather than an unexamined one.
+    WHY DGS3MO AND NOT DTB3: DTB3 is quoted on a DISCOUNT basis (discount from face over
+    actual/360); a Sharpe's risk-free leg should be an investment/coupon-equivalent yield, which
+    is what DGS3MO is — and what migration 004's own column comment names as the example series.
+    Measured over this archive's window (1,250 paired sessions, 2026-07-29): DGS3MO − DTB3
+    averages +0.1177 pp, max +0.28 pp, and +0.2292 pp over the 337 sessions with DTB3 >= 5%.
+    NOT strictly one direction — 35 sessions are slightly negative (min −0.02 pp) and 348 are
+    exactly 0 — but the mean effect is: using DTB3 understates rf and flatters excess returns
+    and Sharpe on average (semantics review S-S3). Previously-loaded DTB3 rows remain — series
+    is part of the identity — but consumers should read DGS3MO.
 
-    Rates are stored as FRACTIONS (0.0525 for 5.25%), matching the table's ±1 CHECK.
+    `known_at` semantics (semantics review S-S4):
+      * A FIRST observation of an effective_date is stored with known_at = effective_date + 1 day
+        at 00:00 UTC. That is CONSERVATIVE, not optimistic: FRED's H.15 publishes ~16:15 ET on the
+        effective day, and midnight UTC is 19:00-20:00 ET the same evening — after publication. A
+        consumer enforcing known_at <= decision_time will decline to use day D's rate intraday on
+        day D, which is the safe direction. This floor keeps historical backfills usable for
+        point-in-time reads (a fetch-time known_at on a 60-year backfill would hide every rate
+        from every historical decision).
+      * A REVISED value (this fetch disagrees with the latest stored value for that date) is
+        stored as a NEW row with known_at = the fetch time — the moment we actually learned it.
+        Deriving known_at purely from effective_date made revisions collide on the PK and vanish
+        under ON CONFLICT DO NOTHING; a revision is exactly the thing the (series, effective_date,
+        known_at) identity exists to represent.
+      * An UNCHANGED value inserts nothing, so re-runs do not bloat the table.
+
+    Rates are stored as FRACTIONS (0.0525 for 5.25%), matching the table's ±1 CHECK, and travel
+    as Decimal end to end — never through float.
 
 Usage:
     python db/load_reference_data.py calendar --from 2020-01-01 --to 2026-12-31
@@ -48,11 +67,15 @@ import csv
 import io
 import logging
 import os
+import random
 import sys
+import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from datetime import time as dtime
+from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 try:
@@ -70,17 +93,38 @@ REGULAR_OPEN = dtime(9, 30)
 REGULAR_CLOSE = dtime(16, 0)
 EARLY_CLOSE = dtime(13, 0)
 
-FRED_SERIES = "DTB3"
+# Investment-basis 3-month constant maturity — see the module docstring for why not DTB3.
+FRED_SERIES = "DGS3MO"
 FRED_URL = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={FRED_SERIES}"
+
+# Retry budget for the FRED GET (idempotent, so retrying is safe): exponential backoff with
+# jitter, bounded by the attempt budget (no per-delay cap — growth stops because attempts do;
+# total sleep is in [7, 21) seconds). Four attempts spans transient trouble without stalling a
+# scheduled run behind a real outage.
+FETCH_ATTEMPTS = 4
+FETCH_BACKOFF_BASE_S = 2.0
 
 
 class LoadError(Exception):
     """A failure raised deliberately."""
 
 
+class FetchError(LoadError):
+    """The network fetch failed after retries — maps to EXIT_CONNECTION, not EXIT_VALIDATION.
+
+    A network failure reporting itself as a validation failure breaks the exit-code contract
+    (loaders review S-3): an operator or cron job must be able to tell 'the data was bad' from
+    'the wire was down' without reading logs.
+    """
+
+
 # ── NYSE holiday rules ────────────────────────────────────────────────────────────────────────
 # Unscheduled closures — these cannot be derived from any rule and must be listed. Folded into
 # nyse_holidays() so that function is the single authority on whether the market was shut.
+#
+# NOTE if the calendar range ever moves earlier than 2020: the 9/11 closures (2001-09-11 → 14)
+# and Hurricane Sandy (2012-10-29/30) are outside the current default range and must be added
+# here, or every derived series for those weeks will misread closure as missing data.
 AD_HOC_CLOSURES: set[date] = {
     date(2025, 1, 9),   # National Day of Mourning, President Carter
 }
@@ -240,57 +284,115 @@ def cmd_calendar(conn: psycopg.Connection, args: argparse.Namespace) -> int:
 
 
 # ── rates ─────────────────────────────────────────────────────────────────────────────────────
-def cmd_rates(conn: psycopg.Connection, _args: argparse.Namespace) -> int:
-    logger.info("fetching %s from FRED", FRED_SERIES)
-    try:
-        with urllib.request.urlopen(FRED_URL, timeout=60) as resp:
-            payload = resp.read().decode("utf-8")
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise LoadError(f"FRED fetch failed: {exc}") from exc
+def fetch_fred_csv(url: str, *, attempts: int = FETCH_ATTEMPTS, sleep: Callable[[float], None] = time.sleep) -> str:
+    """GET the FRED CSV with exponential backoff + jitter, bounded by the attempt budget
+    (idempotent, so retrying is safe).
 
+    Raises FetchError after the last attempt — mapped to EXIT_CONNECTION by main.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            # SSRF surface: none — the URL is a module constant built from a module constant,
+            # scheme fixed https, no user input reaches it.
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                return resp.read().decode("utf-8")
+        except (urllib.error.URLError, TimeoutError) as exc:
+            last_exc = exc
+            if attempt < attempts:
+                delay = FETCH_BACKOFF_BASE_S * (2 ** (attempt - 1)) * (0.5 + random.random())
+                logger.warning("FRED fetch attempt %d/%d failed (%s) — retrying in %.1fs",
+                               attempt, attempts, exc, delay)
+                sleep(delay)
+    raise FetchError(f"FRED fetch failed after {attempts} attempts: {last_exc}") from last_exc
+
+
+def parse_fred_csv(payload: str, series: str = FRED_SERIES) -> tuple[list[tuple[date, Decimal]], int]:
+    """Parse FRED's CSV into (effective_date, fractional Decimal rate) pairs plus a skip count.
+
+    Decimal, never float: the value is money-adjacent and float would introduce artifacts like
+    0.015300000000000001 that only column scale used to absorb (loaders review N-1).
+    """
     reader = csv.DictReader(io.StringIO(payload))
     date_col = reader.fieldnames[0] if reader.fieldnames else None
-    if not date_col or FRED_SERIES not in (reader.fieldnames or []):
+    if not date_col or series not in (reader.fieldnames or []):
         raise LoadError(f"unexpected FRED columns {reader.fieldnames!r}")
 
-    rows = []
+    rows: list[tuple[date, Decimal]] = []
     skipped = 0
     for rec in reader:
-        raw = (rec.get(FRED_SERIES) or "").strip()
+        raw = (rec.get(series) or "").strip()
         # FRED writes "." for a non-publication day (holidays, and days before the series began).
         if raw in ("", "."):
             skipped += 1
             continue
         try:
             eff = date.fromisoformat(rec[date_col].strip())
-            pct = float(raw)
-        except ValueError:
+            # FRED publishes percent; the column is a fraction with a ±1 CHECK.
+            rate = Decimal(raw) / 100
+        except (ValueError, InvalidOperation):
             skipped += 1
             continue
-        # FRED publishes percent; the column is a fraction with a ±1 CHECK.
-        rate = pct / 100.0
-        # See the module docstring: an approximation, not a real release timestamp.
-        known = datetime.combine(eff + timedelta(days=1), dtime(0, 0), tzinfo=timezone.utc)
-        rows.append((FRED_SERIES, eff, rate, known))
+        rows.append((eff, rate))
+    return rows, skipped
 
-    if not rows:
+
+def cmd_rates(conn: psycopg.Connection, _args: argparse.Namespace) -> int:
+    logger.info("fetching %s from FRED", FRED_SERIES)
+    fetched_at = datetime.now(timezone.utc)
+    payload = fetch_fred_csv(FRED_URL)
+    observations, skipped = parse_fred_csv(payload)
+    if not observations:
         raise LoadError("FRED returned no usable observations")
 
+    # The latest stored value per effective_date, so a revision is DETECTED rather than colliding
+    # on the PK and vanishing under ON CONFLICT DO NOTHING (see the module docstring).
     with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT ON (effective_date) effective_date, annual_rate "
+            "FROM risk_free_rates WHERE series = %s ORDER BY effective_date, known_at DESC",
+            (FRED_SERIES,),
+        )
+        latest: dict[date, Decimal] = {r[0]: r[1] for r in cur.fetchall()}
+
+    new_rows: list[tuple[date, Decimal, datetime]] = []
+    revised = 0
+    for eff, rate in observations:
+        stored = latest.get(eff)
+        if stored is None:
+            # First observation: the publication-lag floor (eff + 1d, 00:00 UTC) — conservative,
+            # and what keeps a historical backfill usable for point-in-time reads.
+            known = datetime.combine(eff + timedelta(days=1), dtime(0, 0), tzinfo=timezone.utc)
+            new_rows.append((eff, rate, known))
+        elif rate.quantize(Decimal("0.000001")) != stored.quantize(Decimal("0.000001")):
+            # Revision: a new row at the moment we actually learned the new value. NUMERIC(9,6)
+            # is the storage scale, so compare at that scale — a sub-scale difference is not a
+            # storable revision.
+            new_rows.append((eff, rate, fetched_at))
+            revised += 1
+
+    if not new_rows:
+        logger.info("rates: %d observations fetched, all already stored — nothing to insert", len(observations))
+        return EXIT_OK
+
+    # Provenance row and rate rows in ONE transaction: an interrupt must not leave a data_sources
+    # row claiming rows that never landed (loaders review S-4 — both bar loaders already do this).
+    with conn.transaction(), conn.cursor() as cur:
         cur.execute(
             "INSERT INTO data_sources (provider, dataset, fetched_at, period_start, period_end, "
             "source_uri, row_count, notes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-            ("fred", "risk_free_rates", datetime.now(timezone.utc), rows[0][1], rows[-1][1],
-             FRED_URL, len(rows),
-             "FRED DTB3 3-month T-bill, secondary market. known_at approximated as effective_date+1d."),
+            ("fred", "risk_free_rates", fetched_at, observations[0][0], observations[-1][0],
+             FRED_URL, len(new_rows),
+             (f"FRED {FRED_SERIES} 3-month constant maturity, investment basis. "
+              f"{len(observations)} observations fetched; {len(new_rows)} new rows "
+              f"({revised} revisions). known_at: effective_date+1d floor for first observations, "
+              "fetch time for revisions.")),
         )
         source_id = cur.fetchone()[0]
-
-    with conn.transaction(), conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO risk_free_rates (series, effective_date, annual_rate, known_at, source_id) "
             "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (series, effective_date, known_at) DO NOTHING",
-            [(s, e, r, k, source_id) for s, e, r, k in rows],
+            [(FRED_SERIES, e, r, k, source_id) for e, r, k in new_rows],
         )
 
     with conn.cursor() as cur:
@@ -301,8 +403,10 @@ def cmd_rates(conn: psycopg.Connection, _args: argparse.Namespace) -> int:
             (FRED_SERIES,),
         )
         n, lo, hi, rmin, rmax = cur.fetchone()
-    logger.info("rates: %s observations %s → %s, %s%% to %s%% (%d non-publication days skipped)",
-                f"{n:,}", lo, hi, rmin, rmax, skipped)
+    logger.info(
+        "rates: %s stored observations %s → %s, %s%% to %s%% "
+        "(%d fetched, %d inserted of which %d revisions, %d non-publication days skipped)",
+        f"{n:,}", lo, hi, rmin, rmax, len(observations), len(new_rows), revised, skipped)
     return EXIT_OK
 
 
@@ -384,9 +488,17 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_CONNECTION
     try:
         return {"calendar": cmd_calendar, "rates": cmd_rates, "report": cmd_report}[args.command](conn, args)
+    except FetchError as exc:
+        # Before LoadError (its parent): a network failure is a connection problem, exit 3 —
+        # reporting it as a validation failure (1) breaks the exit-code contract.
+        logger.error("%s", exc)
+        return EXIT_CONNECTION
     except LoadError as exc:
         logger.error("%s", exc)
         return EXIT_VALIDATION
+    except psycopg.OperationalError as exc:
+        logger.error("connection lost: %s", exc)
+        return EXIT_CONNECTION
     except psycopg.Error as exc:
         logger.error("database error: %s", exc)
         return EXIT_SQL

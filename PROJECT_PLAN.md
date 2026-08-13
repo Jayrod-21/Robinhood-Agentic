@@ -13,7 +13,7 @@ Concretely, so it can be checked rather than felt:
 > Every trading day, on M, the system pulls the account, refreshes market data, runs the Sprinkle
 > Sauce screen over a real universe, holds a debate whose agents can read the database and the
 > knowledge base, scores every proposal — winning and losing — against a risk-adjusted reward, writes
-> the outcome back where the next debate will read it, and surfaces all of it in a UI Jared uses to
+> the outcome back where the next debate will read it, and surfaces all of it in a UI the owners use to
 > see the dilemma, the evidence, and each agent's track record. Orders are proposed by the system and
 > confirmed by a human. Nothing acts on a stale or unreconciled book.
 
@@ -54,7 +54,7 @@ of which other components already assume exist.
 
 | Gap | Why it bites |
 |---|---|
-| **Corporate actions / splits** | `price_bars_daily.adj_close` exists, its comment says "returns use this", 004's marking job is specified as `Σ shares × adj_close + cash` — and **nothing populates it**. NVDA split 10:1 in June 2024, inside our window. An unadjusted return across a split is wrong by 10× and looks like a triumph. |
+| **Corporate actions / splits** | `price_bars_daily.adj_close` exists, its comment says "returns use this", 004's marking job was originally specified as `Σ shares × adj_close + cash` — and **nothing populates it**. NVDA split 10:1 in June 2024, inside our window. An unadjusted return across a split is wrong by 10× and looks like a triumph. *(Update, Phase A fix-pass: 005-007 populate the split adjustment, and the marking formula was corrected — marking is `Σ shares × RAW close + cash` with lot share counts split-adjusted on ex-date; `Σ shares × adj_close` mixes share bases and mis-marks any lot held across a split. See migration 007's comments.)* |
 | **Market calendar** | Table exists, empty. Without it, "trading days" is guesswork: return series get holes on holidays, and `n_observations` counts calendar days instead of sessions. |
 | **Risk-free rates** | Table exists, empty. Every Sharpe needs one. Until it is populated, no ratio can be computed at all. |
 | **Benchmark series** | Information ratio and "did we beat SPY" both need it. Nothing fetches it. |
@@ -131,7 +131,7 @@ instructions.
 fundamentals on Scan (#27) · pipeline history (#28) · portfolio chart with benchmarks (#29) ·
 agent track-record views showing `n` beside every ratio.
 
-**Exit:** a debate runs entirely from the database with no live scraping, and Jared can read a
+**Exit:** a debate runs entirely from the database with no live scraping, and an owner can read a
 decision, its evidence, and each agent's record without opening psql.
 
 ### → FMP Premium purchase happens here
