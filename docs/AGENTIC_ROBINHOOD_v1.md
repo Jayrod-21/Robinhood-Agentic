@@ -1,6 +1,6 @@
 # Agentic Robinhood Trader — Operating Charter v1
 
-> **Version:** 1.0 | **Created:** June 3, 2026 | **Owner:** Jared
+> **Version:** 1.0 | **Created:** June 3, 2026 | **Owners:** Jared, Joe
 > **Status:** Active — bootstrap phase
 > This is the operating charter for the live agentic trading loop running on the
 > Robinhood "Agentic" account. It is a self-contained project that *references* the
@@ -71,7 +71,7 @@ with concentration — not leverage or day-trading churn — as the source of ag
 - **No averaging down** into a broken thesis — re-evaluate from scratch instead.
 - **Friction awareness:** small account → spread/slippage matters. Avoid churn; trade only when the thesis warrants.
 - **Drawdown guard:** if the account draws down past a set threshold or hits a consecutive-loss streak,
-  halt new entries and escalate to Jared (mirrors the Wasden Watch shutdown discipline).
+  halt new entries and escalate to an owner (mirrors the Wasden Watch shutdown discipline).
 
 ## 6. Wasden Alignment
 
@@ -83,11 +83,11 @@ with concentration — not leverage or day-trading churn — as the source of ag
 
 ## 7. Autonomy Progression
 
-- **Bootstrap (now):** agent recommends; **Jared confirms every order** before it places.
-- **Supervised:** after a track record Jared trusts, agent places within pre-agreed sizing/▸guardrails, reports after.
+- **Bootstrap (now):** agent recommends; **an owner confirms every order** before it places.
+- **Supervised:** after a track record the owners trust, agent places within pre-agreed sizing/▸guardrails, reports after.
 - **Scheduled autonomy:** a recurring runner (e.g. `/schedule`) wakes the agent on a cadence
-  (pre-market scan, end-of-week review) to run the loop and log; Jared reviews on his own time.
-- Autonomy widens only by Jared's explicit say-so. It can be revoked at any time.
+  (pre-market scan, end-of-week review) to run the loop and log; the owners review on their own time.
+- Autonomy widens only by an owner's explicit say-so. It can be revoked at any time.
 
 ## 8. Decisions (resolved June 3, 2026)
 
@@ -97,10 +97,10 @@ with concentration — not leverage or day-trading churn — as the source of ag
       daily does NOT mean trading daily. Most days the right answer is "no action." The daily run is for
       awareness and the Wasden morning-review discipline ("would I still buy today?"), not forced activity.
 - [x] **Fundamentals data:** **yfinance** (free, no API key). Finnhub deferred (its free tier needs a key).
-- [x] **First trades:** **bootstrap — Jared confirms every order** (review preview → approve → place) until
+- [x] **First trades:** **bootstrap — an owner confirms every order** (review preview → approve → place) until
       a trusted track record exists.
 
 ### Still open
 - [ ] Exact drawdown / loss-streak halt thresholds for a $100 account.
 - [ ] When to flip from bootstrap (confirm-each) to supervised autonomy.
-- [ ] Whether/when to stand up a scheduled runner (`/schedule`) vs. Jared invoking the daily scan manually.
+- [ ] Whether/when to stand up a scheduled runner (`/schedule`) vs. an owner invoking the daily scan manually.

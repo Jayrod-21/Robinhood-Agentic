@@ -4,6 +4,16 @@ This is the project's audit trail: what happened, when, why. Separate from the *
 `docs/` (charter, theses, slate — which change in place). Logs are **append-only** — we add new
 dated records, we don't rewrite old ones. This is the memory the eventual 24/7 app will consume.
 
+> **Ownership note (2026-08-13).** Records dated before this entry were written during a
+> single-operator build phase, and they read that way: they name one person as the approver, and
+> the 2026-06-03 session log describes splitting this repo off to keep its strategy out of the
+> shared 3a repo. The project is now co-owned, and that framing no longer describes intent.
+>
+> Those entries are deliberately **not** rewritten — the append-only rule exists precisely so the
+> record stays trustworthy, and editing history to look better is the failure mode it guards
+> against. Read them as an accurate account of what was true at the time, not as current policy.
+> Current ownership and decision rights live in `docs/AGENTIC_ROBINHOOD_v1.md`.
+
 ## Structure
 
 ```

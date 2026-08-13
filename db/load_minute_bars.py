@@ -17,6 +17,14 @@ of 2 BILLION rows. Three consequences:
       in `data_sources`; a file whose hash is already present is skipped, so a re-run continues
       rather than duplicating.
 
+CORRUPT MEMBERS ARE SKIPPED AND REPORTED, NEVER FATAL
+    The archive contains 15 known-corrupt gzip members (2024-12-10 → 2024-12-31): 14 fail at the
+    first read ("Not a gzipped file") and one (2024-12-10) inflates for 1,266,147 data rows
+    (plus the header line) before a bad deflate block. Corruption therefore surfaces lazily, mid-iteration — including inside the COPY,
+    where the per-file transaction rolls the partial load back cleanly. Each corrupt file is
+    reported by name, the run continues, and the final exit is EXIT_VALIDATION so an incomplete
+    archive can never read as success. Same machinery and same 15 files as load_daily_bars.py.
+
 THE MONTH-BOUNDARY TRAP — IT IS EVERY MONTH, NOT JUST WINTER
     Polygon day files carry post-market bars through 20:00 ET, and those cross UTC midnight in BOTH
     US timezone regimes. Verified against this archive:
@@ -52,11 +60,14 @@ import argparse
 import csv
 import gzip
 import hashlib
+import io
 import logging
 import os
 import re
 import sys
 import time
+import zlib
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -94,6 +105,29 @@ class LoadError(Exception):
     """A failure this module raises deliberately."""
 
 
+class CorruptArchive(LoadError):
+    """A gzip member that cannot be read.
+
+    Its own type because it means something different from every other failure: the DATA is bad,
+    not the code or the database. A run must report it, skip the file, and carry on — the archive
+    this loader exists to load contains 15 known-corrupt members (2024-12-10 → 2024-12-31), and
+    crashing on the first would hide the other 14 behind a traceback. Same machinery as
+    load_daily_bars.py, which met these files first.
+    """
+
+
+# Everything a corrupt-but-present gzip member can raise while being read as CSV text:
+#   OSError            — gzip.BadGzipFile (bad magic / CRC) and genuine read errors alike
+#   EOFError           — a truncated member
+#   zlib.error         — an invalid deflate stream mid-member (2024-12-10.csv.gz raises this
+#                        after 1,266,148 good rows — corruption surfaces lazily, mid-iteration)
+#   UnicodeDecodeError — the stream inflates but the bytes are not UTF-8; a ValueError subclass,
+#                        NOT an OSError, so it must be listed explicitly
+#   csv.Error          — inflated garbage that decodes as text can produce a field beyond
+#                        csv.field_size_limit(), raised from next(reader)
+CORRUPT_STREAM_ERRORS = (OSError, EOFError, zlib.error, UnicodeDecodeError, csv.Error)
+
+
 @dataclass
 class FileStats:
     path: Path
@@ -113,9 +147,14 @@ class FileStats:
 def sha256_of(path: Path) -> str:
     """Hash the file's bytes. Chunked — these are ~20 MB compressed and there are 1,256 of them."""
     h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            h.update(chunk)
+    try:
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+    except OSError as exc:
+        # A vanished or unreadable file gets the same report-skip-continue channel as a corrupt
+        # one: the operator needs the filename and the reason, not a traceback.
+        raise CorruptArchive(f"{path.name}: cannot read file bytes: {exc}") from exc
     return h.hexdigest()
 
 
@@ -128,10 +167,22 @@ def discover_files(root: Path) -> list[Path]:
     return files
 
 
-def _open_csv(path: Path) -> csv.reader:
-    fh = gzip.open(path, "rt", newline="", encoding="utf-8")
+def _open_csv(path: Path) -> tuple[io.TextIOBase, Iterator[list[str]]]:
+    """Open a gzipped CSV and consume its header. Raises CorruptArchive for an unreadable member.
+
+    gzip.open is lazy: a bad magic number surfaces at the first read, not at open — so the header
+    read is guarded too, and gzip.BadGzipFile subclasses OSError rather than zlib.error.
+    """
+    try:
+        fh = gzip.open(path, "rt", newline="", encoding="utf-8")
+    except CORRUPT_STREAM_ERRORS as exc:
+        raise CorruptArchive(f"{path.name}: cannot open as gzip: {exc}") from exc
     reader = csv.reader(fh)
-    header = next(reader, None)
+    try:
+        header = next(reader, None)
+    except CORRUPT_STREAM_ERRORS as exc:
+        fh.close()
+        raise CorruptArchive(f"{path.name}: corrupt gzip stream at header: {exc}") from exc
     if header != EXPECTED_HEADER:
         fh.close()
         raise LoadError(
@@ -139,6 +190,21 @@ def _open_csv(path: Path) -> csv.reader:
             "provider's column set changed and the parser must be reviewed before loading."
         )
     return fh, reader
+
+
+def _rows_or_corrupt(reader: Iterator[list[str]], path: Path) -> Iterator[list[str]]:
+    """Yield CSV rows, converting a mid-stream decompression failure into CorruptArchive.
+
+    gzip surfaces corruption lazily — a member can decompress for hundreds of thousands of rows
+    and then fail on a bad block, so the failure must be caught around the ITERATION, not the open.
+    """
+    while True:
+        try:
+            yield next(reader)
+        except StopIteration:
+            return
+        except CORRUPT_STREAM_ERRORS as exc:
+            raise CorruptArchive(f"{path.name}: corrupt gzip stream mid-file: {exc}") from exc
 
 
 def scan_file(path: Path) -> tuple[set[str], datetime, datetime, int]:
@@ -153,7 +219,7 @@ def scan_file(path: Path) -> tuple[set[str], datetime, datetime, int]:
     count = 0
     fh, reader = _open_csv(path)
     try:
-        for row in reader:
+        for row in _rows_or_corrupt(reader, path):
             if len(row) != 8:
                 continue
             count += 1
@@ -210,10 +276,16 @@ def ensure_partitions(conn: psycopg.Connection, lo: datetime, hi: datetime) -> l
 
 
 def _rows(path: Path, symbol_ids: dict[str, int], source_id: int, stats: FileStats):
-    """Second pass: yield COPY-ready tuples. Generator — one row in memory at a time."""
+    """Second pass: yield COPY-ready tuples. Generator — one row in memory at a time.
+
+    A CorruptArchive raised here propagates out of the COPY inside load_file's transaction block,
+    which rolls the whole file back — provenance row and bars together — before main skips the
+    file. That rollback path is load-bearing: keep the exception propagating out of
+    `with conn.transaction()`, never swallowed inside it.
+    """
     fh, reader = _open_csv(path)
     try:
-        for row in reader:
+        for row in _rows_or_corrupt(reader, path):
             stats.rows_read += 1
             if len(row) != 8:
                 stats.skipped_bad_row += 1
@@ -348,10 +420,18 @@ def connect_from_env() -> psycopg.Connection:
     return conn
 
 
+def positive_int(raw: str) -> int:
+    """argparse type: an int >= 1. `--limit 0` used to silently mean 'no limit' via falsiness."""
+    v = int(raw)
+    if v < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {v}")
+    return v
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="load_minute_bars", description="Load Polygon minute bars into Postgres")
     p.add_argument("--root", type=Path, default=Path("data/market/minute_bars_5y"))
-    p.add_argument("--limit", type=int, help="load at most N files (smoke tests)")
+    p.add_argument("--limit", type=positive_int, help="load at most N files (smoke tests)")
     p.add_argument("--dry-run", action="store_true", help="parse and report; write nothing")
     p.add_argument("--verbose", action="store_true")
     return p
@@ -386,18 +466,31 @@ def main(argv: list[str] | None = None) -> int:
     total_rows = 0
     total_skipped = 0
     loaded = skipped_files = 0
+    corrupt: list[str] = []
     started = time.monotonic()
 
     try:
         for i, path in enumerate(files, 1):
             try:
                 stats = load_file(conn, path, dry_run=args.dry_run)
+            except psycopg.OperationalError as exc:
+                # The connection died (server restart, network drop) — an infrastructure failure,
+                # not a SQL one, so it maps to the connection exit code.
+                logger.error("%s: connection lost: %s", path.name, exc)
+                return EXIT_CONNECTION
             except psycopg.Error as exc:
                 # The file's transaction rolled back, so nothing partial is recorded and a re-run
                 # retries this file. Stop rather than continue: a systematic fault would otherwise
                 # produce 1,200 identical failures.
                 logger.error("%s: %s", path.name, exc)
                 return EXIT_SQL
+            except CorruptArchive as exc:
+                # The DATA is bad, not the code. If it surfaced mid-COPY the file's transaction
+                # rolled back, so nothing partial is recorded. Report it, count it, keep going —
+                # one unreadable file must not hide the state of the other 1,255.
+                corrupt.append(path.name)
+                logger.error("CORRUPT %s", exc)
+                continue
             except LoadError as exc:
                 logger.error("%s: %s", path.name, exc)
                 return EXIT_VALIDATION
@@ -430,6 +523,13 @@ def main(argv: list[str] | None = None) -> int:
     # produce a backtest nobody could explain.
     if total_skipped:
         logger.warning("%s row(s) were skipped — see the per-file reasons above", f"{total_skipped:,}")
+    if corrupt:
+        # Non-zero exit: the archive is incomplete and every downstream date range is affected.
+        # Silence here would let a gap in the price series look like a market holiday.
+        logger.error("%d CORRUPT file(s) could not be read: %s", len(corrupt), ", ".join(corrupt))
+        logger.error("Those trading days are ABSENT from the minute series. Re-copy them from the "
+                     "source drive and re-run; the loader resumes by content hash.")
+        return EXIT_VALIDATION
     return EXIT_OK
 
 

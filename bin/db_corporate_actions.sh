@@ -75,6 +75,9 @@ flags=(
   --env HOME=/tmp
   --init
 )
+# Pass FMP_API_KEY through only when the caller exported it (load_delistings.py fmp needs it).
+# Via the environment, never argv, so the key cannot be read from `ps`.
+[[ -n "${FMP_API_KEY:-}" ]] && flags+=(--env FMP_API_KEY)
 [[ -t 0 ]] && flags+=(--tty)
 
 # LOADER_SCRIPT lets this wrapper serve any loader that needs BOTH the database and egress.

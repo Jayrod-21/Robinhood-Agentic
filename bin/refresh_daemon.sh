@@ -70,8 +70,10 @@ mkdir -p "${LOG_DIR}"
 log() { echo "[refresh-daemon $(date -u +%H:%M:%S)] $*"; }
 
 claude_bin() {
+  # AGENTIC_CLAUDE_BIN lets an operator point at a non-PATH install. The previous fallback was a
+  # hard-coded nvm path under one operator's home directory — dead for anyone else, so it is gone.
   if command -v claude >/dev/null 2>&1; then command -v claude
-  elif [[ -x /root/.nvm/versions/node/v22.20.0/bin/claude ]]; then echo /root/.nvm/versions/node/v22.20.0/bin/claude
+  elif [[ -n "${AGENTIC_CLAUDE_BIN:-}" && -x "${AGENTIC_CLAUDE_BIN}" ]]; then echo "${AGENTIC_CLAUDE_BIN}"
   else echo ""; fi
 }
 

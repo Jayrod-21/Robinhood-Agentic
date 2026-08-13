@@ -143,7 +143,7 @@ Net: all 6 placed by the `agentic` agent. Check fills at the open via get_equity
 if SVRA opens/stays above $5.33 — that is intended (skip-if-won't-fill-cheap).
 
 **SCHEDULED CATALYST BRIEFINGS (cloud routines, email-only — Robinhood MCP is local-only, so cloud CANNOT trade):**
-Two one-time claude.ai routines emit a researched Gmail draft to jaredmwilliams.me@gmail.com, then Jared executes in a LOCAL session.
+Two one-time claude.ai routines emit a researched Gmail draft to the owner's email, then an owner executes in a LOCAL session.
 - `trig_01ThfQRZHZU8SiZBE3xkKJNz` — "June 24 event-day brief" — fires 2026-06-24T12:30:00Z (6:30 MDT): QCOM Investor Day (12:15 MT) + MU earnings-tonight setup + exit-into-gap plan.
 - `trig_01JHQ1JNRKbubR6qWKV5Ahzv` — "June 25 MU gap & exit plan" — fires 2026-06-25T12:00:00Z (6:00 MDT): MU post-print gap + the exit decision mapped to the actual gap; QCOM trim follow-up.
 Manage at https://claude.ai/code/routines . Jul-16 (TSM) + Aug-22 (SVRA) not yet scheduled — add closer to the dates.

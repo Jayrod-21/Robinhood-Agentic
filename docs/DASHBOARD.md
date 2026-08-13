@@ -42,7 +42,7 @@ pkill -f bin/refresh_daemon.sh
 - **Pipeline** — one ticker through the full chain (screen → bull → bear → jury → decision) as a live
   node stepper.
 - **Debate** — a bull and bear build the cases, 10 jurors vote, and the result aggregates: 6+ decides,
-  a 5-5 tie escalates to you. Past debates (including the hand-written archives) are listed.
+  a 5-5 tie escalates to an owner. Past debates (including the hand-written archives) are listed.
 
 ## The Refresh bridge (how "connected" works)
 

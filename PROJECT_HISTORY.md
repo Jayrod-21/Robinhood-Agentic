@@ -8,7 +8,7 @@
 - Authored operating charter (`docs/AGENTIC_ROBINHOOD_v1.md`) and trading journal scaffold.
 - Resolved key decisions: universe = large-cap + liquid volatile mid/small-caps; cadence = daily
   pre-market scan (review ≠ forced trade); fundamentals data = yfinance; first trades = bootstrap
-  (Jared confirms every order).
+  (a human owner confirms every order).
 - Architecture: in-session Claude agent IS the intelligence layer (no paid LLM API tokens);
   Robinhood MCP for quotes + execution; references 3a for the Wasden framework.
 - Built the daily-scan (increment 1): `src/screen.py` (lean Sprinkle Sauce tiers, pure/testable),

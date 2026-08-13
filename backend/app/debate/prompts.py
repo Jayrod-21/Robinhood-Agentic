@@ -8,7 +8,8 @@ casts a single BUY/SELL/HOLD vote with a confidence and a short reason.
 from __future__ import annotations
 
 # Grounding shared by every agent in the debate. Wasden fundamentals-first, tuned for the live
-# aggressive $100 Agentic account (concentration is the aggression lever, not leverage or churn).
+# aggressive Agentic cash account (concentration is the aggression lever, not leverage or churn).
+# Deliberately not pinned to a dollar figure — the founding stake was $100 and the balance moves.
 SYSTEM_GROUNDING = (
     "You are an analyst on Cary Wasden's fundamentals-first trading team, judging a single equity "
     "for a small, aggressive, long-only cash account. The edge is buying durable cash machines at a "

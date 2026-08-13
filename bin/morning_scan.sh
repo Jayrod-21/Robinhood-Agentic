@@ -10,7 +10,9 @@
 set -uo pipefail
 export PATH="/usr/local/bin:/usr/bin:/bin"
 
-PROJECT="/root/Jared/3b. Robinhood Agentic"
+# Derived from this script's own location, so the repo works from any checkout on any machine.
+# It was previously hard-coded to one operator's home directory, which broke for everyone else.
+PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT" || { echo "cannot cd to project"; exit 1; }
 
 DATE="$(date +%Y-%m-%d)"

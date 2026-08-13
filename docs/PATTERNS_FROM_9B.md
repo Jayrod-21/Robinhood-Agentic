@@ -42,7 +42,7 @@ target, but exits non-zero *only* for release-critical paths — loopback debug 
 informational, and a color that isn't running simply isn't probed. Worth copying: a health check
 that fails on things that don't matter gets ignored.
 
-> **Note for 3b:** blue/green is almost certainly overkill here. 3b is a single-user dashboard; a
+> **Note for 3b:** blue/green is almost certainly overkill here. 3b has few concurrent users; a
 > few seconds of downtime on a restart costs nothing. Port the *ordering* and the
 > *cold-boot/steady-state split*, not the two-color machinery.
 
@@ -226,5 +226,5 @@ interface, the schema shape, the migration-runner choice, and the caching/call-b
 | Phase 6 | `cloudflared-setup.sh` (named tunnel, idempotent); ingress posture; SSE-safe proxy settings | P7 |
 | Phase 6 | Cold-boot vs steady-state split; a `bg-health.sh` equivalent; a documented break-glass rebuild | P7 |
 
-**Deliberately not ported:** blue/green two-color deploys (overkill for a single-user dashboard),
+**Deliberately not ported:** blue/green two-color deploys (overkill at this user count — revisit as owners are added),
 the Azure pipeline, and the multi-user governance surface.

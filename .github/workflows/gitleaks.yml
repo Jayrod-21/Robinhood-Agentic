@@ -2,6 +2,17 @@ name: gitleaks
 on:
   push:
   pull_request:
+
+# Without an explicit block the job inherits the repository default token, which does not include
+# pull-requests access. On a `pull_request` event gitleaks-action enumerates the PR's commits via
+# GET /repos/{o}/{r}/pulls/{n}/commits and dies on a 403 "Resource not accessible by integration" —
+# a workflow failure that looks exactly like a detected secret but is not one. It went unnoticed
+# because the push-triggered run scans commits directly and passes, and this repository had never
+# opened a pull request until #40.
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   scan:
     name: gitleaks
@@ -13,3 +24,7 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Findings surface as a failed check. Posting them as PR comments would additionally
+          # require pull-requests: write, and a scanner does not need write access to the thing it
+          # is auditing.
+          GITLEAKS_ENABLE_COMMENTS: "false"
