@@ -8,15 +8,25 @@ survivor list. No LLM, no cost.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.ratelimit import scan_limiter
 from app.sse import sse_response
 from app.validation import normalize_ticker
 
+logger = logging.getLogger("agentic.routers.scan")
+
 router = APIRouter(prefix="/api/scan", tags=["scan"])
+
+# Minimum seconds between honored scan kickoffs (F4). Each scan fans out one blocking yfinance fetch
+# per ticker — a whole universe with an empty body — so back-to-back requests multiply outbound Yahoo
+# traffic and risk an IP ban. Module constant (Settings is owned elsewhere); 15s matches the default
+# cadence of the sibling debate/pipeline cooldown.
+SCAN_MIN_INTERVAL_SECONDS = 15
 
 # Hard ceiling enforced by pydantic at parse time (422) — a coarse backstop against a pathological
 # multi-thousand-element body. The finer, operator-tunable cap (scan_max_tickers) is applied in the
@@ -98,6 +108,25 @@ def run_stream(req: ScanRequest):
         tickers = accepted
     else:
         tickers = flat_universe()
+
+    # F4: cooldown gate, checked AFTER the cheap request validation above so a malformed request
+    # gets its actionable 400 without consuming the budget — only a request that would actually
+    # fan out yfinance fetches draws from it. Same CooldownLimiter pattern as debate/pipeline, but
+    # a separate instance (see app.ratelimit): scans are free and must not block paid debates.
+    wait = scan_limiter.check_and_consume(SCAN_MIN_INTERVAL_SECONDS)
+    if wait:
+        # Never block silently: say so in the server log (with the why) and in the 429 detail.
+        logger.warning(
+            "scan rate limit hit: %s ticker(s) requested, ~%ss of cooldown left "
+            "(min interval %ss between scans to avoid hammering Yahoo)",
+            len(tickers),
+            wait,
+            SCAN_MIN_INTERVAL_SECONDS,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=f"Scan rate limit — wait ~{wait}s (each scan fans out one Yahoo fetch per ticker).",
+        )
     return sse_response(_run_scan(tickers, min_cap))
 
 

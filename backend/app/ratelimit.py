@@ -55,3 +55,9 @@ class CooldownLimiter:
 
 # One shared budget for every token-spending debate path (debate router + pipeline router).
 debate_limiter = CooldownLimiter()
+
+# Separate gate for the scan stream. A scan spends no Anthropic tokens but fans out one blocking
+# yfinance fetch per ticker (up to the whole universe with an empty body), so an unthrottled client
+# loop is a path to getting the host IP banned by Yahoo. It is deliberately NOT the debate limiter:
+# a free scan must never consume the paid-debate budget, and vice versa.
+scan_limiter = CooldownLimiter()

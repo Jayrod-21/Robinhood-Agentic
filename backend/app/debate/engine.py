@@ -121,11 +121,19 @@ async def run_debate(ticker: str, question: str | None = None):
             ac.write_case(settings.synth_model, SYSTEM_GROUNDING, researcher_prompt(ticker, "bear", price, fundamentals)),
         )
     except ac.DebateUnavailable as exc:
-        yield {"type": "error", "message": str(exc)}
+        # F5: never stream str(exc) — even our own exception messages have leaked config paths
+        # before. Full detail goes to the server log; the client gets a fixed generic message.
+        logger.error("debate %s unavailable: %s", debate_id, exc)
+        yield {"type": "error", "message": "Live debate engine is not configured on the server."}
         return
-    except Exception as exc:
-        logger.exception("researcher stage failed")
-        yield {"type": "error", "message": f"Researcher stage failed: {exc}"}
+    except Exception:
+        # F5: upstream SDK errors carry the provider's status code and response body — server log
+        # only (with traceback), never the client stream.
+        logger.exception("researcher stage failed for debate %s", debate_id)
+        yield {
+            "type": "error",
+            "message": "Researcher stage failed upstream. Details are in the server logs.",
+        }
         return
     record.bull_bear = BullBear(bull_case=bull, bear_case=bear)
     yield {"type": "bull_complete", "bull_case": bull}

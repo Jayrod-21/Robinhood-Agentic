@@ -6,6 +6,8 @@ how often a debate can be kicked off (a cheap abuse guard on a paid path).
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -15,6 +17,8 @@ from app.debate.records import get_record, list_records
 from app.ratelimit import debate_limiter
 from app.sse import sse_response
 from app.validation import validate_ticker
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/debate", tags=["debate"])
 
@@ -28,9 +32,15 @@ class DebateRequest(BaseModel):
 def run_stream(req: DebateRequest):
     settings = get_settings()
     if not settings.anthropic_api_key:
+        # Same leak class as issue #13: the client is told the engine is unavailable, not which
+        # environment variable in which file would fix it. Naming server-side configuration to an
+        # unauthenticated caller maps the deployment for them. The operator detail goes to the log.
+        logger.error(
+            "debate requested but no API key is configured; set ANTHROPIC_API_KEY in backend/.env"
+        )
         raise HTTPException(
             status_code=503,
-            detail="Live debates need ANTHROPIC_API_KEY in backend/.env.",
+            detail="Live debate engine is not configured on the server.",
         )
 
     # Shared cooldown with the pipeline endpoint — both spend tokens, so they draw from one budget.
