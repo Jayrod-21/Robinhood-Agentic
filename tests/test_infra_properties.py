@@ -291,7 +291,7 @@ def test_render_prompt_tempfile_is_0600_and_substituted(tmp_path: Path) -> None:
     res = _bash(
         "umask 022; "
         f'source "{BIN}/lib_account.sh"; '
-        "export AGENTIC_ACCOUNT_NUMBER=987654321; "
+        "export AGENTIC_ACCOUNT_NUMBER=TEST-ACCT-PLACEHOLDER; "
         f'render_prompt "{template}"'
     )
     assert res.returncode == 0, res.stderr
@@ -300,7 +300,7 @@ def test_render_prompt_tempfile_is_0600_and_substituted(tmp_path: Path) -> None:
         assert rendered.exists(), f"render_prompt printed no path: {res.stdout!r}"
         mode = stat.S_IMODE(os.stat(rendered).st_mode)
         assert mode == 0o600, f"rendered prompt is mode {oct(mode)}, expected 0600"
-        assert rendered.read_text() == "account: 987654321\n"
+        assert rendered.read_text() == "account: TEST-ACCT-PLACEHOLDER\n"
     finally:
         if rendered.exists():
             rendered.unlink()

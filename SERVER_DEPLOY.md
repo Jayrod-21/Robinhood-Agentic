@@ -64,14 +64,23 @@ Do not proceed past step 4 until the owners have decided:
    rides on (step 3 below proves it).
 4. **cloudflared** — already running as a systemd service for korean/uvrl. `systemctl status
    cloudflared` should say `active`.
-5. This repo at `/home/jared-williams/projects/3b. Robinhood Agentic`.
+5. This repo checked out somewhere on the host.
+
+> **On paths in this document.** `/srv/agentic/robinhood-agentic` throughout is a **placeholder for
+> wherever you cloned the repo** — substitute your own checkout path, including in
+> `deploy/agentic-dashboard.service` and `deploy/crontab.example`, both of which need absolute
+> paths because systemd and cron do not inherit a working directory.
+>
+> It is deliberately not a real path. An earlier version of these docs hard-coded one operator's
+> home directory, which made every command fail for anyone else and is exactly what CI's
+> repo-hygiene check now blocks.
 
 ## Steps
 
 ### 1. Backend secrets
 
 ```bash
-cd "/home/jared-williams/projects/3b. Robinhood Agentic"
+cd "/srv/agentic/robinhood-agentic"
 cp backend/.env.example backend/.env
 # edit backend/.env → set ANTHROPIC_API_KEY=sk-ant-...   (jurors=haiku, synth=sonnet by default)
 chmod 600 backend/.env
@@ -110,7 +119,7 @@ set `AGENTIC_MCP_CWD` to that project dir.
 ### 4. Bring up the stack (local only — nothing public yet)
 
 ```bash
-cd "/home/jared-williams/projects/3b. Robinhood Agentic"
+cd "/srv/agentic/robinhood-agentic"
 docker compose -f deploy/docker-compose.prod.yml up -d --build
 # verify locally (the ONLY way in until the tunnel rule exists):
 curl -u USER:PASSWORD "http://localhost:${DASH_PORT:-8088}/api/health"

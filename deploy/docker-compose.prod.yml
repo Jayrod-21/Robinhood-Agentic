@@ -2,7 +2,7 @@
 # reachable only via the existing Cloudflare Tunnel. Self-contained (does NOT extend the dev
 # compose). See SERVER_DEPLOY.md for the full standup procedure and the decisions still open.
 #
-#   cd "/home/jared-williams/projects/3b. Robinhood Agentic"
+#   cd "/srv/agentic/robinhood-agentic"
 #   docker compose -f deploy/docker-compose.prod.yml up -d --build
 #
 # Only Caddy is published, to 127.0.0.1:${DASH_PORT} — cloudflared connects there. The backend and
