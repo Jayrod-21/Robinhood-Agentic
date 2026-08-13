@@ -1,25 +1,77 @@
 # Dependabot (issue #15): update PRs for every ecosystem this repo ships. Pins stay exact
 # (SENIOR_ENGINEER_BAR §6.10 — nothing floats); Dependabot is how they move.
+#
+# GROUPING AND MAJOR-VERSION POLICY
+#   The first run of an ungrouped config opened 16 PRs at once, most of them framework majors
+#   (tailwind 3->4, typescript 5->7, react 18->19, lucide-react 0.x->1.x). Every one of those fails
+#   the frontend build, because a major framework bump is a migration, not a dependency update.
+#
+#   Sixteen permanently-red PRs is worse than no automation: it buries the security updates this
+#   was added for (#15) in noise, and it trains everyone to ignore the list. So:
+#     - patch and minor updates are GROUPED into one PR per ecosystem per week
+#     - major updates are IGNORED here and handled deliberately as their own piece of work
+#     - security advisories still raise their own PR regardless of the ignore rules, which is the
+#       behaviour the issue actually asked for
 version: 2
 updates:
+  # One block per requirements root, each with a SINGULAR `directory`.
+  #
+  # The first version used `directories: ["/", "/backend", "/db"]`. The "/" entry recursed into
+  # subdirectories, so every backend dependency got TWO competing PRs editing the same file — e.g.
+  # #51 and #57 were byte-identical uvicorn bumps to backend/requirements.txt, and each therefore
+  # reported a conflict against the other. Singular `directory` scans exactly one location.
   - package-ecosystem: "pip"
-    # One update config per requirements root: the screen (/), the dashboard backend, and the
-    # hash-pinned migration runner.
-    directories:
-      - "/"
-      - "/backend"
-      - "/db"
+    directory: "/"            # the screen: yfinance, pandas, pytest
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      root-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Majors are a migration. Do them on purpose, not on a Monday.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "pip"
+    directory: "/backend"     # the dashboard API
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      backend-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "pip"
+    directory: "/db"          # the hash-pinned migration runner
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      db-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     # Covers .github/workflows/*. Actions are SHA-pinned; Dependabot bumps the SHA and keeps the
@@ -28,3 +80,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]

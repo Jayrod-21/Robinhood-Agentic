@@ -29,6 +29,16 @@ services:
     volumes:
       - ../data:/app/data
       - ../logs:/app/logs
+    # Run as the host user, for the same reason the dev stack does (docker-compose.yml:15-19).
+    # data/ and logs/ are 0700 on the host because they hold the holdings snapshot, cost basis and
+    # the refresh trigger. The image's own user is uid 1001, which does not exist on the host, so a
+    # 1001 process cannot even traverse a 0700 dir owned by the host user — the backend died at
+    # startup on `mkdir /app/logs/debates` with EACCES.
+    #
+    # The alternative fixes are both worse: chmod 0777 on the host would make the snapshot readable
+    # and the refresh trigger forgeable by any local account, and baking the host uid into the image
+    # would make the image host-specific.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
       interval: 30s
