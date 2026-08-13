@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import account, debate, health, pipeline, refresh, scan
+from app.routers import account, debate, health, history, pipeline, refresh, scan
 
 
 class SecretRedactionFilter(logging.Filter):
@@ -207,6 +207,7 @@ def create_app() -> FastAPI:
     app.include_router(scan.router)
     app.include_router(debate.router)
     app.include_router(pipeline.router)
+    app.include_router(history.router)
     return app
 
 
