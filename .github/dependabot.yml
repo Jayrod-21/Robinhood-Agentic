@@ -14,22 +14,49 @@
 #       behaviour the issue actually asked for
 version: 2
 updates:
+  # One block per requirements root, each with a SINGULAR `directory`.
+  #
+  # The first version used `directories: ["/", "/backend", "/db"]`. The "/" entry recursed into
+  # subdirectories, so every backend dependency got TWO competing PRs editing the same file — e.g.
+  # #51 and #57 were byte-identical uvicorn bumps to backend/requirements.txt, and each therefore
+  # reported a conflict against the other. Singular `directory` scans exactly one location.
   - package-ecosystem: "pip"
-    # One update config per requirements root: the screen (/), the dashboard backend, and the
-    # hash-pinned migration runner.
-    directories:
-      - "/"
-      - "/backend"
-      - "/db"
+    directory: "/"            # the screen: yfinance, pandas, pytest
     schedule:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
     groups:
-      python-minor-and-patch:
+      root-minor-and-patch:
         update-types: ["minor", "patch"]
     ignore:
       # Majors are a migration. Do them on purpose, not on a Monday.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "pip"
+    directory: "/backend"     # the dashboard API
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      backend-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "pip"
+    directory: "/db"          # the hash-pinned migration runner
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      db-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
 
