@@ -11,4 +11,8 @@ anthropic==0.121.0
 yfinance==1.5.2
 pandas==3.0.5
 httpx==0.28.1
+# DB connection layer (issue #6). Same psycopg pin as db/requirements.txt so the backend and the
+# migration/loader containers never argue about wire behavior against the one shared rh-db.
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
 pytest==9.1.1

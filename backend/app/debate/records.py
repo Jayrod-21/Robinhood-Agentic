@@ -13,6 +13,8 @@ import logging
 import threading
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from app.config import get_settings
 from app.debate.schemas import DebateRecord
 from app.validation import is_safe_record_id
@@ -143,6 +145,86 @@ def get_record(record_id: str) -> dict | None:
     if md_path is not None and md_path.exists():
         return {"id": record_id, "source": "archive", "markdown": md_path.read_text()}
     return None
+
+
+# --- pipeline run history (issue #28) -------------------------------------------------------
+#
+# DELIBERATELY FILE-BACKED (interim). The DB-native home for this data is the evaluation tables
+# (`agent_proposals` / `paper_portfolios`, which capture price-at-decision), but as of this change
+# both are empty and nothing writes them — the DB layer is being wired by a separate workstream.
+# Rather than build against tables that don't receive data yet, pipeline runs append to a JSONL
+# file next to the debate event store, mirroring the `events.jsonl` pattern above. When the DB
+# layer lands, `persist_pipeline_run` / `list_pipeline_runs` are the only two seams to swap: keep
+# their signatures, back them with a table, and optionally backfill from the JSONL file.
+
+# Same rationale as `_events_lock`: `persist_pipeline_run` runs under ``asyncio.to_thread``, so two
+# pipeline runs finishing close together append from different threads; the lock keeps each JSONL
+# line whole. A separate lock from `_events_lock` because the two files are independent.
+_pipeline_runs_lock = threading.Lock()
+
+
+class PipelineRunRecord(BaseModel):
+    """One completed pipeline run — the row behind ``GET /api/pipeline/history``.
+
+    Defined here (not ``schemas.py``) because it is owned by this file-backed interim store and
+    should move out together with it when the Postgres-backed version replaces this module's part.
+    """
+
+    id: str
+    ticker: str
+    created_at: str  # ISO-8601 UTC
+    debate_id: str | None = None  # links to logs/debates/<id>.json → the /debate/[id] detail view
+    price_at_run: float | None = None  # entry-side price for the vs-current comparison
+    screen_passed: bool | None = None
+    screen_composite: float | None = None
+    screen_reason: str | None = None
+    decision: str | None = None  # BUY / SELL / HOLD / ESCALATED
+    escalated: bool = False
+
+
+def _pipeline_runs_path() -> Path:
+    """The JSONL file behind the interim store: ``logs/pipeline_runs.jsonl``.
+
+    Derived from ``logs_dir`` here rather than adding a Settings property — config.py belongs to
+    another workstream right now, and this path dies with the file-backed store anyway.
+    """
+    return get_settings().logs_dir / "pipeline_runs.jsonl"
+
+
+def persist_pipeline_run(record: PipelineRunRecord) -> None:
+    """Append one completed pipeline run to the JSONL history file."""
+    path = _pipeline_runs_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = record.model_dump_json() + "\n"
+    # One locked write of the whole line — same interleaving defense as the events log above.
+    with _pipeline_runs_lock, path.open("a") as fh:
+        fh.write(line)
+
+
+def list_pipeline_runs(limit: int = 200) -> list[dict]:
+    """Pipeline run history, newest first, capped at ``limit``.
+
+    A corrupt line (partial write from a crash, hand-edit) is skipped with a warning rather than
+    failing the whole history — one bad record must not blank the page.
+    """
+    path = _pipeline_runs_path()
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        logger.warning("could not read pipeline run history %s: %s", path, exc)
+        return []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            out.append(PipelineRunRecord.model_validate_json(line).model_dump())
+        except Exception as exc:  # noqa: BLE001 — skip the bad line, keep the history
+            logger.warning("skipping unreadable pipeline run (line %d): %s", lineno, exc)
+    out.sort(key=lambda r: r["created_at"], reverse=True)
+    return out[:limit]
 
 
 # --- helpers --------------------------------------------------------------------------------

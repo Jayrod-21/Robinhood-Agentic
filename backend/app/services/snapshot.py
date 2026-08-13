@@ -63,19 +63,28 @@ class SnapshotError(RuntimeError):
 
 def load_snapshot(path: Path) -> AccountSnapshot:
     """Read + validate the snapshot file. Raises SnapshotError on any problem."""
+    # SnapshotError text reaches the client verbatim (routers/account.py returns it as the 503
+    # detail), so it must not carry server paths or raw exception text — the same disclosure class
+    # as issue #13. The operator detail goes to the log; the caller learns only what is wrong and
+    # what to do about it.
     if not path.exists():
+        logger.error("no account snapshot at %s", path)
         raise SnapshotError(
-            f"No account snapshot at {path}. Click Refresh in the dashboard (or run the "
-            f"manual sync in bin/sync_snapshot.md) to generate one from the Robinhood MCP."
+            "No account snapshot available. Click Refresh in the dashboard (or run the manual "
+            "sync in bin/sync_snapshot.md) to generate one from the Robinhood MCP."
         )
     try:
         raw = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        raise SnapshotError(f"Account snapshot unreadable: {exc}") from exc
+        # str(exc) on OSError embeds the absolute path; a JSONDecodeError quotes file content.
+        logger.error("account snapshot at %s is unreadable: %s", path, exc)
+        raise SnapshotError("Account snapshot is unreadable or malformed.") from exc
     try:
         snapshot = AccountSnapshot.model_validate(raw)
     except Exception as exc:  # pydantic ValidationError and friends
-        raise SnapshotError(f"Account snapshot failed validation: {exc}") from exc
+        # A pydantic error enumerates field names and the offending values — that is the holdings.
+        logger.error("account snapshot at %s failed validation: %s", path, exc)
+        raise SnapshotError("Account snapshot failed validation.") from exc
     if snapshot.schema_version != SNAPSHOT_SCHEMA_VERSION:
         # Fail loudly: a version we don't understand means the producer changed the contract, and
         # reading it with this model could silently misinterpret every field.

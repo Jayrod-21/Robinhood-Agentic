@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Activity, Check, Circle, Loader2, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import useSWR from "swr";
+import { Activity, Check, ChevronRight, Circle, Loader2, X } from "lucide-react";
 import { PageHeader } from "@/components/shell";
-import { Badge, Button, Card, CardBody, Spinner, decisionTone } from "@/components/ui";
-import { streamSSE } from "@/lib/api";
-import { cn, usd } from "@/lib/format";
-import type { JurorVote } from "@/lib/types";
+import { Badge, Button, Card, CardBody, CardHeader, CardTitle, Spinner, decisionTone } from "@/components/ui";
+import { fetcher, streamSSE } from "@/lib/api";
+import { ago, cn, pct, plColor, usd } from "@/lib/format";
+import type { JurorVote, PipelineRunView } from "@/lib/types";
 
 type NodeStatus = "pending" | "running" | "completed" | "error";
 const NODE_LABELS: Record<string, string> = {
@@ -30,6 +33,13 @@ export default function PipelinePage() {
   const [nodes, setNodes] = useState<Record<string, NodeState>>({});
   const [err, setErr] = useState<string | null>(null);
   const ctrl = useRef<AbortController | null>(null);
+  // Run history (issue #28) — refreshes on an interval so the "now" column tracks the live mark,
+  // and is revalidated right after a run completes so the new row appears without a reload.
+  const { data: history, mutate: mutateHistory } = useSWR<PipelineRunView[]>(
+    "/api/pipeline/history",
+    fetcher,
+    { refreshInterval: 30_000 },
+  );
 
   // Abort any in-flight stream on unmount so the reader stops and we don't setState into a dead tree.
   useEffect(() => () => ctrl.current?.abort(), []);
@@ -96,6 +106,7 @@ export default function PipelinePage() {
       if (ctrl.current === controller) {
         setRunning(false);
         ctrl.current = null;
+        mutateHistory();
       }
     }
   }
@@ -156,6 +167,102 @@ export default function PipelinePage() {
           })}
         </ol>
       )}
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Run history</CardTitle>
+        </CardHeader>
+        <CardBody className="p-0">
+          <RunHistory runs={history} />
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+/** Every persisted pipeline run: price at run vs the current mark, in dollars and percent
+ *  (issue #28). Rows link to the wrapped debate's stage-by-stage detail when one was recorded. */
+function RunHistory({ runs }: { runs: PipelineRunView[] | undefined }) {
+  const router = useRouter();
+
+  if (!runs) {
+    return (
+      <div className="flex items-center gap-2 px-5 py-6 text-sm text-zinc-500">
+        <Spinner /> loading history…
+      </div>
+    );
+  }
+  if (runs.length === 0) {
+    return <p className="px-5 py-6 text-sm text-zinc-500">No pipeline runs recorded yet — run one above.</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-y border-ink-800 text-left text-xs uppercase tracking-wider text-zinc-500">
+            <th className="px-5 py-2 font-medium">Ticker</th>
+            <th className="px-3 py-2 font-medium">Decision</th>
+            <th className="px-3 py-2 font-medium">Screen</th>
+            <th className="px-3 py-2 text-right font-medium">At run</th>
+            <th className="px-3 py-2 text-right font-medium">Now</th>
+            <th className="px-3 py-2 text-right font-medium">Δ</th>
+            <th className="px-3 py-2 text-right font-medium">Δ%</th>
+            <th className="px-5 py-2 text-right font-medium">When</th>
+            <th className="py-2 pr-4" />
+          </tr>
+        </thead>
+        <tbody>
+          {runs.map((r) => {
+            const detailHref = r.debate_id ? `/debate/${encodeURIComponent(r.debate_id)}` : null;
+            return (
+              // Same pattern as the debate history table: the whole row navigates (big click
+              // target) and the ticker is also a real <Link> for keyboard / open-in-new-tab.
+              <tr
+                key={r.id}
+                onClick={() => detailHref && router.push(detailHref)}
+                className={cn(
+                  "border-b border-ink-850 transition-colors last:border-0",
+                  detailHref && "cursor-pointer hover:bg-ink-850/60",
+                )}
+              >
+                <td className="px-5 py-2.5 font-medium text-zinc-200">
+                  {detailHref ? (
+                    <Link href={detailHref} onClick={(e) => e.stopPropagation()} className="hover:text-zinc-50">
+                      {r.ticker}
+                    </Link>
+                  ) : (
+                    r.ticker
+                  )}
+                </td>
+                <td className="px-3 py-2.5">
+                  {r.decision ? <Badge tone={decisionTone(r.decision)}>{r.decision}</Badge> : <span className="text-zinc-600">—</span>}
+                </td>
+                <td className="px-3 py-2.5">
+                  {r.screen_passed == null ? (
+                    <span className="text-zinc-600">—</span>
+                  ) : r.screen_passed ? (
+                    <Badge tone="buy">PASS</Badge>
+                  ) : (
+                    <Badge tone="sell" title={r.screen_reason ?? undefined}>FAIL</Badge>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 text-right tnum text-zinc-300">{usd(r.price_at_run)}</td>
+                <td className="px-3 py-2.5 text-right tnum text-zinc-300">{usd(r.current_price)}</td>
+                <td className={cn("px-3 py-2.5 text-right tnum", plColor(r.delta))}>
+                  {r.delta != null && r.delta > 0 ? "+" : ""}
+                  {usd(r.delta)}
+                </td>
+                <td className={cn("px-3 py-2.5 text-right tnum", plColor(r.delta_pct))}>{pct(r.delta_pct)}</td>
+                <td className="px-5 py-2.5 text-right text-xs text-zinc-500">{ago(r.created_at)}</td>
+                <td className="py-2.5 pr-4 text-right">
+                  {detailHref && <ChevronRight className="ml-auto h-4 w-4 text-zinc-600" />}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
