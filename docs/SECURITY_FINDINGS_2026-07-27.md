@@ -1,5 +1,16 @@
 # Security findings — 2026-07-27
 
+> **Status (2026-08-13):** this is the historical record of the review; the body below is
+> unchanged. The living threat model built from it — with each finding's *current* status
+> re-verified against the tree — is the repo-root `SECURITY.md`. Tracking: F1→#11, F4→#12, F5→#13,
+> F6/F7→#14, F8→#15, F9/F10→#16, F11→#17, F12→#18, F13→#19, F14-residual→#20. As of this date
+> F2/F3/F14 are fixed (as recorded below); F1 (app-wide CSRF guard), F4, F5, F6/F7 (redaction
+> filter + no tickers in cron logs), F8, F12, F13, and the F14 residual (scoped Write + exact Bash
+> command) are fixed in-tree on branch `account-config-and-security-hardening` with their issues
+> open pending closure; F9/F10's container hardening and Caddy-layer headers landed with issue
+> #16's compose/Caddyfile change. F11 (basic-auth lockout / Cloudflare Access / session auth)
+> remains fully open.
+
 An adversarial review of 3b's current code against 9b Korean Master's threat models (see
 `PATTERNS_FROM_9B.md` §5). Every finding below was verified against the source before being written
 down; file:line references are to the tree as of commit `22c79eb`.

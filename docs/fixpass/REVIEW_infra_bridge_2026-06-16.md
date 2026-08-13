@@ -258,7 +258,7 @@ review list) but noted because the default lives in the in-scope compose/`.env.e
   line 32) — but I could not read the frontend `.dockerignore` (F9).
 - `backend/.env.example` (line 6) ships `ANTHROPIC_API_KEY=` **empty** — no real secret committed. Good.
 - No credential, token, or key literal appears in any in-scope file. The Robinhood account number
-  `542574025` in `refresh_prompt.md`/`sync_snapshot.md` is an account *identifier*, not a credential,
+  `••••4025` in `refresh_prompt.md`/`sync_snapshot.md` is an account *identifier*, not a credential,
   and the masked form `••••4025` is what the snapshot exposes — acceptable.
 
 ---

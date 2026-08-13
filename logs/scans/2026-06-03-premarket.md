@@ -44,5 +44,5 @@ catalyst, exit-before-entry) and proposes any trade for human confirmation.
 ```
 
 _Next step (Claude session): re-read journal + THESES + SLATE, pull live positions for
-account 542574025, mark to market, run the morning-review lens, check stops/falsification,
+account ••••4025, mark to market, run the morning-review lens, check stops/falsification,
 append to the journal Scan Log. Bias to NO ACTION._

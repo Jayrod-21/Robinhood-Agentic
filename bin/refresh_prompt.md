@@ -1,8 +1,8 @@
 Pull live Robinhood Agentic account -> write dashboard snapshot. Read-only. No trades.
 
 Steps:
-1. MCP `get_portfolio` account_number=542574025.
-2. MCP `get_equity_positions` account_number=542574025.
+1. MCP `get_portfolio` account_number=__AGENTIC_ACCOUNT_NUMBER__.
+2. MCP `get_equity_positions` account_number=__AGENTIC_ACCOUNT_NUMBER__.
 3. Get current UTC time (ISO-8601, e.g. run `date -u +%Y-%m-%dT%H:%M:%SZ`).
 4. Overwrite `data/account_snapshot.json` **in this repository's checkout** (the caller runs you
    from the repo root; `bin/refresh_once.sh` and `bin/refresh_daemon.sh` both resolve it) with
@@ -30,5 +30,5 @@ Steps:
 Rules:
 - Numbers = JSON numbers (not strings). Strip RH string-quotes.
 - One positions entry per open position from get_equity_positions. Empty list if none.
-- Use account 542574025 ONLY. Never place/modify any order.
+- Use account __AGENTIC_ACCOUNT_NUMBER__ ONLY. Never place/modify any order.
 - After writing, print: DONE

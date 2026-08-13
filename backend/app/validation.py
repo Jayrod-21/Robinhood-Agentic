@@ -13,8 +13,10 @@ import re
 
 from fastapi import HTTPException
 
-# An equity ticker: 1–6 chars, leading letter, letters and dots only (e.g. NVDA, BRK.B).
-TICKER_RE = re.compile(r"^[A-Z][A-Z.]{0,5}$")
+# An equity ticker: 1–5 letters, optionally a single class-share suffix of ".<letter>" (NVDA,
+# BRK.B, BF.B). Exactly this grammar — no consecutive dots, no trailing dot, at most one dot —
+# because the symbol is interpolated into an outbound Yahoo URL path by yfinance.
+TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
 # A debate record id used as a filename stem. Allowlist of filename-safe characters only; crucially
 # excludes "/" and prevents ".." traversal (no path separators can appear, and a bare ".." is < the

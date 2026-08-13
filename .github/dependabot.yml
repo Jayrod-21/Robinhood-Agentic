@@ -1,0 +1,30 @@
+# Dependabot (issue #15): update PRs for every ecosystem this repo ships. Pins stay exact
+# (SENIOR_ENGINEER_BAR §6.10 — nothing floats); Dependabot is how they move.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    # One update config per requirements root: the screen (/), the dashboard backend, and the
+    # hash-pinned migration runner.
+    directories:
+      - "/"
+      - "/backend"
+      - "/db"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: "github-actions"
+    # Covers .github/workflows/*. Actions are SHA-pinned; Dependabot bumps the SHA and keeps the
+    # human-readable version comment in sync.
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"

@@ -1,5 +1,6 @@
 # Twice-daily cycle — market open + close, US/Eastern (DST-aware via CRON_TZ).
-# Install with:  crontab -e   (paste + edit the absolute paths)   then:  crontab -l
+# Install with:  crontab -e   (paste, then verify with:  crontab -l)
+# Paths below are M's real checkout; adjust only if the repo moves.
 #
 # Each run: refresh the snapshot via the Robinhood MCP (host), then run the in-container cycle
 # (scan + per-position debates + report). Logs go to logs/cron/<date>-<phase>.log.
@@ -7,14 +8,14 @@
 CRON_TZ=America/New_York
 
 # Point the cycle at the PROD compose so `docker compose exec` hits the prod backend container.
-AGENTIC_COMPOSE_FILE=/home/YOU/agentic/3b. Robinhood Agentic/deploy/docker-compose.prod.yml
+AGENTIC_COMPOSE_FILE=/srv/agentic/robinhood-agentic/deploy/docker-compose.prod.yml
 
-# Only needed if the robinhood MCP is PROJECT-scoped (set it to that project dir). If you added the
-# MCP at USER scope (recommended on a server), the cwd doesn't matter — leave this commented out.
-# AGENTIC_MCP_CWD=/home/YOU
+# Only needed if the robinhood MCP is PROJECT-scoped (set it to that project dir). If the MCP is
+# added at USER scope (recommended), the cwd doesn't matter — leave this commented out.
+# AGENTIC_MCP_CWD=/srv/agentic
 
 # Market OPEN 09:30 ET → run at 09:32 (let the open print settle). Mon–Fri.
-32 9 * * 1-5 "/home/YOU/agentic/3b. Robinhood Agentic/bin/scheduled_cycle.sh" open
+32 9 * * 1-5 "/srv/agentic/robinhood-agentic/bin/scheduled_cycle.sh" open
 
 # Market CLOSE 16:00 ET → run at 16:02. Mon–Fri.
-2 16 * * 1-5 "/home/YOU/agentic/3b. Robinhood Agentic/bin/scheduled_cycle.sh" close
+2 16 * * 1-5 "/srv/agentic/robinhood-agentic/bin/scheduled_cycle.sh" close

@@ -20,7 +20,12 @@ from datetime import datetime, timezone
 
 from app.config import get_settings
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+# The logging bootstrap (format + secret-redaction filter) lives in app.main so the API process
+# and this cron job share one implementation; importing it here costs one extra app construction
+# at job start, which is negligible next to the scan + debates the job exists to run.
+from app.main import configure_logging
+
+configure_logging()
 logger = logging.getLogger("agentic.jobs.cycle")
 
 
@@ -126,7 +131,9 @@ async def run_cycle(phase: str, max_debates: int = 0) -> str:
         symbols = [p.symbol for p in account.positions]
         if max_debates > 0:
             symbols = symbols[:max_debates]
-        logger.info("debating %d position(s): %s", len(symbols), ", ".join(symbols))
+        # Count only, no tickers: this line lands in logs/cron/ twice a day, and the symbol list
+        # is the account's holdings (issue #14). The per-ticker detail lives in the report file.
+        logger.info("debating %d position(s)", len(symbols))
         sem = asyncio.Semaphore(2)  # 2 debates at once (each already fans out its own jury)
         debates = await asyncio.gather(*[_run_one_debate(s, sem) for s in symbols])
 

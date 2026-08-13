@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import useSWR from "swr";
-import { Gavel, AlertTriangle } from "lucide-react";
+import { Gavel, AlertTriangle, ChevronRight } from "lucide-react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/shell";
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, Spinner, decisionTone } from "@/components/ui";
@@ -13,6 +15,7 @@ import type { DebateSummary, JuryResult, JurorVote } from "@/lib/types";
 const VOTE_COLOR: Record<string, string> = { BUY: "#34d399", SELL: "#fb7185", HOLD: "#fbbf24" };
 
 export default function DebatePage() {
+  const router = useRouter();
   const { data: records, mutate } = useSWR<DebateSummary[]>("/api/debate/records", fetcher, { refreshInterval: 15_000 });
   const [ticker, setTicker] = useState("");
   const [running, setRunning] = useState(false);
@@ -194,13 +197,30 @@ export default function DebatePage() {
           <table className="w-full text-sm">
             <tbody>
               {(records ?? []).map((r) => (
-                <tr key={r.id} className="border-b border-ink-850 last:border-0">
-                  <td className="px-5 py-2.5 text-zinc-300">{r.question}</td>
+                // The whole row navigates (big click target); the question is also a real <Link>
+                // so keyboard users can tab to it and middle-click/open-in-new-tab works.
+                <tr
+                  key={r.id}
+                  onClick={() => router.push(`/debate/${encodeURIComponent(r.id)}`)}
+                  className="cursor-pointer border-b border-ink-850 transition-colors last:border-0 hover:bg-ink-850/60"
+                >
+                  <td className="px-5 py-2.5 text-zinc-300">
+                    <Link
+                      href={`/debate/${encodeURIComponent(r.id)}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="hover:text-zinc-100"
+                    >
+                      {r.question}
+                    </Link>
+                  </td>
                   <td className="px-3 py-2.5">{r.decision && <Badge tone={decisionTone(r.decision)}>{r.decision}</Badge>}</td>
                   <td className="px-3 py-2.5">
                     <Badge tone="neutral">{r.source}</Badge>
                   </td>
                   <td className="px-5 py-2.5 text-right text-xs text-zinc-500">{ago(r.created_at)}</td>
+                  <td className="py-2.5 pr-4 text-right">
+                    <ChevronRight className="ml-auto h-4 w-4 text-zinc-600" />
+                  </td>
                 </tr>
               ))}
               {(!records || records.length === 0) && (

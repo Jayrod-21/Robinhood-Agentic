@@ -2,7 +2,8 @@
 # refresh_once.sh — one headless Robinhood snapshot refresh. Server-friendly: no wt.exe, no daemon.
 #
 # Runs `claude --print` with the robinhood-trading MCP, pre-authorizing ONLY the two read-only
-# account pulls + Write + `date` (no order tool, no broad Bash). Writes data/account_snapshot.json.
+# account pulls + Write of the snapshot file + the exact `date` timestamp command (no order tool,
+# no broad Bash, no unscoped Write). Writes data/account_snapshot.json.
 # This is the canonical refresh used by BOTH the cron cycle (bin/scheduled_cycle.sh) and the
 # Refresh-button daemon (bin/refresh_daemon.sh) on a headless host.
 #
@@ -16,19 +17,26 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SNAPSHOT_FILE="${PROJECT_DIR}/data/account_snapshot.json"
-PROMPT_FILE="${SCRIPT_DIR}/refresh_prompt.md"
+PROMPT_TEMPLATE="${SCRIPT_DIR}/refresh_prompt.md"
 LOG_DIR="${PROJECT_DIR}/logs/refresh"
+
+# The prompt template carries a placeholder, not the account number; render it from configuration.
+# shellcheck source=bin/lib_account.sh
+source "${SCRIPT_DIR}/lib_account.sh"
 
 # Directory to run `claude` from so the robinhood MCP loads. With a USER-scoped MCP any dir works;
 # with a project-scoped MCP, point this at that project root. Override via AGENTIC_MCP_CWD.
 MCP_CWD="${AGENTIC_MCP_CWD:-${PROJECT_DIR}}"
 TIMEOUT="${AGENTIC_REFRESH_TIMEOUT:-150}"
 
+# Write is scoped to the snapshot file only (leading // = Claude Code's absolute-path rule form;
+# any other path falls outside the pre-authorization), and the Bash rule is the one exact command
+# the prompt asks for — an unanchored `date*` prefix would also match longer commands.
 ALLOWED_TOOLS=(
   mcp__robinhood-trading__get_portfolio
   mcp__robinhood-trading__get_equity_positions
-  Write
-  'Bash(date*)'
+  "Write(//${SNAPSHOT_FILE#/})"
+  'Bash(date -u +%Y-%m-%dT%H:%M:%SZ)'
 )
 
 mkdir -p "${LOG_DIR}"
@@ -51,10 +59,15 @@ if [[ -z "${cb}" ]]; then
   log "ERROR: claude CLI not found on PATH. Install Claude Code on this host."
   exit 2
 fi
-if [[ ! -f "${PROMPT_FILE}" ]]; then
-  log "ERROR: prompt file missing: ${PROMPT_FILE}"
+if [[ ! -f "${PROMPT_TEMPLATE}" ]]; then
+  log "ERROR: prompt template missing: ${PROMPT_TEMPLATE}"
   exit 2
 fi
+
+# Render only after the template and the CLI are known good, so a failure here is unambiguous.
+require_account_number || exit 2
+PROMPT_FILE="$(render_prompt "${PROMPT_TEMPLATE}")"
+trap 'rm -f -- "${PROMPT_FILE}"' EXIT
 
 runlog="${LOG_DIR}/once-$(date -u +%Y%m%dT%H%M%SZ).log"
 before="$(snapshot_mtime)"

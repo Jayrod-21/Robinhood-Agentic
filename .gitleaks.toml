@@ -1,0 +1,30 @@
+title = "3b Robinhood Agentic — gitleaks configuration"
+
+# WHY THIS FILE EXISTS
+#   Two committed strings look like credentials to the default ruleset and are not:
+#     * SERVER_DEPLOY.md's `curl -u USER:PASSWORD` — the literal words USER and PASSWORD, a
+#       placeholder in a runbook.
+#     * backend/tests/test_log_redaction.py's `api_key=abcd1234efgh` — the fixture in the test that
+#       asserts the log redaction filter SCRUBS it (`assert "abcd1234efgh" not in out`). Removing it
+#       would delete the test's own subject.
+#
+#   Both are scanned by the global pre-commit hook AND by .github/workflows/gitleaks.yml, so
+#   suppressing locally with `--no-verify` would simply move the failure to CI.
+
+# CRITICAL: without this block, defining any config REPLACES the built-in ruleset instead of
+# extending it — every default secret rule would silently stop running, and the scanner would
+# report clean forever. That failure is invisible: a green check that proves nothing.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented placeholders and the redaction test's own fixture"
+# Match against the matched secret text, not the whole file, so the exemption cannot widen to
+# anything else in these files. A real credential in either file is still caught.
+regexTarget = "match"
+regexes = [
+  # Runbook placeholder — literally the words USER and PASSWORD.
+  '''curl -u USER:PASSWORD''',
+  # The redaction test's fake key. Deliberately narrow: this exact value only.
+  '''api_key=abcd1234efgh''',
+]

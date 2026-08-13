@@ -29,7 +29,16 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DATA_DIR="${PROJECT_DIR}/data"
 REQUEST_FILE="${DATA_DIR}/refresh.request"
 SNAPSHOT_FILE="${DATA_DIR}/account_snapshot.json"
-PROMPT_FILE="${SCRIPT_DIR}/refresh_prompt.md"
+PROMPT_TEMPLATE="${SCRIPT_DIR}/refresh_prompt.md"
+
+# The template carries a placeholder rather than the account number. Render once at startup: the
+# daemon is long-lived and the generated runner reads this path on each refresh, so it must outlive
+# any single run. Cleared on daemon exit.
+# shellcheck source=bin/lib_account.sh
+source "${SCRIPT_DIR}/lib_account.sh"
+require_account_number || exit 2
+PROMPT_FILE="$(render_prompt "${PROMPT_TEMPLATE}")"
+trap 'rm -f -- "${PROMPT_FILE}"' EXIT
 LOG_DIR="${PROJECT_DIR}/logs/refresh"
 
 # Directory to run `claude` from so the robinhood MCP loads. With a USER-scoped MCP (the documented
@@ -55,14 +64,17 @@ else
 fi
 
 # Exact, least-privilege tools the refresh claude may use without an interactive approval prompt:
-# the two read-only Robinhood pulls, Write (snapshot file), and `date` for the timestamp. No order
-# placement tool is allowed. `--dangerously-skip-permissions` is intentionally NOT used (it is hard
-# -blocked under root); pre-authorizing these specific tools is the root-safe, least-privilege path.
+# the two read-only Robinhood pulls, Write scoped to the snapshot file only (the leading // is
+# Claude Code's absolute-path rule form — any other path falls outside the pre-authorization),
+# and the exact timestamp command the prompt asks for (an unanchored `date*` prefix would also
+# match any longer command starting with "date"). No order placement tool is allowed.
+# `--dangerously-skip-permissions` is intentionally NOT used (it is hard-blocked under root);
+# pre-authorizing these specific tools is the root-safe, least-privilege path.
 ALLOWED_TOOLS=(
   mcp__robinhood-trading__get_portfolio
   mcp__robinhood-trading__get_equity_positions
-  Write
-  'Bash(date*)'
+  "Write(//${SNAPSHOT_FILE#/})"
+  'Bash(date -u +%Y-%m-%dT%H:%M:%SZ)'
 )
 
 mkdir -p "${LOG_DIR}"

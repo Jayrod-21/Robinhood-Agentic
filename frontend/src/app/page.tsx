@@ -12,6 +12,13 @@ import type { AccountView, RefreshStatus } from "@/lib/types";
 
 const DONUT = ["#e0b34d", "#34d399", "#60a5fa", "#f472b6", "#a78bfa", "#fb923c", "#22d3ee", "#facc15", "#94a3b8"];
 
+// weight_account_pct landed with issue #21: the charter's ~25%/name cap is stated against
+// ACCOUNT value (equity + cash), so both weight bases are exposed and labelled. The shared
+// types file (src/lib/types.ts) is owned by another workstream; widen locally until it
+// mirrors the backend PositionView. Optional so an older backend degrades to "—".
+
+const fmtWeight = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(1)}%`);
+
 export default function PortfolioPage() {
   const { data, error, isLoading } = useSWR<AccountView>("/api/account", fetcher, { refreshInterval: 10_000 });
   const [refreshing, setRefreshing] = useState(false);
@@ -127,7 +134,12 @@ export default function PortfolioPage() {
                     <th className="px-3 py-2 text-right font-medium">Avg cost</th>
                     <th className="px-3 py-2 text-right font-medium">Mkt value</th>
                     <th className="px-3 py-2 text-right font-medium">P&L</th>
-                    <th className="px-5 py-2 text-right font-medium">Weight</th>
+                    <th className="px-3 py-2 text-right font-medium" title="Share of account value (equity + cash) — the basis of the ~25%-per-name position cap">
+                      Wt % acct
+                    </th>
+                    <th className="px-5 py-2 text-right font-medium" title="Share of invested equity only (excludes cash)">
+                      Wt % equity
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -140,7 +152,8 @@ export default function PortfolioPage() {
                       <td className={cn("px-3 py-2.5 text-right tnum", plColor(p.unrealized_pl))}>
                         {usd(p.unrealized_pl)} <span className="text-xs">({pct(p.unrealized_pl_pct)})</span>
                       </td>
-                      <td className="px-5 py-2.5 text-right tnum text-zinc-400">{p.weight_pct == null ? "—" : `${p.weight_pct.toFixed(1)}%`}</td>
+                      <td className="px-3 py-2.5 text-right tnum text-zinc-200">{fmtWeight(p.weight_account_pct)}</td>
+                      <td className="px-5 py-2.5 text-right tnum text-zinc-500">{fmtWeight(p.weight_pct)}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -37,6 +37,39 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+    # Container hardening (issue #16, SENIOR_ENGINEER_BAR §6.3). The app needs no privilege
+    # escalation and no Linux capabilities: it is a Python process serving HTTP and writing to two
+    # bind mounts. Everything else is attack surface for a compromised dependency (yfinance and the
+    # Anthropic SDK both talk to the network from inside this container).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Read-only rootfs: the only writable paths are the two bind mounts above and /tmp. The image's
+    # site-packages and app code cannot be modified at runtime, so a compromised request handler
+    # cannot persist a backdoor into the container. (Writes to the yfinance HOME cache already
+    # failed before this change — the container runs as the host uid, which does not own /app — and
+    # the app tolerates that; verified against /api/health and /api/account after the change.)
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    # Resource caps: a runaway scan fan-out or SDK retry loop must not take down the host, which
+    # also runs 9b and the shared GPU workloads. memswap == mem disables swap spill (same pattern
+    # as docker-compose.db.yml).
+    memswap_limit: 1g
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "2.0"
+          pids: 256
+    # Cap container logs so a log flood cannot fill the disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   frontend:
     build:
       context: ./frontend
@@ -51,3 +84,25 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+    # Same hardening posture as the backend (issue #16), with one honest exception: NO read_only
+    # here. This is the DEV image running `next dev`, which writes its build artifacts to /app/.next
+    # continuously; a read-only rootfs breaks it. The prod image (frontend/Dockerfile.prod) is the
+    # one that faces the internet, and this dev service is loopback-only.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # next dev is memory-hungry (webpack in watch mode); 2g is headroom, not a target.
+    memswap_limit: 2g
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+          pids: 512
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

@@ -9,7 +9,12 @@ export interface PositionView {
   market_value: number | null;
   unrealized_pl: number | null;
   unrealized_pl_pct: number | null;
+  /** Share of live equity value — priced positions only, EXCLUDES cash. Allocation mix. */
   weight_pct: number | null;
+  /** Share of live account value (equity + cash). This is the basis the charter's ~25%-per-name
+   *  cap is written against, so it is the one a cap breach may be judged on. Optional so an older
+   *  backend that predates it degrades to "—" rather than rendering undefined. */
+  weight_account_pct?: number | null;
   priced: boolean;
 }
 
@@ -66,6 +71,50 @@ export interface DebateSummary {
   source: string;
 }
 
+export interface BullBear {
+  bull_case: string;
+  bear_case: string;
+}
+
+/** The fundamentals shape produced by src/data.py::fundamentals_from_info. Every field optional —
+ *  yfinance misses fields routinely and older records may predate some of them. */
+export interface FundamentalsData {
+  market_cap?: number | null;
+  peg?: number | null;
+  fcf_yield?: number | null;
+  free_cash_flow?: number | null;
+  net_income?: number | null;
+  operating_cash_flow?: number | null;
+  gross_margin?: number | null;
+  revenue_growth?: number | null;
+  name?: string | null;
+  sector?: string | null;
+  industry?: string | null;
+  trailing_pe?: number | null;
+  forward_pe?: number | null;
+  price?: number | null;
+  ticker?: string;
+}
+
+/** Full record from GET /api/debate/{id}. Engine debates carry the structured fields; archived
+ *  hand-written debates carry only `markdown` (plus id/source), so everything else is optional. */
+export interface DebateDetail {
+  id: string;
+  source: string;
+  ticker?: string | null;
+  created_at?: string;
+  question?: string;
+  price?: number | null;
+  fundamentals?: FundamentalsData | null;
+  bull_bear?: BullBear | null;
+  jury?: JuryResult | null;
+  final_decision?: Decision | null;
+  position_size_note?: string | null;
+  models?: Record<string, string>;
+  /** Raw markdown body — archive records only. */
+  markdown?: string;
+}
+
 export interface ScanResult {
   ticker: string;
   ok: boolean;
@@ -77,4 +126,11 @@ export interface ScanResult {
   fcf_yield?: number | null;
   name?: string | null;
   sector?: string | null;
+  industry?: string | null;
+  market_cap?: number | null;
+  price?: number | null;
+  trailing_pe?: number | null;
+  forward_pe?: number | null;
+  gross_margin?: number | null;
+  revenue_growth?: number | null;
 }

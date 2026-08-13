@@ -541,7 +541,21 @@ def _splice_from_audit(conn: psycopg.Connection, args: argparse.Namespace) -> in
     series at a void no backtest could honestly price across. --include-pending extends this to
     rows with no provider evidence at all, for environments without egress — loudly.
     """
+    # --dispositions narrows the set. The default splices both classes, but the two rest on very
+    # different evidence: identity_break means the provider's own history contradicts ours, while
+    # provider_unresolvable means the provider had nothing to say — which for a delisted warrant or
+    # a near-untraded instrument is the expected answer whether or not an identity break occurred.
+    # Splicing the latter infers a specific event from missing data, so an operator must be able to
+    # act on the confirmed cohort alone without first mislabelling the rest.
     dispositions = ["identity_break", "provider_unresolvable"]
+    if args.dispositions is not None:
+        unknown = sorted(set(args.dispositions) - set(NON_TERMINAL_DISPOSITIONS))
+        if unknown:
+            logger.error("unknown disposition(s): %s (known: %s)",
+                         ", ".join(unknown), ", ".join(NON_TERMINAL_DISPOSITIONS))
+            return EXIT_VALIDATION
+        dispositions = list(args.dispositions)
+        logger.info("splice --from-audit: restricted to %s by --dispositions", "/".join(dispositions))
     if args.include_pending:
         logger.warning(
             "--include-pending: splicing pending_review holes WITHOUT provider evidence — "
@@ -893,7 +907,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--provider", action="store_true",
                    help="audit: gather provider-history evidence for pending holes (egress required)")
     p.add_argument("--dispositions", nargs="*",
-                   help="audit --provider: which dispositions to (re)check (default pending_review)")
+                   help="audit --provider: which dispositions to (re)check (default pending_review). "
+                        "splice --from-audit: restrict the splice to these dispositions "
+                        "(default identity_break + provider_unresolvable)")
     p.add_argument("--from-audit", action="store_true",
                    help="splice: splice holes classified identity_break/provider_unresolvable "
                         "in price_gap_audit (the normal mode)")

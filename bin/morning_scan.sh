@@ -15,6 +15,12 @@ export PATH="/usr/local/bin:/usr/bin:/bin"
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT" || { echo "cannot cd to project"; exit 1; }
 
+# The account number comes from configuration, not from this file. Fail before doing any work
+# rather than emitting a prompt with an empty account in it.
+# shellcheck source=bin/lib_account.sh
+source "${PROJECT}/bin/lib_account.sh"
+require_account_number || exit 2
+
 DATE="$(date +%Y-%m-%d)"
 STAMP="$(date '+%Y-%m-%d %H:%M:%S %Z')"
 OUTDIR="$PROJECT/logs/scans"
@@ -32,7 +38,7 @@ REPORT="$OUTDIR/${DATE}-premarket.md"
   echo '```'
   echo ""
   echo "_Next step (Claude session): re-read journal + THESES + SLATE, pull live positions for"
-  echo "account 542574025, mark to market, run the morning-review lens, check stops/falsification,"
+  echo "account ${AGENTIC_ACCOUNT_NUMBER}, mark to market, run the morning-review lens, check stops/falsification,"
   echo "append to the journal Scan Log. Bias to NO ACTION._"
 } > "$REPORT" 2>&1
 
