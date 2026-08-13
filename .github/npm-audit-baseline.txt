@@ -1,0 +1,18 @@
+# Known high/critical npm advisories tolerated by .github/scripts/npm_audit_gate.sh.
+# SHRINK-ONLY: prune ids as dependency upgrades land; NEVER add one to silence a new finding.
+#
+# All entries below date from 2026-08-13 and trace to the pinned `next` (fix is the breaking
+# next@16 major upgrade, tracked frontend work) and its transitive nanoid/postcss. Once next is
+# upgraded and `npm audit fix` applied, this file should be empty.
+GHSA-28wg-ghj8-5hjv
+GHSA-2v37-7h3g-55p8
+GHSA-36qx-fr4f-26g5
+GHSA-6g55-p6wh-862q
+GHSA-89xv-2m56-2m9x
+GHSA-8h8q-6873-q5fj
+GHSA-c4j6-fc7j-m34r
+GHSA-h25m-26qc-wcjf
+GHSA-m99w-x7hq-7vfj
+GHSA-p9j2-gv94-2wf4
+GHSA-q4gf-8mx6-v5v3
+GHSA-r28c-9q8g-f849
