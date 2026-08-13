@@ -1,20 +1,33 @@
-# Cloudflare Tunnel config — exposes the dashboard publicly with no open inbound ports.
-# cloudflared connects OUT to Cloudflare and forwards to Caddy on 127.0.0.1:DASH_PORT.
+# Cloudflare Tunnel ingress for the dashboard — what the 3b entry in the LIVE tunnel config
+# will look like once the owners pick a hostname.
 #
-# Setup (one-time):
-#   cloudflared tunnel login
-#   cloudflared tunnel create agentic-dashboard          # prints a <TUNNEL-ID> + creds json
-#   cloudflared tunnel route dns agentic-dashboard agentic.yourdomain.com
-#   cp this file to ~/.cloudflared/config.yml  (edit the values)
-#   sudo cloudflared service install                     # runs the tunnel on boot
+# REALITY ON M (verified 2026-08-13): a named tunnel already runs on this machine as a systemd
+# service, configured at /etc/cloudflared/config.yml, serving korean.jaredstudio.com,
+# uvrl.jaredstudio.com and uvrl-study.jaredstudio.com. 3b does NOT create its own tunnel — it adds
+# one ingress rule to that existing config. This file is therefore an EXAMPLE OF THE RULE TO ADD,
+# not a standalone config to install.
 #
-# Auth is enforced by Caddy basic-auth (deploy/.env). For stronger control, also put a
-# Cloudflare Access policy in front of the hostname.
+# ⚠ DECISIONS STILL OPEN (do not proceed without the owners):
+#   1. The hostname. Nothing is assigned yet; <HOSTNAME-TBD> below is a placeholder, not a choice.
+#   2. Cloudflare Access on that hostname — treated as mandatory before exposure (issue #17).
+#
+# Procedure once decided (mirrors the header of the live /etc/cloudflared/config.yml):
+#   cloudflared tunnel route dns <TUNNEL-NAME> <HOSTNAME-TBD>.jaredstudio.com
+#   sudo cp /etc/cloudflared/config.yml /etc/cloudflared/config.yml.bak.$(date +%Y%m%d-%H%M%S)
+#   # edit /etc/cloudflared/config.yml: insert the 3b rule BEFORE the final http_status:404 rule
+#   cloudflared --config /etc/cloudflared/config.yml tunnel ingress validate
+#   sudo systemctl restart cloudflared
+#
+# ⚠ `restart`, NEVER `kill -HUP`: the unit is Type=notify with Restart=on-failure and no
+# ExecReload. SIGHUP makes cloudflared exit CLEANLY, systemd does not restart a clean exit, and
+# every hostname on the tunnel goes dark — this took korean.jaredstudio.com down for four minutes
+# on 2026-08-11. The restart itself drops all hostnames for a second or two; that brief blip is
+# the whole blast radius, and it is shared with korean/uvrl because it is one tunnel.
+#
+# Single-label subdomain only (e.g. agentic.jaredstudio.com, NOT dash.agentic.jaredstudio.com):
+# the Cloudflare certificate covers jaredstudio.com and *.jaredstudio.com, and a wildcard does not
+# match two labels — a two-label name fails TLS in every browser.
 
-tunnel: <TUNNEL-ID>
-credentials-file: /home/YOU/.cloudflared/<TUNNEL-ID>.json
-
-ingress:
-  - hostname: agentic.yourdomain.com
-    service: http://localhost:8088   # must match DASH_PORT in deploy/.env
-  - service: http_status:404
+# --- The rule to insert into the ingress: list of /etc/cloudflared/config.yml ---
+#  - hostname: <HOSTNAME-TBD>.jaredstudio.com
+#    service: http://localhost:8088   # must match DASH_PORT in deploy/.env

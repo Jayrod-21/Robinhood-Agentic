@@ -357,6 +357,7 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         ("008", False, True),
         ("009", False, True),  # down drops mark_kind — the labels are data
         ("010", False, False),  # up and down only set/clear a role comment
+        ("011", False, False),  # privilege defaults + comment markers; no data touched either way
     ]
 
 
@@ -490,7 +491,7 @@ def test_real_migrations_up_down_up(db_url: str) -> None:
     # 004's trigger functions leave no residue either.
     assert q(db_url, "SELECT count(*) FROM pg_proc WHERE proname LIKE 'enforce\\_%%'")[0][0] == 0
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 10
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 11
 
 
 # ── 004: the evaluation tables ────────────────────────────────────────────────────────────────
@@ -715,6 +716,93 @@ def test_evaluation_runs_are_append_only(db_url: str) -> None:
         "SELECT has_column_privilege('rh_app', 'judgments', 'resulting_portfolio_id', 'UPDATE')",
     )[0][0] is True
     assert q(db_url, "SELECT has_column_privilege('rh_app', 'judgments', 'decision', 'UPDATE')")[0][0] is False
+
+
+# The append-only floor 004 enforced. test_append_only_tables_enumerated_from_catalog discovers the
+# set from catalog COMMENT markers; this literal list only asserts the discovery can never silently
+# shrink below what 004 shipped (issue #34: a gate, not a convention).
+APPEND_ONLY_FLOOR = frozenset({
+    "evaluation_runs",
+    "portfolio_returns_daily",
+    "agent_proposals",
+    "agent_proposal_positions",
+    "judgments",
+    "knowledge_base_entries",
+    "guardrail_events",
+    "risk_free_rates",
+})
+
+
+def test_future_tables_default_to_append_only(db_url: str) -> None:
+    """Issue #34, mechanism half: 001's ALTER DEFAULT PRIVILEGES handed every FUTURE table full DML,
+    so any migration after 004 could silently re-open a hole 004 closed per-instance. After 011 the
+    default grant for new tables is SELECT+INSERT only — a future mutable table must GRANT
+    UPDATE/DELETE explicitly, and forgetting fails loudly on first UPDATE instead of silently
+    permitting history rewrites."""
+    md = str(REPO_MIGRATIONS)
+    assert main(["up", "--migrations-dir", md]) == EXIT_OK
+
+    # The catalog's default ACL for future tables in public grants rh_app exactly SELECT, INSERT.
+    rows = q(
+        db_url,
+        "SELECT a.privilege_type "
+        "FROM pg_default_acl d "
+        "JOIN pg_namespace n ON n.oid = d.defaclnamespace "
+        "CROSS JOIN LATERAL aclexplode(d.defaclacl) a "
+        "WHERE n.nspname = 'public' AND d.defaclobjtype = 'r' "
+        "  AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = 'rh_app')",
+    )
+    assert {r[0] for r in rows} == {"SELECT", "INSERT"}, (
+        "future tables must default to append-only for rh_app; a broad default grant re-opens "
+        "issue #34"
+    )
+
+    # Behavioural proof, not just catalog reading: a table created NOW by the DDL role — standing
+    # in for any future migration's table — is born append-only for rh_app with no per-table
+    # REVOKE anywhere.
+    q(db_url, "CREATE TABLE probe_future_history (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, note text)")
+    try:
+        for priv, expected in (("SELECT", True), ("INSERT", True), ("UPDATE", False), ("DELETE", False)):
+            got = q(db_url, "SELECT has_table_privilege('rh_app', 'probe_future_history', %s)", (priv,))[0][0]
+            assert got is expected, f"fresh table: rh_app {priv} should be {expected}"
+        # Sequences keep USAGE/SELECT so the identity column stays insertable.
+        assert q(
+            db_url,
+            "SELECT has_sequence_privilege('rh_app', 'probe_future_history_id_seq', 'USAGE')",
+        )[0][0] is True
+    finally:
+        q(db_url, 'DROP TABLE probe_future_history')
+
+
+def test_append_only_tables_enumerated_from_catalog(db_url: str) -> None:
+    """Issue #34, gate half: append-only tables are discovered from their catalog COMMENT marker
+    ('APPEND-ONLY (enforced by grants)'), not a hardcoded list — a future migration that declares
+    the marker but forgets the grants (or vice versa) turns this red without anyone editing the
+    test. The 004 floor pins the discovery against silent shrinkage."""
+    md = str(REPO_MIGRATIONS)
+    assert main(["up", "--migrations-dir", md]) == EXIT_OK
+
+    marked = {
+        r[0]
+        for r in q(
+            db_url,
+            "SELECT c.relname "
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') "
+            "  AND obj_description(c.oid, 'pg_class') ILIKE '%%append-only (enforced%%'",
+        )
+    }
+    missing = APPEND_ONLY_FLOOR - marked
+    assert not missing, f"tables 004 enforced as append-only lost their catalog marker: {sorted(missing)}"
+
+    for table in sorted(marked):
+        for priv in ("UPDATE", "DELETE"):
+            held = q(db_url, "SELECT has_table_privilege('rh_app', %s, %s)", (table, priv))[0][0]
+            assert held is False, f"{table} is declared append-only in the catalog but rh_app holds {priv}"
+        # Append-only means append still works: the declaration must not shade into read-only.
+        for priv in ("SELECT", "INSERT"):
+            held = q(db_url, "SELECT has_table_privilege('rh_app', %s, %s)", (table, priv))[0][0]
+            assert held is True, f"{table}: rh_app lost {priv}; append-only must still allow appends"
 
 
 def test_evaluation_schema_shape_constraints(db_url: str) -> None:
@@ -1436,7 +1524,7 @@ def test_prd_backfill_rollback_refuses_to_launder_history(db_url: str) -> None:
     q(db_url, "DELETE FROM portfolio_returns_daily WHERE portfolio_id = %s", (pid,))
     assert main(["down", "--allow-destructive", "--target", "008", "--migrations-dir", md]) == EXIT_OK
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 10
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 11
 
 
 # ── 010: the rh_app role comment states the verified truth (issue #31) ───────────────────────
@@ -1454,8 +1542,9 @@ def test_rh_app_role_comment_states_the_verified_truth(db_url: str) -> None:
     assert comment is not None
     assert "CAN authenticate from inside the container with no password" in comment
     assert "trust" in comment and "scram-sha-256" in comment
-    # The down restores 001's exact prior state: no role comment at all.
-    assert main(["down", "--allow-destructive", "--migrations-dir", md]) == EXIT_OK
+    # The down restores 001's exact prior state: no role comment at all. Target 009 explicitly —
+    # 011 sits above 010 now, so a bare one-step down would only roll back 011.
+    assert main(["down", "--allow-destructive", "--target", "009", "--migrations-dir", md]) == EXIT_OK
     assert q(
         db_url, "SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = 'rh_app'"
     ) == [(None,)]

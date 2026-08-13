@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Play, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { Play, CheckCircle2, XCircle, AlertTriangle, ChevronDown } from "lucide-react";
 import { PageHeader } from "@/components/shell";
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, Spinner } from "@/components/ui";
+import { FundamentalsGrid, compactUsd } from "@/components/fundamentals";
 import { streamSSE } from "@/lib/api";
 import { cn } from "@/lib/format";
 import type { ScanResult } from "@/lib/types";
@@ -15,7 +16,18 @@ export default function ScanPage() {
   const [survivors, setSurvivors] = useState<ScanResult[] | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [err, setErr] = useState<string | null>(null);
+  // Tickers whose row is expanded to show the full fundamentals (issue #27). Cleared per run.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const ctrl = useRef<AbortController | null>(null);
+
+  function toggleExpanded(ticker: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(ticker)) next.delete(ticker);
+      else next.add(ticker);
+      return next;
+    });
+  }
 
   // Abort any in-flight scan on unmount so the reader stops and we don't setState into a dead tree.
   useEffect(() => () => ctrl.current?.abort(), []);
@@ -28,6 +40,7 @@ export default function ScanPage() {
     setResults([]);
     setSurvivors(null);
     setErr(null);
+    setExpanded(new Set());
     setProgress({ done: 0, total: 0 });
     const tickers = tickersInput
       .split(/[\s,]+/)
@@ -113,48 +126,98 @@ export default function ScanPage() {
           {results.length === 0 ? (
             <div className="px-5 py-8 text-sm text-zinc-500">Run a scan to screen the universe.</div>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-y border-ink-800 text-left text-xs uppercase tracking-wider text-zinc-500">
-                  <th className="px-5 py-2 font-medium">Ticker</th>
-                  <th className="px-3 py-2 font-medium">Verdict</th>
-                  <th className="px-3 py-2 text-right font-medium">PEG</th>
-                  <th className="px-3 py-2 text-right font-medium">FCF yld</th>
-                  <th className="px-3 py-2 text-right font-medium">Score</th>
-                  <th className="px-5 py-2 font-medium">Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {results.map((r) => (
-                  <tr key={r.ticker} className="border-b border-ink-850 last:border-0">
-                    <td className="px-5 py-2.5">
-                      <span className="font-medium text-zinc-100">{r.ticker}</span>
-                      {r.name && <span className="ml-2 text-xs text-zinc-500">{r.name}</span>}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      {r.passed ? (
-                        <Badge tone="buy">
-                          <CheckCircle2 className="mr-1 h-3 w-3" /> PASS
-                        </Badge>
-                      ) : (
-                        <Badge tone={r.ok ? "sell" : "neutral"}>
-                          <XCircle className="mr-1 h-3 w-3" /> {r.ok ? "FAIL" : "NO DATA"}
-                        </Badge>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5 text-right tnum text-zinc-300">{r.peg?.toFixed(2) ?? "—"}</td>
-                    <td className="px-3 py-2.5 text-right tnum text-zinc-300">{r.fcf_yield != null ? `${r.fcf_yield.toFixed(1)}%` : "—"}</td>
-                    <td className={cn("px-3 py-2.5 text-right tnum", r.passed ? "text-gain" : "text-zinc-600")}>
-                      {r.composite?.toFixed(3) ?? "—"}
-                    </td>
-                    <td className="px-5 py-2.5 text-xs text-zinc-500">{r.reason ?? "—"}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-y border-ink-800 text-left text-xs uppercase tracking-wider text-zinc-500">
+                    <th className="px-5 py-2 font-medium">Ticker</th>
+                    <th className="px-3 py-2 font-medium">Verdict</th>
+                    <th className="px-3 py-2 text-right font-medium">Price</th>
+                    <th className="px-3 py-2 text-right font-medium">Mkt cap</th>
+                    <th className="px-3 py-2 text-right font-medium">PEG</th>
+                    <th className="px-3 py-2 text-right font-medium">FCF yld</th>
+                    <th className="px-3 py-2 text-right font-medium">Score</th>
+                    <th className="px-5 py-2 font-medium">Note</th>
+                    <th className="w-10 py-2 pr-4" aria-label="Expand" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {results.map((r) => {
+                    const open = expanded.has(r.ticker);
+                    return (
+                      <ResultRow key={r.ticker} r={r} open={open} onToggle={() => toggleExpanded(r.ticker)} />
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </CardBody>
       </Card>
     </div>
+  );
+}
+
+/** One scan result plus its expandable full-fundamentals detail row (issue #27). */
+function ResultRow({ r, open, onToggle }: { r: ScanResult; open: boolean; onToggle: () => void }) {
+  return (
+    <>
+      <tr
+        onClick={onToggle}
+        className={cn(
+          "cursor-pointer border-b transition-colors hover:bg-ink-850/60",
+          open ? "border-transparent bg-ink-850/40" : "border-ink-850 last:border-0",
+        )}
+      >
+        <td className="px-5 py-2.5">
+          <span className="font-medium text-zinc-100">{r.ticker}</span>
+          {r.name && <span className="ml-2 text-xs text-zinc-500">{r.name}</span>}
+        </td>
+        <td className="px-3 py-2.5">
+          {r.passed ? (
+            <Badge tone="buy">
+              <CheckCircle2 className="mr-1 h-3 w-3" /> PASS
+            </Badge>
+          ) : (
+            <Badge tone={r.ok ? "sell" : "neutral"}>
+              <XCircle className="mr-1 h-3 w-3" /> {r.ok ? "FAIL" : "NO DATA"}
+            </Badge>
+          )}
+        </td>
+        <td className="px-3 py-2.5 text-right tnum text-zinc-300">{r.price != null ? `$${r.price.toFixed(2)}` : "—"}</td>
+        <td className="px-3 py-2.5 text-right tnum text-zinc-300">{compactUsd(r.market_cap)}</td>
+        <td className="px-3 py-2.5 text-right tnum text-zinc-300">{r.peg?.toFixed(2) ?? "—"}</td>
+        <td className="px-3 py-2.5 text-right tnum text-zinc-300">{r.fcf_yield != null ? `${r.fcf_yield.toFixed(1)}%` : "—"}</td>
+        <td className={cn("px-3 py-2.5 text-right tnum", r.passed ? "text-gain" : "text-zinc-600")}>
+          {r.composite?.toFixed(3) ?? "—"}
+        </td>
+        <td className="px-5 py-2.5 text-xs text-zinc-500">{r.reason ?? "—"}</td>
+        <td className="py-2.5 pr-4 text-right">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={`${open ? "Collapse" : "Expand"} ${r.ticker} fundamentals`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle();
+            }}
+            className="rounded p-1 text-zinc-600 transition-colors hover:bg-ink-800 hover:text-zinc-300"
+          >
+            <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+          </button>
+        </td>
+      </tr>
+      {open && (
+        <tr className="border-b border-ink-850 bg-ink-850/40 last:border-0">
+          <td colSpan={9} className="px-5 pb-4 pt-1">
+            {r.ok ? (
+              <FundamentalsGrid data={r} />
+            ) : (
+              <p className="text-xs text-zinc-500">No fundamentals — yfinance returned nothing usable for {r.ticker}.</p>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

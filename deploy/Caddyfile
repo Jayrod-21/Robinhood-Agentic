@@ -8,12 +8,44 @@
 
 :80 {
 	# Basic auth on every request (runs before routing). The live account is behind this.
+	# Known limitation (issue #17): no lockout, no rate limit — Cloudflare Access in front of the
+	# hostname is the compensating control and is treated as mandatory in SERVER_DEPLOY.md.
 	basic_auth {
 		{$DASH_USER} {$DASH_PASSWORD_HASH}
 	}
 
+	# Security response headers (issue #16 / finding F10). TLS terminates at the Cloudflare edge,
+	# so the browser sees these over HTTPS even though this origin speaks HTTP on loopback.
+	# Verified 2026-08-13 (hardened container + stub upstream): every header below is present on
+	# proxied responses. Known nuance: Caddy-generated error responses (the basic-auth 401, a 502
+	# when an upstream is down) do NOT carry them — those responses are bodyless, so nothing
+	# cacheable or frameable is exposed on that path.
+	header {
+		# Force HTTPS on return visits. No `preload` — that is a hard-to-undo registration.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Never MIME-sniff responses (holdings JSON must not be reinterpreted as HTML).
+		X-Content-Type-Options "nosniff"
+		# The dashboard has no business being framed: kills clickjacking on the refresh button.
+		# frame-ancestors is the modern control; X-Frame-Options covers legacy browsers.
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+		# URLs here can carry nothing sensitive today, but there is no reason to leak them either.
+		Referrer-Policy "no-referrer"
+		# The dashboard uses none of these browser features; deny them outright.
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		# Do not advertise the server implementation.
+		-Server
+	}
+	# Deliberately NOT set: a script-src/default-src Content-Security-Policy. Next.js hydration
+	# relies on inline scripts, so an honest CSP here would need 'unsafe-inline' or per-response
+	# nonces wired through the frontend — a claim of XSS protection it would not actually deliver.
+	# Tracked as follow-up work under issue #16 rather than shipped as security theater.
+
 	# API → backend. `handle` (not `handle_path`) preserves the /api prefix the backend expects.
 	handle /api/* {
+		# Holdings, cash, and cost basis flow through here (finding F10): never let a browser or
+		# intermediary cache them. `>` defers the write so it also overrides anything upstream sets.
+		header >Cache-Control "private, no-store"
 		reverse_proxy backend:8000
 	}
 

@@ -13,8 +13,15 @@ from types import SimpleNamespace
 import pytest
 from app.debate import anthropic_client as ac
 from app.debate import engine as engine_mod
+from app.main import configure_logging
 
-# A string that could only appear client-side if str(exc) leaked into the stream.
+# Install the secret-redaction filter on the root handler (issue #14) so this module behaves the
+# same run alone as in the full suite: the sk-ant token below must be scrubbed even server-side.
+configure_logging()
+
+# A string that could only appear client-side if str(exc) leaked into the stream. The sk-ant tail
+# doubles as a redaction probe: the marker's non-secret half must reach the server log, the
+# key-shaped half must not.
 UPSTREAM_MARKER = "SECRET-UPSTREAM-RESPONSE-BODY-401-sk-ant-XXXX"
 
 
@@ -48,8 +55,10 @@ def test_upstream_exception_text_not_streamed(monkeypatch, caplog):
     # The marker must not appear ANYWHERE in what the client would receive.
     assert all(UPSTREAM_MARKER not in str(ev) for ev in events)
     assert errors[0]["message"] == "Researcher stage failed upstream. Details are in the server logs."
-    # ...but the server log keeps the full detail (traceback included via logger.exception).
-    assert UPSTREAM_MARKER in caplog.text
+    # ...but the server log keeps the debugging detail (traceback included via logger.exception) —
+    # minus the key-shaped token, which the SecretRedactionFilter scrubs even server-side (#14).
+    assert "SECRET-UPSTREAM-RESPONSE-BODY-401" in caplog.text
+    assert "sk-ant-XXXX" not in caplog.text
 
 
 def test_debate_unavailable_message_not_streamed(monkeypatch, caplog):

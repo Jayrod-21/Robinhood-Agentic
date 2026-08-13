@@ -1,12 +1,18 @@
-# Production stack for the Ubuntu server: always-on, single origin behind Caddy + basic auth,
-# reachable via Cloudflare Tunnel. Self-contained (does NOT extend the dev compose).
+# Production stack for M (this machine): always-on, single origin behind Caddy + basic auth,
+# reachable only via the existing Cloudflare Tunnel. Self-contained (does NOT extend the dev
+# compose). See SERVER_DEPLOY.md for the full standup procedure and the decisions still open.
 #
-#   cd /path/to/3b.\ Robinhood\ Agentic
+#   cd "/home/jared-williams/projects/3b. Robinhood Agentic"
 #   docker compose -f deploy/docker-compose.prod.yml up -d --build
 #
 # Only Caddy is published, to 127.0.0.1:${DASH_PORT} — cloudflared connects there. The backend and
 # frontend have NO host ports; they're only reachable through Caddy (which enforces basic auth).
 # Env: backend/.env (ANTHROPIC_API_KEY, models) + deploy/.env (DASH_USER, DASH_PASSWORD_HASH, DASH_PORT).
+#
+# Container hardening (issue #16, SENIOR_ENGINEER_BAR §6.3 — same posture as docker-compose.db.yml):
+# no-new-privileges + cap_drop ALL everywhere; read-only rootfs where the process provably needs no
+# rootfs writes; memory/cpu/pids caps sized so this stack cannot starve 9b on the same box; log
+# rotation caps on every service.
 services:
   backend:
     build:
@@ -32,6 +38,27 @@ services:
     restart: always
     expose:
       - "8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Read-only rootfs: writable paths are exactly the two bind mounts and /tmp. A compromised
+    # handler cannot modify app code or site-packages at runtime.
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    memswap_limit: 1g
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "2.0"
+          pids: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   frontend:
     build:
@@ -43,6 +70,25 @@ services:
     restart: always
     expose:
       - "3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # No read_only here, deliberately: `next start` writes runtime caches under /app/.next/cache,
+    # and the container runs as a non-fixed-uid `nodejs` user, so a tmpfs mount there cannot be
+    # chowned to it from compose. no-new-privileges + cap_drop ALL still hold.
+    memswap_limit: 1g
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "2.0"
+          pids: 512
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   caddy:
     image: caddy:2
@@ -60,6 +106,31 @@ services:
     ports:
       - "127.0.0.1:${DASH_PORT:-8088}:80"
     restart: always
+    security_opt:
+      - no-new-privileges:true
+    # The caddy image runs as root and binds :80 inside the container; NET_BIND_SERVICE is the one
+    # capability that requires. Everything else is dropped.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    # Caddy's writable state lives on the two named volumes (certs/config); the rootfs stays
+    # read-only. /tmp for scratch.
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=16m
+    memswap_limit: 256m
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "1.0"
+          pids: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   caddy_data:

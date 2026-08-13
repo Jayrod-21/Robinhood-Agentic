@@ -1,22 +1,165 @@
 """FastAPI application entrypoint for the agentic dashboard backend.
 
-Wires CORS, ensures the mounted data/logs directories exist, and mounts the API routers.
-Routers are added incrementally as the build progresses; ``health`` is always present.
+Wires logging (with secret redaction), CORS, the CSRF guard, ensures the mounted data/logs
+directories exist, and mounts the API routers. ``health`` is always present.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.routers import account, debate, health, pipeline, refresh, scan
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+class SecretRedactionFilter(logging.Filter):
+    """Scrub API-key / auth-header material from log records before a handler emits them.
+
+    Defends against: secret leakage into log files (OWASP A09). No current code path logs the
+    Anthropic key on purpose, but an SDK exception that embeds an ``Authorization`` header (or the
+    key itself) would otherwise land verbatim in ``logger.exception`` output and persist in
+    ``logs/cron/``. Must be attached to *handlers*, not loggers — logger-level filters do not apply
+    to records propagated up from child loggers, handler-level filters see every record they emit.
+    """
+
+    # (pattern, replacement) applied in order. The sk-ant rule runs first so a key inside an
+    # Authorization/bearer value is destroyed even before the surrounding header is masked.
+    _RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+        (re.compile(r"sk-ant-[A-Za-z0-9_\-]+"), "sk-ant-[REDACTED]"),
+        (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/\-]+=*"), "Bearer [REDACTED]"),
+        (
+            re.compile(r"(?i)\b(authorization|proxy-authorization|x-api-key|api[_-]?key)\b\s*[:=]\s*\S+"),
+            r"\1: [REDACTED]",
+        ),
+    )
+    _FORMATTER = logging.Formatter()
+
+    @classmethod
+    def _redact(cls, text: str) -> str:
+        for pattern, replacement in cls._RULES:
+            text = pattern.sub(replacement, text)
+        return text
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        redacted = self._redact(message)
+        if redacted != message:
+            record.msg = redacted
+            record.args = None
+        if record.exc_info or record.exc_text:
+            # Pre-render the traceback and scrub it; Formatter.format() reuses a populated
+            # ``exc_text`` instead of re-rendering ``exc_info``, so the scrubbed text is what
+            # lands. If another handler already formatted (and cached) the traceback before this
+            # filter ran, scrub the cached text rather than trusting it.
+            if not record.exc_text and record.exc_info:
+                record.exc_text = self._FORMATTER.formatException(record.exc_info)
+            record.exc_text = self._redact(record.exc_text or "") or None
+        return True  # always redact-and-pass, never drop — a swallowed record would hide the event
+
+
+def configure_logging() -> None:
+    """Process-wide logging bootstrap shared by the API and the cycle job. Idempotent.
+
+    ``basicConfig`` is a no-op when the root logger already has handlers, and the filter is only
+    added to handlers that don't already carry one, so repeated calls don't stack duplicates.
+    """
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    for handler in logging.getLogger().handlers:
+        if not any(isinstance(f, SecretRedactionFilter) for f in handler.filters):
+            handler.addFilter(SecretRedactionFilter())
+
+
+configure_logging()
 logger = logging.getLogger("agentic.api")
+
+
+# --- CSRF guard (issue #11) -----------------------------------------------------------------
+# Methods that never change state here; everything else must pass the same-origin checks.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Sec-Fetch-Site values for requests originating from this site (or user-initiated: "none").
+# "same-site" is required because the dev frontend runs on a different localhost port.
+_TRUSTED_FETCH_SITES = frozenset({"same-origin", "same-site", "none"})
+
+
+def _origin_allowed(origin: str) -> bool:
+    """True if ``origin`` is in the CORS allow-list (exact entries or the localhost regex)."""
+    settings = get_settings()
+    if origin in settings.cors_origin_list:
+        return True
+    regex = settings.cors_origin_regex_or_none
+    # fullmatch, not match: with a prefix match "http://localhost:3000.evil.example" would pass.
+    return bool(regex and re.fullmatch(regex, origin))
+
+
+def _blocked(request: Request, reason: str, detail: str) -> HTTPException:
+    # Guardrails never block silently: name the block, the reason, and the offending values.
+    logger.warning(
+        "CSRF guard BLOCKED %s %s — %s | origin=%r sec-fetch-site=%r content-type=%r client=%s",
+        request.method,
+        request.url.path,
+        reason,
+        request.headers.get("origin"),
+        request.headers.get("sec-fetch-site"),
+        request.headers.get("content-type"),
+        request.client.host if request.client else "unknown",
+    )
+    return HTTPException(status_code=403, detail=detail)
+
+
+async def enforce_same_origin(request: Request) -> None:
+    """Same-origin + content-type guard for every state-changing route.
+
+    Defends against: CSRF. The dashboard sits behind ambient browser credentials (Caddy basic
+    auth in the shared deploy), and CORS only blocks *reading* a cross-site response — a form or
+    top-level POST is still *sent*, credentials attached. Today that queues a refresh; once an
+    order path exists the same request shape places a trade. Checks, in order:
+
+    1. Body content type must be ``application/json`` — an HTML form can only submit the three
+       CORS-"simple" form types, so this alone kills the auto-submitting-form vector, and every
+       legitimate client here already sends JSON.
+    2. If the browser sent ``Sec-Fetch-Site`` (a forbidden header — scripts cannot forge it), it
+       must be same-origin/same-site/none.
+    3. Otherwise, if an ``Origin`` header is present it must match the CORS allow-list
+       (``null`` — sandboxed iframes, file:// — matches nothing and is rejected).
+    4. No Sec-Fetch-Site and no Origin means a non-browser client (curl, tests, monitoring):
+       allowed, because CSRF needs a victim browser to attach ambient credentials.
+
+    Registered app-wide via ``FastAPI(dependencies=...)`` in :func:`create_app`, so a newly added
+    router is covered without having to remember anything.
+    """
+    if request.method in _SAFE_METHODS:
+        return
+
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
+        raise _blocked(
+            request,
+            f"content type {content_type or '(none)'!r} is not application/json",
+            "State-changing requests must send Content-Type: application/json.",
+        )
+
+    fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if fetch_site:
+        if fetch_site not in _TRUSTED_FETCH_SITES:
+            raise _blocked(
+                request,
+                f"sec-fetch-site {fetch_site!r} is not same-origin",
+                "Cross-site requests to this API are not allowed.",
+            )
+        return
+
+    origin = request.headers.get("origin")
+    if origin is not None and not _origin_allowed(origin):
+        raise _blocked(
+            request,
+            f"origin {origin!r} is not in the CORS allow-list",
+            "Cross-origin requests to this API are not allowed.",
+        )
 
 
 @asynccontextmanager
@@ -41,6 +184,8 @@ def create_app() -> FastAPI:
         description="Read-only account monitor + live Sprinkle Sauce screen + jury debate engine.",
         version="0.1.0",
         lifespan=lifespan,
+        # App-wide so every state-changing route — current and future — passes the CSRF guard.
+        dependencies=[Depends(enforce_same_origin)],
     )
 
     # Default: allow localhost/127.0.0.1 on any port (the frontend port is random) via regex, plus any

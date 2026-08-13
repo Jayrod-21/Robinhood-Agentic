@@ -60,6 +60,16 @@ def _screen_one(ticker: str, min_cap: float) -> dict:
         "fcf_yield": ss.metrics.get("fcf_yield") if ss else None,
         "name": fundamentals.get("name"),
         "sector": fundamentals.get("sector"),
+        # Issue #27: surface the rest of what fetch_fundamentals already returns so the Scan page
+        # can show the full picture, not just the two gate metrics. `.get` keeps a sparse yfinance
+        # payload graceful (missing fields render as em dashes client-side).
+        "industry": fundamentals.get("industry"),
+        "market_cap": fundamentals.get("market_cap"),
+        "price": fundamentals.get("price"),
+        "trailing_pe": fundamentals.get("trailing_pe"),
+        "forward_pe": fundamentals.get("forward_pe"),
+        "gross_margin": fundamentals.get("gross_margin"),
+        "revenue_growth": fundamentals.get("revenue_growth"),
     }
 
 

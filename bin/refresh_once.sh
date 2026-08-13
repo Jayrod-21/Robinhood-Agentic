@@ -2,7 +2,8 @@
 # refresh_once.sh — one headless Robinhood snapshot refresh. Server-friendly: no wt.exe, no daemon.
 #
 # Runs `claude --print` with the robinhood-trading MCP, pre-authorizing ONLY the two read-only
-# account pulls + Write + `date` (no order tool, no broad Bash). Writes data/account_snapshot.json.
+# account pulls + Write of the snapshot file + the exact `date` timestamp command (no order tool,
+# no broad Bash, no unscoped Write). Writes data/account_snapshot.json.
 # This is the canonical refresh used by BOTH the cron cycle (bin/scheduled_cycle.sh) and the
 # Refresh-button daemon (bin/refresh_daemon.sh) on a headless host.
 #
@@ -28,11 +29,14 @@ source "${SCRIPT_DIR}/lib_account.sh"
 MCP_CWD="${AGENTIC_MCP_CWD:-${PROJECT_DIR}}"
 TIMEOUT="${AGENTIC_REFRESH_TIMEOUT:-150}"
 
+# Write is scoped to the snapshot file only (leading // = Claude Code's absolute-path rule form;
+# any other path falls outside the pre-authorization), and the Bash rule is the one exact command
+# the prompt asks for — an unanchored `date*` prefix would also match longer commands.
 ALLOWED_TOOLS=(
   mcp__robinhood-trading__get_portfolio
   mcp__robinhood-trading__get_equity_positions
-  Write
-  'Bash(date*)'
+  "Write(//${SNAPSHOT_FILE#/})"
+  'Bash(date -u +%Y-%m-%dT%H:%M:%SZ)'
 )
 
 mkdir -p "${LOG_DIR}"

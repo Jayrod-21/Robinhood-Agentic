@@ -64,14 +64,17 @@ else
 fi
 
 # Exact, least-privilege tools the refresh claude may use without an interactive approval prompt:
-# the two read-only Robinhood pulls, Write (snapshot file), and `date` for the timestamp. No order
-# placement tool is allowed. `--dangerously-skip-permissions` is intentionally NOT used (it is hard
-# -blocked under root); pre-authorizing these specific tools is the root-safe, least-privilege path.
+# the two read-only Robinhood pulls, Write scoped to the snapshot file only (the leading // is
+# Claude Code's absolute-path rule form — any other path falls outside the pre-authorization),
+# and the exact timestamp command the prompt asks for (an unanchored `date*` prefix would also
+# match any longer command starting with "date"). No order placement tool is allowed.
+# `--dangerously-skip-permissions` is intentionally NOT used (it is hard-blocked under root);
+# pre-authorizing these specific tools is the root-safe, least-privilege path.
 ALLOWED_TOOLS=(
   mcp__robinhood-trading__get_portfolio
   mcp__robinhood-trading__get_equity_positions
-  Write
-  'Bash(date*)'
+  "Write(//${SNAPSHOT_FILE#/})"
+  'Bash(date -u +%Y-%m-%dT%H:%M:%SZ)'
 )
 
 mkdir -p "${LOG_DIR}"
