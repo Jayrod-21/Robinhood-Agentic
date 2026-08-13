@@ -16,8 +16,12 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SNAPSHOT_FILE="${PROJECT_DIR}/data/account_snapshot.json"
-PROMPT_FILE="${SCRIPT_DIR}/refresh_prompt.md"
+PROMPT_TEMPLATE="${SCRIPT_DIR}/refresh_prompt.md"
 LOG_DIR="${PROJECT_DIR}/logs/refresh"
+
+# The prompt template carries a placeholder, not the account number; render it from configuration.
+# shellcheck source=bin/lib_account.sh
+source "${SCRIPT_DIR}/lib_account.sh"
 
 # Directory to run `claude` from so the robinhood MCP loads. With a USER-scoped MCP any dir works;
 # with a project-scoped MCP, point this at that project root. Override via AGENTIC_MCP_CWD.
@@ -51,10 +55,15 @@ if [[ -z "${cb}" ]]; then
   log "ERROR: claude CLI not found on PATH. Install Claude Code on this host."
   exit 2
 fi
-if [[ ! -f "${PROMPT_FILE}" ]]; then
-  log "ERROR: prompt file missing: ${PROMPT_FILE}"
+if [[ ! -f "${PROMPT_TEMPLATE}" ]]; then
+  log "ERROR: prompt template missing: ${PROMPT_TEMPLATE}"
   exit 2
 fi
+
+# Render only after the template and the CLI are known good, so a failure here is unambiguous.
+require_account_number || exit 2
+PROMPT_FILE="$(render_prompt "${PROMPT_TEMPLATE}")"
+trap 'rm -f -- "${PROMPT_FILE}"' EXIT
 
 runlog="${LOG_DIR}/once-$(date -u +%Y%m%dT%H%M%SZ).log"
 before="$(snapshot_mtime)"

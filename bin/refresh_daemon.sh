@@ -29,7 +29,16 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DATA_DIR="${PROJECT_DIR}/data"
 REQUEST_FILE="${DATA_DIR}/refresh.request"
 SNAPSHOT_FILE="${DATA_DIR}/account_snapshot.json"
-PROMPT_FILE="${SCRIPT_DIR}/refresh_prompt.md"
+PROMPT_TEMPLATE="${SCRIPT_DIR}/refresh_prompt.md"
+
+# The template carries a placeholder rather than the account number. Render once at startup: the
+# daemon is long-lived and the generated runner reads this path on each refresh, so it must outlive
+# any single run. Cleared on daemon exit.
+# shellcheck source=bin/lib_account.sh
+source "${SCRIPT_DIR}/lib_account.sh"
+require_account_number || exit 2
+PROMPT_FILE="$(render_prompt "${PROMPT_TEMPLATE}")"
+trap 'rm -f -- "${PROMPT_FILE}"' EXIT
 LOG_DIR="${PROJECT_DIR}/logs/refresh"
 
 # Directory to run `claude` from so the robinhood MCP loads. With a USER-scoped MCP (the documented
