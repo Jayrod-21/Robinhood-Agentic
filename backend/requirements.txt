@@ -3,7 +3,7 @@
 # holding an API key and a brokerage snapshot. These pins match what CI and the containers resolve
 # as of 2026-08-13 (verified against a python:3.12-slim dry-run install). Bump deliberately, with
 # the CI `pip-audit` gate green in the same commit.
-fastapi==0.140.7
+fastapi==0.141.1
 uvicorn[standard]==0.51.0
 pydantic==2.13.4
 pydantic-settings==2.14.2
