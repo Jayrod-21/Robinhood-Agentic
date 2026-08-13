@@ -16,6 +16,8 @@ hijacking COMMIT leaves behind — are pinned too.
 
 from __future__ import annotations
 
+import logging
+import threading
 import uuid
 from collections.abc import Iterator
 from decimal import Decimal
@@ -29,7 +31,7 @@ try:  # testcontainers >= 4.x moved community modules; keep the fallback for old
 except ImportError:  # pragma: no cover
     from testcontainers.postgres import PostgresContainer
 
-from migrate import EXIT_OK, EXIT_SQL, EXIT_VALIDATION, main
+from migrate import EXIT_CONNECTION, EXIT_OK, EXIT_SQL, EXIT_VALIDATION, MIGRATION_LOCK_KEY, main
 
 REPO_MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 
@@ -353,6 +355,8 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         ("006", False, True),
         ("007", False, True),
         ("008", False, True),
+        ("009", False, True),  # down drops mark_kind — the labels are data
+        ("010", False, False),  # up and down only set/clear a role comment
     ]
 
 
@@ -486,7 +490,7 @@ def test_real_migrations_up_down_up(db_url: str) -> None:
     # 004's trigger functions leave no residue either.
     assert q(db_url, "SELECT count(*) FROM pg_proc WHERE proname LIKE 'enforce\\_%%'")[0][0] == 0
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 8
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 10
 
 
 # ── 004: the evaluation tables ────────────────────────────────────────────────────────────────
@@ -1314,3 +1318,204 @@ def test_blind_and_personas_are_comparable_books(db_url: str) -> None:
         "VALUES ('real', %s, CURRENT_DATE - 40)",
         (ids["real"],),
     )
+
+
+# ── 009: live vs backfill marks (issue #33) ──────────────────────────────────────────────────
+# 004's unconditional 4-day window permanently rejected the historical re-mark §3.3 depends on.
+# 009 keeps the real invariant — a LIVE mark must not use stale prices — while making an
+# explicitly labelled backfill representable at any age.
+
+
+def _seed_old_blind_portfolio(db_url: str, ids: dict[str, int]) -> int:
+    """A blind book incepted 2021-01-04: old enough that a mark on its early trade dates is, by
+    construction, a historical backfill when priced today."""
+    return q(
+        db_url,
+        "INSERT INTO paper_portfolios (kind, agent_id, inception_date) "
+        "VALUES ('blind', %s, DATE '2021-01-04') RETURNING id",
+        (ids["blind"],),
+    )[0][0]
+
+
+def test_prd_live_mark_window_still_binds(db_url: str) -> None:
+    """The undeclared (default 'live') path keeps 004's exact bounds: a mark priced at or past
+    trade_date + 4 days UTC is refused — an old mark cannot pass as fresh by omission."""
+    md = str(REPO_MIGRATIONS)
+    assert main(["up", "--migrations-dir", md]) == EXIT_OK
+    ids = _seed_agents(db_url)
+    pid = _seed_old_blind_portfolio(db_url, ids)
+
+    # Years late — the issue-#33 shape — with no label: refused.
+    with pytest.raises(psycopg.errors.CheckViolation, match="ck_prd_mark_window"):
+        q(
+            db_url,
+            "INSERT INTO portfolio_returns_daily (portfolio_id, trade_date, market_value, priced_as_of) "
+            "VALUES (%s, DATE '2021-01-05', 100000, TIMESTAMPTZ '2026-08-01 00:00:00+00')",
+            (pid,),
+        )
+    # Exactly on the +4d boundary (exclusive): still refused.
+    with pytest.raises(psycopg.errors.CheckViolation, match="ck_prd_mark_window"):
+        q(
+            db_url,
+            "INSERT INTO portfolio_returns_daily (portfolio_id, trade_date, market_value, priced_as_of) "
+            "VALUES (%s, DATE '2021-01-05', 100000, TIMESTAMPTZ '2021-01-09 00:00:00+00')",
+            (pid,),
+        )
+    # One second inside the window: accepted, and the default label really is 'live'.
+    q(
+        db_url,
+        "INSERT INTO portfolio_returns_daily (portfolio_id, trade_date, market_value, priced_as_of) "
+        "VALUES (%s, DATE '2021-01-05', 100000, TIMESTAMPTZ '2021-01-08 23:59:59+00')",
+        (pid,),
+    )
+    assert q(db_url, "SELECT mark_kind FROM portfolio_returns_daily WHERE portfolio_id = %s", (pid,)) == [("live",)]
+
+
+def test_prd_backfill_mark_is_representable_and_honest(db_url: str) -> None:
+    """The #33 acceptance case: a historical re-mark priced YEARS after its trade date stores
+    when — and only when — it is explicitly labelled 'backfill'."""
+    md = str(REPO_MIGRATIONS)
+    assert main(["up", "--migrations-dir", md]) == EXIT_OK
+    ids = _seed_agents(db_url)
+    pid = _seed_old_blind_portfolio(db_url, ids)
+
+    # Explicitly labelled: any age is legal.
+    q(
+        db_url,
+        "INSERT INTO portfolio_returns_daily (portfolio_id, trade_date, market_value, priced_as_of, mark_kind) "
+        "VALUES (%s, DATE '2021-01-05', 100000, TIMESTAMPTZ '2026-08-01 00:00:00+00', 'backfill')",
+        (pid,),
+    )
+    assert q(
+        db_url, "SELECT mark_kind FROM portfolio_returns_daily WHERE trade_date = DATE '2021-01-05'"
+    ) == [("backfill",)]
+
+    # The lower bound binds BOTH kinds: even a backfill cannot be priced from before its own
+    # trading day began (UTC) — that is lookahead's mirror image, manufactured hindsight.
+    with pytest.raises(psycopg.errors.CheckViolation, match="ck_prd_mark_window"):
+        q(
+            db_url,
+            "INSERT INTO portfolio_returns_daily (portfolio_id, trade_date, market_value, priced_as_of, mark_kind) "
+            "VALUES (%s, DATE '2021-01-06', 100000, TIMESTAMPTZ '2021-01-05 23:00:00+00', 'backfill')",
+            (pid,),
+        )
+    # The label is a closed vocabulary — no third state to hide in.
+    with pytest.raises(psycopg.errors.CheckViolation, match="ck_prd_mark_kind"):
+        q(
+            db_url,
+            "INSERT INTO portfolio_returns_daily (portfolio_id, trade_date, market_value, priced_as_of, mark_kind) "
+            "VALUES (%s, DATE '2021-01-07', 100000, TIMESTAMPTZ '2021-01-07 21:00:00+00', 'vibes')",
+            (pid,),
+        )
+
+
+def test_prd_backfill_rollback_refuses_to_launder_history(db_url: str) -> None:
+    """009's down restores 004's unconditional window, which cannot represent an out-of-window
+    backfill mark. With such a row present the rollback must FAIL LOUDLY (not silently delete
+    scored history), leave 009 applied, and succeed only after the operator removes the row."""
+    md = str(REPO_MIGRATIONS)
+    assert main(["up", "--migrations-dir", md]) == EXIT_OK
+    ids = _seed_agents(db_url)
+    pid = _seed_old_blind_portfolio(db_url, ids)
+    q(
+        db_url,
+        "INSERT INTO portfolio_returns_daily (portfolio_id, trade_date, market_value, priced_as_of, mark_kind) "
+        "VALUES (%s, DATE '2021-01-05', 100000, TIMESTAMPTZ '2026-08-01 00:00:00+00', 'backfill')",
+        (pid,),
+    )
+
+    # 010 (above 009) rolls back cleanly; 009's ADD CONSTRAINT then validates existing rows and
+    # dies on the backfill mark — an SQL failure, with 009 still recorded as applied.
+    assert main(["down", "--allow-destructive", "--target", "008", "--migrations-dir", md]) == EXIT_SQL
+    applied = {r[0] for r in q(db_url, "SELECT version FROM schema_migrations")}
+    assert "009" in applied and "010" not in applied
+    # The atomicity guarantee held: the failed down left mark_kind (and the row) in place.
+    assert q(db_url, "SELECT mark_kind FROM portfolio_returns_daily")[0][0] == "backfill"
+
+    # Deliberate operator action — remove the unrepresentable row — and the rollback completes.
+    q(db_url, "DELETE FROM portfolio_returns_daily WHERE portfolio_id = %s", (pid,))
+    assert main(["down", "--allow-destructive", "--target", "008", "--migrations-dir", md]) == EXIT_OK
+    assert main(["up", "--migrations-dir", md]) == EXIT_OK
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 10
+
+
+# ── 010: the rh_app role comment states the verified truth (issue #31) ───────────────────────
+
+
+def test_rh_app_role_comment_states_the_verified_truth(db_url: str) -> None:
+    """001's file claim ('cannot authenticate until an operator sets [a password]') is untrue on
+    the trusted in-container paths and 001 is checksum-locked, so the catalog comment carries the
+    correction. Pin the load-bearing content: trust on loopback/socket, scram elsewhere."""
+    md = str(REPO_MIGRATIONS)
+    assert main(["up", "--migrations-dir", md]) == EXIT_OK
+    comment = q(
+        db_url, "SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = 'rh_app'"
+    )[0][0]
+    assert comment is not None
+    assert "CAN authenticate from inside the container with no password" in comment
+    assert "trust" in comment and "scram-sha-256" in comment
+    # The down restores 001's exact prior state: no role comment at all.
+    assert main(["down", "--allow-destructive", "--migrations-dir", md]) == EXIT_OK
+    assert q(
+        db_url, "SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = 'rh_app'"
+    ) == [(None,)]
+
+
+# ── bounded advisory-lock acquisition (issue #30) ────────────────────────────────────────────
+# statement_timeout = 0 removed the server-side cap, so the old unbounded pg_advisory_lock made a
+# second runner block forever with no output. Acquisition is now pg_try_advisory_lock in a retry
+# loop: it waits briefly, names WHO holds the lock, and fails loudly at the bound.
+
+
+def _hold_migration_lock(db_url: str, app_name: str) -> psycopg.Connection:
+    conn = psycopg.connect(db_url, autocommit=True, application_name=app_name)
+    conn.execute("SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_KEY,))
+    return conn
+
+
+def test_held_lock_fails_loudly_naming_the_holder(
+    tmp_path: Path, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    write_pair(tmp_path, "001", "a", "SELECT 1;")
+    monkeypatch.setenv("MIGRATE_LOCK_TIMEOUT", "1")
+    holder = _hold_migration_lock(db_url, "rival-runner")
+    try:
+        with caplog.at_level(logging.WARNING, logger="migrate"):
+            # Even a read-only status must not hang behind the peer — the exact #30 shape.
+            assert main(["status", "--migrations-dir", str(tmp_path)]) == EXIT_CONNECTION
+        # Loud, and specific: the wait warning and the failure both name the blocking backend.
+        assert "could not acquire the migration lock within 1s" in caplog.text
+        assert f"pid={holder.info.backend_pid}" in caplog.text
+        assert "app=rival-runner" in caplog.text
+    finally:
+        holder.close()
+
+
+def test_lock_released_during_the_wait_lets_the_runner_proceed(
+    tmp_path: Path, db_url: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The bounded wait is a wait, not a single try: a peer finishing within the timeout unblocks
+    the runner, which then applies normally."""
+    write_pair(tmp_path, "001", "a", "CREATE TABLE lock_wait_t (i int);", "DROP TABLE lock_wait_t;", down_destructive=True)
+    monkeypatch.setenv("MIGRATE_LOCK_TIMEOUT", "30")
+    holder = _hold_migration_lock(db_url, "short-lived-peer")
+    releaser = threading.Timer(1.5, holder.close)  # closing the session releases the lock
+    releaser.start()
+    try:
+        with caplog.at_level(logging.WARNING, logger="migrate"):
+            assert main(["up", "--migrations-dir", str(tmp_path)]) == EXIT_OK
+        assert "app=short-lived-peer" in caplog.text  # it really did wait behind the peer
+    finally:
+        releaser.cancel()
+        holder.close()
+    assert q(db_url, "SELECT to_regclass('public.lock_wait_t')")[0][0] == "lock_wait_t"
+
+
+def test_garbage_lock_timeout_is_a_loud_config_error(
+    tmp_path: Path, db_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_pair(tmp_path, "001", "a", "SELECT 1;")
+    monkeypatch.setenv("MIGRATE_LOCK_TIMEOUT", "soon")
+    assert main(["status", "--migrations-dir", str(tmp_path)]) == EXIT_CONNECTION
+    monkeypatch.setenv("MIGRATE_LOCK_TIMEOUT", "-5")
+    assert main(["status", "--migrations-dir", str(tmp_path)]) == EXIT_CONNECTION

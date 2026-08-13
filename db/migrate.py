@@ -64,7 +64,13 @@ GUARANTEES
       and ``--dry-run`` evaluates that gate too — so a deploy's plan step aborts on a pending
       destructive migration instead of discovering it halfway through applying.
     * Concurrent runners serialize on a Postgres advisory lock (session-scoped, released on
-      disconnect) instead of racing to confusing mid-deploy SQL errors.
+      disconnect) instead of racing to confusing mid-deploy SQL errors. Acquisition is BOUNDED:
+      ``pg_try_advisory_lock`` in a retry loop, up to MIGRATE_LOCK_TIMEOUT seconds (default 60).
+      On timeout the runner FAILS LOUDLY, naming the backend that holds the lock (pid, user,
+      application_name, client, since when). It never blocks silently: statement_timeout = 0
+      (below) removes the server-side cap that would otherwise bound the wait, so an unbounded
+      ``pg_advisory_lock`` here would hang a second runner forever with no output — a read-only
+      ``status`` stuck invisibly behind a long ``up`` (issue #30).
     * Migration sessions run with statement_timeout = 0. Large indexes and backfills take as long as
       they take; atomicity, not a timeout, is what protects us.
 
@@ -86,6 +92,7 @@ import logging
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -109,6 +116,14 @@ EXIT_CONNECTION = 3
 # closes, even on a crash. The constant is arbitrary but must never change: it is the lock
 # identity. (ASCII "RHMIGR01" as a 64-bit int.)
 MIGRATION_LOCK_KEY = 0x5248_4D49_4752_3031
+
+# Bounded lock acquisition (issue #30): total wait defaults to 60s — long enough that back-to-back
+# deploy steps (up, then status) never trip it, short enough that a runner stuck behind a peer
+# fails within a human attention span. Override with MIGRATE_LOCK_TIMEOUT for a deploy that must
+# wait out a known long migration. The retry interval is a compromise between responsiveness and
+# polling chatter; pg_try_advisory_lock is cheap either way.
+DEFAULT_LOCK_TIMEOUT_S = 60.0
+_LOCK_RETRY_INTERVAL_S = 0.5
 
 # THE single source of truth for a migration's identity AND destructiveness. Version is zero-padded
 # so a lexical sort is also a numeric sort — discovery REJECTS a mixed-width set (e.g. 999 alongside
@@ -395,12 +410,85 @@ def connect_from_env() -> psycopg.Connection:
         with conn.cursor() as cur:
             cur.execute("SET statement_timeout = 0")
             cur.execute("SET idle_in_transaction_session_timeout = 0")
-            # Serialize concurrent runners; blocks until the peer finishes. See MIGRATION_LOCK_KEY.
-            cur.execute("SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_KEY,))
-    except psycopg.Error:
+        # Serialize concurrent runners — bounded, and loud on failure. With statement_timeout = 0
+        # just set, an unbounded pg_advisory_lock would block forever with no output (issue #30).
+        _acquire_migration_lock(conn)
+    except (MigrationError, psycopg.Error):
         conn.close()  # do not leak the connection when session setup fails
         raise
     return conn
+
+
+def _describe_lock_holder(conn: psycopg.Connection) -> str:
+    """Best-effort: name the backend(s) holding MIGRATION_LOCK_KEY, for the timeout message.
+
+    An advisory lock taken via the bigint form stores the key's high 32 bits in pg_locks.classid,
+    the low 32 in objid, with objsubid = 1. Advisory locks are cluster-wide, and pg_locks +
+    pg_stat_activity are visible to any role for its own cluster, so this usually names the peer
+    exactly. If the lookup itself fails, the failure is reported instead of masking the timeout.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT a.pid, a.usename, a.application_name, a.client_addr::text, "
+                "       to_char(a.backend_start, 'YYYY-MM-DD HH24:MI:SS TZ'), a.state "
+                "FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid "
+                "WHERE l.locktype = 'advisory' AND l.granted "
+                "  AND l.classid = %s AND l.objid = %s AND l.objsubid = 1",
+                ((MIGRATION_LOCK_KEY >> 32) & 0xFFFF_FFFF, MIGRATION_LOCK_KEY & 0xFFFF_FFFF),
+            )
+            rows = cur.fetchall()
+    except psycopg.Error as exc:
+        return f"(holder lookup failed: {exc})"
+    if not rows:
+        return "(no holder visible — it may have just released; retry)"
+    return "; ".join(
+        f"pid={pid} user={user} app={app or '?'} client={addr or 'local'} "
+        f"connected_since={since} state={state}"
+        for pid, user, app, addr, since, state in rows
+    )
+
+
+def _acquire_migration_lock(conn: psycopg.Connection) -> None:
+    """Take MIGRATION_LOCK_KEY within a bounded wait, or fail loudly naming the holder.
+
+    ``pg_try_advisory_lock`` in a retry loop rather than ``pg_advisory_lock``: the session has
+    statement_timeout = 0, so the blocking form would wait forever, silently — a second runner
+    (even a read-only ``status``) stuck invisibly behind a running ``up`` (issue #30). While
+    waiting, one warning names the current holder so the operator can see WHO is blocking; on
+    timeout the error names it again. Standing rule: never silently block.
+    """
+    raw = os.environ.get("MIGRATE_LOCK_TIMEOUT", str(DEFAULT_LOCK_TIMEOUT_S))
+    try:
+        timeout_s = float(raw)
+    except ValueError:
+        raise MigrationError(f"MIGRATE_LOCK_TIMEOUT must be a number of seconds, got {raw!r}") from None
+    if timeout_s < 0:
+        raise MigrationError(f"MIGRATE_LOCK_TIMEOUT must be >= 0, got {raw!r}")
+
+    deadline = time.monotonic() + timeout_s
+    warned = False
+    while True:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s)", (MIGRATION_LOCK_KEY,))
+            if cur.fetchone()[0]:
+                return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise MigrationError(
+                f"could not acquire the migration lock within {timeout_s:g}s — another runner "
+                f"holds it: {_describe_lock_holder(conn)}. Wait for it to finish (the lock "
+                "releases when its session ends, even on a crash), or raise "
+                "MIGRATE_LOCK_TIMEOUT if a long migration is expected."
+            )
+        if not warned:
+            logger.warning(
+                "migration lock is held by %s — retrying for up to %gs",
+                _describe_lock_holder(conn),
+                timeout_s,
+            )
+            warned = True
+        time.sleep(min(_LOCK_RETRY_INTERVAL_S, remaining))
 
 
 def ensure_bookkeeping(conn: psycopg.Connection) -> None:
