@@ -12,6 +12,7 @@ Never touches the live rh-db — the container here is ephemeral and dies with t
 
 from __future__ import annotations
 
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -38,9 +39,25 @@ def _docker_available() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(not _docker_available(), reason="integration test needs docker")
+def _testcontainers_available() -> bool:
+    """Docker and the testcontainers PACKAGE are separate preconditions.
 
-if _docker_available():  # imports guarded so collection succeeds without docker/testcontainers
+    Guarding on Docker alone was not enough: CI's backend job runs on a GitHub runner that HAS a
+    Docker daemon but installs only backend/requirements.txt, which does not include
+    testcontainers — that lives in the database job. So the guarded block executed, both import
+    paths raised ModuleNotFoundError, and collection died before any skip could apply.
+    """
+    return importlib.util.find_spec("testcontainers") is not None
+
+
+_INTEGRATION_READY = _docker_available() and _testcontainers_available()
+
+pytestmark = pytest.mark.skipif(
+    not _INTEGRATION_READY,
+    reason="integration test needs docker AND the testcontainers package",
+)
+
+if _INTEGRATION_READY:  # imports guarded so collection succeeds without either precondition
     import psycopg
 
     try:  # testcontainers >= 4.x moved community modules; keep the fallback for older installs
