@@ -9,7 +9,12 @@ export interface PositionView {
   market_value: number | null;
   unrealized_pl: number | null;
   unrealized_pl_pct: number | null;
+  /** Share of live equity value — priced positions only, EXCLUDES cash. Allocation mix. */
   weight_pct: number | null;
+  /** Share of live account value (equity + cash). This is the basis the charter's ~25%-per-name
+   *  cap is written against, so it is the one a cap breach may be judged on. Optional so an older
+   *  backend that predates it degrades to "—" rather than rendering undefined. */
+  weight_account_pct?: number | null;
   priced: boolean;
 }
 

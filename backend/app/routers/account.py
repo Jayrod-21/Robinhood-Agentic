@@ -28,7 +28,13 @@ class PositionView(BaseModel):
     market_value: float | None
     unrealized_pl: float | None
     unrealized_pl_pct: float | None
-    weight_pct: float | None  # share of equity value
+    # Two weight bases, deliberately both exposed (issue #21): the charter's ~25%/name cap
+    # (docs/AGENTIC_ROBINHOOD_v1.md §5) is stated against ACCOUNT value, so only
+    # weight_account_pct is comparable to that limit. weight_pct (equity-only) is kept for
+    # allocation context — with a large cash balance the two differ materially, and showing
+    # an equity-basis number next to an account-basis cap would fake a breach.
+    weight_pct: float | None  # share of live equity value (priced positions only; EXCLUDES cash)
+    weight_account_pct: float | None  # share of live account value (equity + cash) — cap basis
     priced: bool
 
 
@@ -80,6 +86,7 @@ def _build_view() -> AccountView:
                     unrealized_pl=None,
                     unrealized_pl_pct=None,
                     weight_pct=None,
+                    weight_account_pct=None,
                     priced=False,
                 )
             )
@@ -100,18 +107,25 @@ def _build_view() -> AccountView:
                 market_value=round(market_value, 2),
                 unrealized_pl=round(pl, 2),
                 unrealized_pl_pct=round(pl_pct, 2) if pl_pct is not None else None,
-                weight_pct=None,  # filled in second pass once live_equity is known
+                weight_pct=None,  # both weights filled in second pass once totals are known
+                weight_account_pct=None,
                 priced=True,
             )
         )
 
-    # Second pass: position weights as a share of live equity.
+    # Second pass: position weights on both bases. Equity basis (excludes cash) describes the
+    # allocation mix; account basis (equity + cash) is what the charter's ~25%/name cap is
+    # written against, so it is the number the cap can be checked with (issue #21).
+    cash = snapshot.account.cash
+    live_total = live_equity + cash
     for row in rows:
-        if row.priced and row.market_value is not None and live_equity > 0:
-            row.weight_pct = round(row.market_value / live_equity * 100.0, 2)
+        if row.priced and row.market_value is not None:
+            if live_equity > 0:
+                row.weight_pct = round(row.market_value / live_equity * 100.0, 2)
+            if live_total > 0:
+                row.weight_account_pct = round(row.market_value / live_total * 100.0, 2)
 
     total_pl_pct = (total_pl / total_cost * 100.0) if total_cost > 0 else None
-    cash = snapshot.account.cash
 
     return AccountView(
         account_masked=snapshot.account.number_masked,
@@ -124,7 +138,7 @@ def _build_view() -> AccountView:
         snapshot_total_value=round(snapshot.account.total_value, 2),
         snapshot_equity_value=round(snapshot.account.equity_value, 2),
         live_equity_value=round(live_equity, 2),
-        live_total_value=round(live_equity + cash, 2),
+        live_total_value=round(live_total, 2),
         total_cost_basis=round(total_cost, 2),
         total_unrealized_pl=round(total_pl, 2),
         total_unrealized_pl_pct=round(total_pl_pct, 2) if total_pl_pct is not None else None,
