@@ -11,8 +11,9 @@ spec, and governance rules (see `reference/SOURCES.md`).
 ## Relationship to 3a
 - **3a (SpecialSprinkleSauce):** the team's governed, paper-first Wasden Watch system. Shared repo
   (`JoeWhiteJr/SpecialSprinkleSauce`). Source of truth for the Wasden *thinking*.
-- **3b (this):** Jared's personal, live, aggressive agentic loop. Separate git history so the daily
-  journal churn and personal strategy stay out of the shared repo.
+- **3b (this):** the live, aggressive agentic loop. A separate git history so the daily journal
+  churn and this account's fast-moving strategy stay out of the shared, governed 3a repo — a
+  separation of concerns between two codebases, not between people.
 
 ## Account
 Robinhood "Agentic" `••••4025` (cash, `agentic_allowed: true`) — the ONLY account the agent may
@@ -23,11 +24,11 @@ Python (yfinance for free fundamentals/prices) | Robinhood MCP (quotes + executi
 Claude agent as the Wasden intelligence layer | Markdown-file journal as the self-learning memory.
 
 ## Status
-Active — bootstrap phase (Jared confirms every order before it places).
+Active — bootstrap phase (a human owner confirms every order before it places).
 
 ## Key Docs
 - `PROJECT_PLAN.md` — **the living plan**: current problems (P1–P10), build phases, testing
-  strategy, and what's blocked on Jared. Start here to pick up work.
+  strategy, and what's blocked on an owner decision. Start here to pick up work.
 - `docs/AGENTIC_ROBINHOOD_v1.md` — operating charter (mission, model, risk rules, autonomy).
 - `docs/agentic_journal.md` — live trading journal / self-learning substrate (running ledger).
 - `docs/THESIS_FRAMEWORK.md` + `docs/THESES.md` — the forward-thinking layer (top-down pass + per-name forward theses).

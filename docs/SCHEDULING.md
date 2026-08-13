@@ -2,8 +2,10 @@
 
 ## Why local, not a remote cloud routine
 The `/schedule` skill creates **remote** agents in Anthropic's cloud. Those can't run this project:
-1. **No access to the local code/docs.** 3b is a local git repo with no GitHub remote (kept private on
-   purpose — the journal holds live positions + cost basis). A remote agent can't reach it.
+1. **No access to the local code/docs.** 3b lives in a **private** GitHub repo
+   (`Jayrod-21/Robinhood-Agentic`) — the journal holds live positions and cost basis, so it is not
+   public. A cloud agent has no checkout and no credentials for it, and the live account snapshot
+   is never committed at all, so the state that matters is only ever on the host.
 2. **No Robinhood MCP.** The Robinhood connection is interactively authenticated and is NOT one of the
    cloud connectors — a headless remote run can't see the live book or place orders.
 
@@ -22,16 +24,26 @@ Robinhood MCP, the forward theses, the morning-review lens, stop/falsification c
 happens in the next **Claude session**, which opens that report as the morning's starting point.
 
 ## Reliability caveat
-Cron only fires while WSL2 / the machine is awake. If the box is asleep at 07:00, the run is skipped
-(cron doesn't catch up). For wake-and-run robustness, use **Windows Task Scheduler** to launch it:
+Cron only fires while the machine is awake. If the box is asleep at 07:00 the run is skipped —
+cron does not catch up.
+
+> **Superseded.** This section previously recommended Windows Task Scheduler driving `wsl.exe`.
+> The host is now native Linux, so `schtasks` and `wsl.exe` do not exist here. Use a systemd timer
+> instead, which does catch up on a missed run:
+
+```ini
+# ~/.config/systemd/user/agentic-morning-scan.timer
+[Timer]
+OnCalendar=Mon..Fri 07:00
+Persistent=true          # runs on resume if the box was asleep at 07:00
 ```
-schtasks /Create /TN "RobinhoodAgentic-MorningScan" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 07:00 \
-  /TR "wsl.exe -d <distro> -e bash -lc '\"/root/Jared/3b. Robinhood Agentic/bin/morning_scan.sh\"'"
-```
-(Set "Wake the computer to run this task" in the task's Conditions.) — optional; ask if you want it.
+
+Pair it with a matching `.service` unit whose `ExecStart` points at `bin/morning_scan.sh` in your
+checkout, then `systemctl --user enable --now agentic-morning-scan.timer`. Optional — nothing is
+scheduled today (`crontab -l` is empty and no timer is installed).
 
 ## Path to the 24/7 app
 This cron is the seed. The local app/script will bundle into one running service: the scan **+** a
 live Robinhood position pull **+** LLM reasoning (theses, stops, falsification) **+** journaling to the
-event store (`logs/events.jsonl`, see `logs/README.md`) **+** alerting Jared — and, once trusted,
+event store (`logs/events.jsonl`, see `logs/README.md`) **+** alerting the owners — and, once trusted,
 supervised order placement. Until then: cron produces the screen; a Claude session does the thinking.

@@ -2,7 +2,7 @@
 
 > The live target portfolio for the $100 Agentic account. Output of the 2026-06-03 allocation debate
 > (12-agent workflow; Reframe-Barbell philosophy won 80/82/84). Updated each cycle; executed in
-> bootstrap mode (Jared confirms every order). Theses live in `THESES.md`.
+> bootstrap mode (an owner confirms every order). Theses live in `THESES.md`.
 
 ## Allocation (as of 2026-06-03) — NOT yet executed
 
@@ -44,7 +44,7 @@ Base case ~**+4% to +6%/month median**, wide distribution. **+25–40% is a righ
 firing only when a dated catalyst lands on a sized name. Left tail −12% to −18% in a capex air-pocket
 (the ~60% AI-factor fuses toward 1.0) — what V+CVX+cash exist to cushion and reload against.
 
-## Execution order (bootstrap — Jared confirms each)
+## Execution order (bootstrap — an owner confirms each)
 1. **TSM ~$22** (anchor, lowest-variance entry) — first.
 2. **VST ~$15**, then **NVDA ~$13** (scale on weakness).
 3. Then V, CVX, GEV, QCOM. PLTR only near a catalyst.

@@ -18,7 +18,7 @@
 #                      stack on its next start. Published RANGES (e.g. km-lb's 1840-1841) are
 #                      expanded port-by-port.
 #
-# Standing rule (Jared, 2026-07-27): when creating any container that binds a host port, verify the
+# Standing rule (2026-07-27): when creating any container that binds a host port, verify the
 # port is free first. If it is taken, pick a DIFFERENT port — never stop or reuse whatever holds it.
 # M runs several live stacks side by side (9b Korean Master owns 1840-1843 plus its DB), so "the
 # port I always use" is not a safe assumption.

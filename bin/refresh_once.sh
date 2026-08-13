@@ -37,7 +37,8 @@ log() { echo "[refresh-once $(ts)] $*"; }
 
 claude_bin() {
   if command -v claude >/dev/null 2>&1; then command -v claude; return; fi
-  for c in /root/.nvm/versions/node/*/bin/claude "${HOME}/.nvm/versions/node/"*/bin/claude; do
+  # ${HOME} only — the retired WSL box's /root/.nvm path is dead for every other operator.
+  for c in "${AGENTIC_CLAUDE_BIN:-}" "${HOME}/.nvm/versions/node/"*/bin/claude; do
     [[ -x "${c}" ]] && { echo "${c}"; return; }
   done
   echo ""

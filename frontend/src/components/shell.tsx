@@ -19,7 +19,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <aside className="hidden w-56 shrink-0 flex-col border-r border-ink-800 bg-ink-900/50 px-3 py-5 md:flex">
         <div className="px-2">
           <div className="font-serif text-xl text-zinc-100">Agentic</div>
-          <div className="text-[11px] uppercase tracking-[0.2em] text-brass">Robinhood · ••••4025</div>
+          {/* Deliberately not the account number: this is a static layout shell with no API data,
+              so a hard-coded identifier here can silently disagree with the real account. The
+              Portfolio page renders the live `account_masked` value from /api/account instead. */}
+          <div className="text-[11px] uppercase tracking-[0.2em] text-brass">Robinhood</div>
         </div>
         <nav className="mt-8 flex flex-col gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {

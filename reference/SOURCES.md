@@ -4,8 +4,10 @@ This project is self-contained but treats `3a. SpecialSprinkleSauce` as the **so
 for the Wasden *thinking*** (framework, screening spec, governance). We reference these files
 rather than importing 3a's code, so there is no cross-repo coupling and no drift.
 
-> Both folders are local under `/root/Jared/`. If 3b ever becomes a remote repo on another
-> machine, vendor read-only snapshots of these into `reference/` and note the snapshot date.
+> Both folders are siblings in the same local projects directory; resolve them relative to this
+> repo's parent rather than assuming any absolute path. 3b now has a remote
+> (`Jayrod-21/Robinhood-Agentic`, private), so a collaborator's checkout will **not** include 3a —
+> vendor read-only snapshots of anything load-bearing into `reference/` and note the snapshot date.
 
 | What | Canonical path (in 3a) | Used for |
 |------|------------------------|----------|

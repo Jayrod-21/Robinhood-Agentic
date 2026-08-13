@@ -4,7 +4,9 @@ Steps:
 1. MCP `get_portfolio` account_number=542574025.
 2. MCP `get_equity_positions` account_number=542574025.
 3. Get current UTC time (ISO-8601, e.g. run `date -u +%Y-%m-%dT%H:%M:%SZ`).
-4. Overwrite file `/root/Jared/3b. Robinhood Agentic/data/account_snapshot.json` with EXACTLY this schema:
+4. Overwrite `data/account_snapshot.json` **in this repository's checkout** (the caller runs you
+   from the repo root; `bin/refresh_once.sh` and `bin/refresh_daemon.sh` both resolve it) with
+   EXACTLY this schema:
 
 {
   "schema_version": 1,
