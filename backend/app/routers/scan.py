@@ -1,6 +1,6 @@
 """Scan endpoints: stream the real Sprinkle Sauce screen over a ticker universe.
 
-This reuses 3b's tested ``src`` screen verbatim — yfinance fundamentals → tiered gates → composite
+This reuses 3b's tested ``src`` screen verbatim — FMP fundamentals → tiered gates → composite
 score — and streams one result per ticker so the dashboard fills in live, ending with a ranked
 survivor list. No LLM, no cost.
 """
@@ -22,7 +22,7 @@ logger = logging.getLogger("agentic.routers.scan")
 
 router = APIRouter(prefix="/api/scan", tags=["scan"])
 
-# Minimum seconds between honored scan kickoffs (F4). Each scan fans out one blocking yfinance fetch
+# Minimum seconds between honored scan kickoffs (F4). Each scan fans out one blocking FMP bundle
 # per ticker — a whole universe with an empty body — so back-to-back requests multiply outbound Yahoo
 # traffic and risk an IP ban. Module constant (Settings is owned elsewhere); 15s matches the default
 # cadence of the sibling debate/pipeline cooldown.
@@ -41,12 +41,12 @@ class ScanRequest(BaseModel):
 
 def _screen_one(ticker: str, min_cap: float) -> dict:
     """Blocking fetch + screen for one ticker → a JSON-friendly summary."""
-    from src.data import fetch_fundamentals
+    from src.data import fetch_fundamentals_fmp
     from src.screen import screen_ticker
 
-    fundamentals = fetch_fundamentals(ticker)
+    fundamentals = fetch_fundamentals_fmp(ticker)
     if fundamentals is None:
-        return {"ticker": ticker, "ok": False, "passed": False, "reason": "no data (yfinance miss)"}
+        return {"ticker": ticker, "ok": False, "passed": False, "reason": "no data (FMP returned nothing for this symbol)"}
     res = screen_ticker(ticker, fundamentals, min_market_cap=min_cap)
     ss = res.tiers.get("sprinkle_sauce")
     return {
@@ -60,8 +60,8 @@ def _screen_one(ticker: str, min_cap: float) -> dict:
         "fcf_yield": ss.metrics.get("fcf_yield") if ss else None,
         "name": fundamentals.get("name"),
         "sector": fundamentals.get("sector"),
-        # Issue #27: surface the rest of what fetch_fundamentals already returns so the Scan page
-        # can show the full picture, not just the two gate metrics. `.get` keeps a sparse yfinance
+        # Issue #27: surface the rest of what fetch_fundamentals_fmp already returns so the Scan page
+        # can show the full picture, not just the two gate metrics. `.get` keeps a sparse FMP
         # payload graceful (missing fields render as em dashes client-side).
         "industry": fundamentals.get("industry"),
         "market_cap": fundamentals.get("market_cap"),
@@ -96,7 +96,7 @@ def run_stream(req: ScanRequest):
     settings = get_settings()
     min_cap = req.min_cap or DEFAULT_MIN_CAP
     if req.tickers:
-        # B3: cap the user-supplied list so one request can't fan out unbounded blocking yfinance
+        # B3: cap the user-supplied list so one request can't fan out unbounded blocking FMP
         # fetches. Reject (not silently truncate) so the caller knows the request was too large.
         if len(req.tickers) > settings.scan_max_tickers:
             raise HTTPException(
@@ -121,7 +121,7 @@ def run_stream(req: ScanRequest):
 
     # F4: cooldown gate, checked AFTER the cheap request validation above so a malformed request
     # gets its actionable 400 without consuming the budget — only a request that would actually
-    # fan out yfinance fetches draws from it. Same CooldownLimiter pattern as debate/pipeline, but
+    # fan out FMP fetches draws from it. Same CooldownLimiter pattern as debate/pipeline, but
     # a separate instance (see app.ratelimit): scans are free and must not block paid debates.
     wait = scan_limiter.check_and_consume(SCAN_MIN_INTERVAL_SECONDS)
     if wait:

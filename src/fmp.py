@@ -348,3 +348,36 @@ class FmpClient:
                 "growth": growth,
             },
         }
+
+
+# ── the process-wide client ───────────────────────────────────────────────────────────────────
+# One client per PROCESS, deliberately, because the rate gate is only a rate gate if everything
+# shares it. Two clients means two independent 270/min budgets against one 300/min plan, and the
+# overrun would appear as sporadic 429s under load — the hardest kind of bug to reproduce, because
+# it needs two subsystems fetching at once. The backend has exactly that shape: the dashboard's
+# marks poll and an operator's scan can run simultaneously.
+_shared_client: FmpClient | None = None
+_shared_lock = threading.Lock()
+
+
+def get_shared_client() -> FmpClient:
+    """The process-wide FMP client. Created on first use; safe from any thread."""
+    global _shared_client
+    if _shared_client is None:
+        with _shared_lock:
+            if _shared_client is None:
+                _shared_client = FmpClient()
+    return _shared_client
+
+
+def reset_shared_client() -> None:
+    """Drop the singleton. Test-support only — never called from request paths."""
+    global _shared_client
+    with _shared_lock:
+        _shared_client = None
+
+
+def quote(symbol: str) -> dict | None:
+    """Latest quote for one symbol via the shared client, or None if FMP has nothing."""
+    rows = get_shared_client().get("quote", {"symbol": symbol})
+    return rows[0] if isinstance(rows, list) and rows else None

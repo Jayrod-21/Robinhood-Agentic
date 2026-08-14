@@ -74,7 +74,7 @@ def test_rejected_request_does_not_consume_scan_budget():
 
 
 def test_screen_one_surfaces_all_fundamentals(monkeypatch):
-    """Issue #27: everything fetch_fundamentals returns must flow into the scan row — market cap,
+    """Issue #27: everything fetch_fundamentals_fmp returns must flow into the scan row — market cap,
     price, both P/Es, gross margin, revenue growth, sector, industry — not just PEG/FCF-yield."""
     import src.data
 
@@ -95,8 +95,8 @@ def test_screen_one_surfaces_all_fundamentals(monkeypatch):
         "forward_pe": 21.66,
         "price": 425.83,
     }
-    # _screen_one imports fetch_fundamentals at call time, so patching the module attr suffices.
-    monkeypatch.setattr(src.data, "fetch_fundamentals", lambda t: dict(fake))
+    # _screen_one imports fetch_fundamentals_fmp at call time, so patching the module attr suffices.
+    monkeypatch.setattr(src.data, "fetch_fundamentals_fmp", lambda t: dict(fake))
 
     row = _screen_one("TSM", min_cap=5_000_000_000)
 
@@ -124,7 +124,7 @@ def test_screen_one_sparse_fundamentals_yield_none_not_keyerror(monkeypatch):
     import src.data
 
     sparse = {"ticker": "XYZ", "market_cap": 6_000_000_000.0}
-    monkeypatch.setattr(src.data, "fetch_fundamentals", lambda t: dict(sparse))
+    monkeypatch.setattr(src.data, "fetch_fundamentals_fmp", lambda t: dict(sparse))
 
     row = _screen_one("XYZ", min_cap=5_000_000_000)
 
@@ -134,12 +134,17 @@ def test_screen_one_sparse_fundamentals_yield_none_not_keyerror(monkeypatch):
 
 
 def test_screen_one_no_data_row_shape(monkeypatch):
-    """The yfinance-miss row keeps its minimal shape (ok=False + reason) and doesn't crash."""
+    """The provider-miss row keeps its minimal shape (ok=False + reason) and doesn't crash."""
     import src.data
 
-    monkeypatch.setattr(src.data, "fetch_fundamentals", lambda t: None)
+    monkeypatch.setattr(src.data, "fetch_fundamentals_fmp", lambda t: None)
     row = _screen_one("MISS", min_cap=5_000_000_000)
-    assert row == {"ticker": "MISS", "ok": False, "passed": False, "reason": "no data (yfinance miss)"}
+    assert row == {
+        "ticker": "MISS",
+        "ok": False,
+        "passed": False,
+        "reason": "no data (FMP returned nothing for this symbol)",
+    }
 
 
 def test_scan_budget_is_separate_from_debate_budget():

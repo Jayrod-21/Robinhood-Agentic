@@ -1,4 +1,4 @@
-"""GET /api/account — the real account snapshot overlaid with live yfinance marks.
+"""GET /api/account — the real account snapshot overlaid with live FMP marks.
 
 Read-only by design: this endpoint computes current value and unrealized P&L from the snapshot's
 cost basis and live prices, but exposes no path to place or modify orders. Holdings come from the
@@ -149,7 +149,7 @@ def _build_view() -> AccountView:
 @router.get("/account", response_model=AccountView)
 async def get_account() -> AccountView:
     try:
-        # yfinance I/O is blocking; keep it off the event loop.
+        # FMP I/O is blocking; keep it off the event loop.
         return await asyncio.to_thread(_build_view)
     except SnapshotError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

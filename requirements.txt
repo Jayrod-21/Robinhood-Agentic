@@ -1,6 +1,11 @@
 # Pinned to exact versions (issue #15) — see backend/requirements.txt for the rationale. These
 # match the versions backend/requirements.txt pins so the screen and dashboard suites test the
-# same pandas/yfinance the backend ships.
-yfinance==1.5.2
+# same libraries the backend ships.
+#
+# yfinance is gone from here and from backend/requirements.txt: the screen, the marks, the debate
+# engine and the pipeline all read FMP now. The ONLY remaining yfinance consumers are the corporate-
+# actions and delistings loaders, which build their own image (bin/db_corporate_actions.sh) and pin
+# it there — so nothing that ships in the dashboard carries it any more.
 pandas==3.0.5
+requests==2.34.2
 pytest==9.1.1

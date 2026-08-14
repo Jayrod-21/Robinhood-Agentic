@@ -29,9 +29,9 @@ def _now() -> str:
 
 def _fetch_context(ticker: str) -> tuple[float | None, dict | None]:
     """Blocking fundamentals + price fetch (run off the event loop by the caller)."""
-    from src.data import fetch_fundamentals
+    from src.data import fetch_fundamentals_fmp
 
-    fundamentals = fetch_fundamentals(ticker)
+    fundamentals = fetch_fundamentals_fmp(ticker)
     price = fundamentals.get("price") if fundamentals else None
     return price, fundamentals
 

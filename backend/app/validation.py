@@ -4,7 +4,7 @@ Every endpoint that accepts user-controlled text routes it through one of these 
 contract cannot drift between routers (the duplicated ``TICKER_RE`` copies had already started to
 diverge — one router raised via a helper, another inlined the check). Centralizing them also makes
 the security boundary auditable in one place: a ticker is an uppercase symbol, a record id is a safe
-filename stem, and nothing else reaches yfinance or the filesystem.
+filename stem, and nothing else reaches the market-data provider or the filesystem.
 """
 
 from __future__ import annotations
@@ -15,7 +15,11 @@ from fastapi import HTTPException
 
 # An equity ticker: 1–5 letters, optionally a single class-share suffix of ".<letter>" (NVDA,
 # BRK.B, BF.B). Exactly this grammar — no consecutive dots, no trailing dot, at most one dot —
-# because the symbol is interpolated into an outbound Yahoo URL path by yfinance.
+# because the symbol is interpolated into an outbound provider request. It reaches FMP as a query
+# PARAMETER now rather than a Yahoo URL path segment, which is safer (no path traversal to worry
+# about), but the grammar stays strict on purpose: this is the only gate between user text and an
+# outbound request, and loosening it to accept whatever a provider tolerates would make the
+# boundary depend on a third party's parser.
 TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
 
 # A debate record id used as a filename stem. Allowlist of filename-safe characters only; crucially

@@ -1,7 +1,7 @@
 """Agentic Robinhood dashboard backend.
 
 FastAPI service that powers the 3b live dashboard:
-- reads the volume-mounted account snapshot and overlays live yfinance marks,
+- reads the volume-mounted account snapshot and overlays live FMP marks,
 - runs the real Sprinkle Sauce screen as a streamed pipeline,
 - runs a live bull/bear + jury debate via the Anthropic API,
 - queues account refreshes for the host-side refresh daemon.

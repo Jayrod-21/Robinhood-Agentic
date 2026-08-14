@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default=Path("/app/data"))
     logs_dir: Path = Field(default=Path("/app/logs"))
 
-    # --- Live marks (yfinance) --------------------------------------------------------------
+    # --- Live marks (FMP) -------------------------------------------------------------------
     marks_ttl_seconds: int = Field(default=45, ge=5, le=600)
 
     # --- CORS -------------------------------------------------------------------------------
@@ -136,7 +136,7 @@ class Settings(BaseSettings):
     auth_resend_cooldown_seconds: int = Field(default=60, ge=0, le=3600)
 
     # --- Scan limits ------------------------------------------------------------------------
-    # Max user-supplied tickers per scan request. Each ticker fans out a blocking yfinance fetch on
+    # Max user-supplied tickers per scan request. Each ticker fans out a blocking FMP bundle on
     # the threadpool, so an unbounded list is a cheap DoS — cap it (pydantic 422s anything larger).
     scan_max_tickers: int = Field(default=50, ge=1, le=500)
 
