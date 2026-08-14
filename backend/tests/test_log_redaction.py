@@ -49,6 +49,32 @@ def test_api_key_assignment_redacted():
     assert "[REDACTED]" in out
 
 
+def test_otpauth_uri_redacted():
+    # AUTH_THREAT_MODEL §5.4: a provisioning URI embeds the TOTP shared secret as a query
+    # parameter — one logged URI and the second factor is reproducible forever. The WHOLE URI
+    # must be destroyed (label, issuer, and secret= together), not just the parameter.
+    out = _emit(
+        "enrollment response: otpauth://totp/Agentic:op@example.com"
+        "?secret=JBSWY3DPEHPK3PXP&issuer=Agentic"
+    )
+    assert "JBSWY3DPEHPK3PXP" not in out
+    assert "secret=" not in out
+    assert "otpauth://[REDACTED]" in out
+
+
+def test_totp_secret_redacted_in_exception_text():
+    # §5.4's second net: a BARE base32 secret (no otpauth:// context) landing in an exception —
+    # e.g. a crypto.py or manage_operator.py bug embedding it in the message — must be scrubbed
+    # from the rendered traceback while the traceback itself survives.
+    out = _emit(
+        "enrollment failed",
+        exc=RuntimeError("decrypt round-trip mismatch for secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
+    )
+    assert "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" not in out
+    assert "[REDACTED-BASE32]" in out
+    assert "RuntimeError" in out  # the traceback itself still gets emitted
+
+
 def test_exception_traceback_redacted():
     # The structural gap from the finding: an SDK exception embedding an auth header would land in
     # logger.exception output. The traceback must survive, the secret must not.

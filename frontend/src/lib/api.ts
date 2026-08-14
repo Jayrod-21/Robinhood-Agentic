@@ -1,12 +1,22 @@
 // API base + helpers. The backend port is injected at container start via NEXT_PUBLIC_API_URL.
 
 // `??` (not `||`) so an explicit empty string means "same origin" (production behind the Caddy
-// reverse proxy: the browser calls relative `/api/...`). Unset (local `next dev`) falls back to :8000.
+// reverse proxy AND the dev stack behind its compose `proxy` service: the browser calls relative
+// `/api/...`). Unset (bare local `next dev`) falls back to :8000.
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// The session contract REQUIRES a same-origin deployment. `same-origin` is fetch's default, but
+// it is spelled out on every call so the dependency is visible: the __Host-rh_sid cookie flows
+// only when page and API share an origin, because the backend deliberately ships CORS with
+// allow_credentials=false (docs/AUTH_THREAT_MODEL.md §5.9). Do NOT "fix" a cross-origin
+// API_URL by switching this to "include" — that needs credentialed CORS server-side, which is
+// exactly the posture §5.9 rejects; make the deployment same-origin instead (as prod's Caddy and
+// dev's compose proxy both do).
+export const CREDENTIALS: RequestCredentials = "same-origin";
+
 export async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
+  const res = await fetch(`${API_URL}${path}`, { cache: "no-store", credentials: CREDENTIALS });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     throw new Error(`${res.status} ${path}: ${detail.slice(0, 200)}`);
@@ -19,6 +29,7 @@ export async function postJSON<T>(path: string, body: unknown): Promise<T> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    credentials: CREDENTIALS,
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
@@ -43,6 +54,7 @@ export async function streamSSE(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    credentials: CREDENTIALS,
     signal,
   });
   if (!res.ok || !res.body) {

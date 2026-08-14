@@ -36,6 +36,18 @@ logger = logging.getLogger("agentic.db")
 _pool: ConnectionPool | None = None
 _pool_lock = threading.Lock()
 
+# A SECOND pool, on a SECOND role. Not a convenience — migration 012 REVOKEs every auth table from
+# rh_app, so the pool above physically cannot read a password hash or a TOTP secret. Only rh_auth
+# can, and it holds column-level grants on exactly what each auth flow touches (AUTH_THREAT_MODEL
+# §8). The split is what stops a SQL injection anywhere in scan/account/debate/pipeline reaching
+# the credential store.
+#
+# Its real limit, stated plainly because it is easy to overrate: both DSNs live in this one
+# process. This defends against injection in non-auth code. It does not defend against code
+# execution in the backend, and nothing here defends against host compromise.
+_auth_pool: ConnectionPool | None = None
+_auth_pool_lock = threading.Lock()
+
 
 class DbUnavailable(RuntimeError):
     """The database cannot be used right now; the caller should degrade, not crash.
@@ -49,10 +61,14 @@ class DbUnavailable(RuntimeError):
         self.reason = reason
 
 
-def _create_pool() -> ConnectionPool | None:
-    """Build the process-wide pool, or return None when no DSN is configured."""
+def _create_pool(*, auth: bool = False) -> ConnectionPool | None:
+    """Build a process-wide pool, or return None when its DSN is not configured.
+
+    ``auth=True`` selects AUTH_DATABASE_URL (role rh_auth) instead of DATABASE_URL (rh_app).
+    """
     settings = get_db_settings()
-    if settings.database_url is None:
+    dsn = settings.auth_database_url if auth else settings.database_url
+    if dsn is None:
         return None
 
     from psycopg_pool import ConnectionPool  # deferred: see module docstring
@@ -61,11 +77,11 @@ def _create_pool() -> ConnectionPool | None:
     # nightly backup bouncing rh-db) yields a fresh connection instead of a dead-socket error
     # surfacing as a 500 on the next dashboard poll.
     return ConnectionPool(
-        conninfo=settings.database_url,
+        conninfo=dsn,
         min_size=settings.db_pool_min_size,
         max_size=settings.db_pool_max_size,
         open=True,
-        name="rh-backend",
+        name="rh-auth" if auth else "rh-backend",
         check=ConnectionPool.check_connection,
         kwargs={
             "application_name": settings.db_application_name,
@@ -89,9 +105,24 @@ def get_pool() -> ConnectionPool | None:
     return _pool
 
 
+def get_auth_pool() -> ConnectionPool | None:
+    """The process-wide rh_auth pool (created lazily), or None when AUTH_DATABASE_URL is unset."""
+    global _auth_pool
+    if _auth_pool is not None:
+        return _auth_pool
+    with _auth_pool_lock:
+        if _auth_pool is None:
+            pool = _create_pool(auth=True)
+            if pool is None:
+                return None
+            _auth_pool = pool
+            logger.info("auth database pool opened (min=%s max=%s)", pool.min_size, pool.max_size)
+    return _auth_pool
+
+
 def close_pool() -> None:
-    """Close and forget the pool. Safe to call repeatedly; tests use it between DSN changes."""
-    global _pool
+    """Close and forget both pools. Safe to call repeatedly; tests use it between DSN changes."""
+    global _pool, _auth_pool
     with _pool_lock:
         if _pool is not None:
             try:
@@ -99,6 +130,56 @@ def close_pool() -> None:
             except Exception as exc:  # noqa: BLE001 — teardown must never mask the test/app error
                 logger.warning("closing database pool raised: %s", exc)
             _pool = None
+    with _auth_pool_lock:
+        if _auth_pool is not None:
+            try:
+                _auth_pool.close()
+            except Exception as exc:  # noqa: BLE001 — same reasoning
+                logger.warning("closing auth database pool raised: %s", exc)
+            _auth_pool = None
+
+
+@contextmanager
+def auth_connection() -> Iterator[psycopg.Connection[Any]]:
+    """Acquire a pooled rh_auth connection for the authentication path only.
+
+    THIS ONE DOES NOT DEGRADE, AND CALLERS MUST NOT MAKE IT.
+        ``connection()`` above exists so the dashboard keeps serving when the database is down —
+        history features go dark, the account page still renders. That is correct for reading data
+        and catastrophic for deciding who is allowed in. An auth path that "degrades gracefully"
+        when it cannot reach the credential store is an authentication bypass: it fails toward
+        letting the request through.
+
+        So callers of this function must translate DbUnavailable into a refusal (503, no session
+        minted, no session accepted), never into a default-allow. AUTH_THREAT_MODEL §5.13 states
+        this as an invariant; ``services/auth.py`` implements it in exactly one place.
+
+    Same acquisition bound and failure translation as ``connection()`` — what differs is only the
+    role, the pool, and the meaning the caller must assign to failure.
+    """
+    from psycopg import OperationalError
+    from psycopg_pool import PoolTimeout
+
+    pool = get_auth_pool()
+    if pool is None:
+        raise DbUnavailable(
+            "not_configured",
+            "authentication is not configured on this server",
+        )
+
+    settings = get_db_settings()
+    try:
+        with pool.connection(timeout=settings.db_acquire_timeout_seconds) as conn:
+            yield conn
+    except PoolTimeout as exc:
+        logger.warning(
+            "auth database unreachable: pool acquire timed out after %.1fs",
+            settings.db_acquire_timeout_seconds,
+        )
+        raise DbUnavailable("unreachable", "authentication is temporarily unavailable") from exc
+    except OperationalError as exc:
+        logger.warning("auth database connection failed: %s", exc)
+        raise DbUnavailable("unreachable", "authentication is temporarily unavailable") from exc
 
 
 @contextmanager

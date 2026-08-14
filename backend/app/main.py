@@ -14,7 +14,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import account, debate, health, history, pipeline, refresh, scan
+from app.routers import account, auth, debate, health, history, pipeline, refresh, scan
+from app.services.auth import auth_enforcement_configured, enforce_authenticated
+from app.services.email import assert_production_transport
 
 
 class SecretRedactionFilter(logging.Filter):
@@ -28,9 +30,33 @@ class SecretRedactionFilter(logging.Filter):
     """
 
     # (pattern, replacement) applied in order. The sk-ant rule runs first so a key inside an
-    # Authorization/bearer value is destroyed even before the surrounding header is masked.
+    # Authorization/bearer value is destroyed even before the surrounding header is masked; the
+    # otpauth rule likewise runs before the base32 rule so a provisioning URI is destroyed
+    # wholesale (label, issuer, and secret= parameter together), with the base32 rule as the
+    # second net for a bare secret outside a URI.
     _RULES: tuple[tuple[re.Pattern[str], str], ...] = (
         (re.compile(r"sk-ant-[A-Za-z0-9_\-]+"), "sk-ant-[REDACTED]"),
+        # AUTH_THREAT_MODEL §5.4: an otpauth:// URI embeds the TOTP shared secret as a query
+        # parameter — one log line and the second factor is reproducible forever. The whole URI
+        # goes, not just the parameter.
+        (re.compile(r"otpauth://\S+"), "otpauth://[REDACTED]"),
+        # §5.4: bare base32 secret material — 16+ chars of the RFC 4648 alphabet (A-Z, 2-7,
+        # optional padding), the shape of every TOTP secret. Runs that long of ONLY these
+        # characters are essentially never legitimate log content (\b keeps it from firing
+        # inside mixed-case identifiers), and a false positive is hygiene-safe: an over-redacted
+        # log line beats a leaked second factor.
+        #
+        # DELIBERATELY NOT TIGHTENED. This also eats bare 16+ letter all-caps words
+        # ("MISCONFIGURATION"), and the obvious narrowing is to require a digit in the run:
+        # `(?=[A-Z2-7]*[2-7])`. Do not. pyotp draws each of a secret's 32 characters uniformly
+        # from the 32-symbol alphabet, so P(no 2-7 anywhere) = (26/32)**32 ≈ 0.0016 — about one
+        # secret in 600 would then log in the clear, and the one that escapes is not knowable in
+        # advance. Losing an uppercase word from a log line costs nothing; a 1-in-600 chance of
+        # writing a permanent second factor to disk is not a trade worth making for legibility.
+        # A re-review measured the realistic auth log lines (startup warnings, CSRF blocks,
+        # rate-limit hits, psycopg tracebacks, constraint names, container ids, UUIDs) and found
+        # every one survives unchanged — underscores, digits and mixed case break the run.
+        (re.compile(r"\b[A-Z2-7]{16,}(?:=+)?"), "[REDACTED-BASE32]"),
         (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/\-]+=*"), "Bearer [REDACTED]"),
         (
             re.compile(r"(?i)\b(authorization|proxy-authorization|x-api-key|api[_-]?key)\b\s*[:=]\s*\S+"),
@@ -174,6 +200,22 @@ async def lifespan(app: FastAPI):
         settings.snapshot_path.exists(),
         settings.anthropic_api_key is not None,
     )
+
+    # §5.6 mail-transport posture. email.py ships assert_production_transport() as a guard against
+    # booting the prod profile on the log-only mock — which logs full message bodies, verification
+    # links included. Nothing called it: it landed between two changes' scopes, so the guard existed
+    # and never ran.
+    #
+    # The trigger is auth being configured. Once operators exist, a verification link is a bearer
+    # credential, and a transport that writes it to the log is a disclosure rather than a
+    # convenience. Warned rather than raised because this app has no explicit prod-profile signal,
+    # and refusing to boot the whole dashboard on a mail misconfiguration is a bigger outage than
+    # the fault. Promoting it to a hard failure is the right end state and needs that signal first.
+    if auth_enforcement_configured():
+        try:
+            assert_production_transport()
+        except RuntimeError as exc:
+            logger.error("MAIL TRANSPORT UNSAFE FOR AUTH: %s", exc)
     yield
 
 
@@ -184,8 +226,24 @@ def create_app() -> FastAPI:
         description="Read-only account monitor + live Sprinkle Sauce screen + jury debate engine.",
         version="0.1.0",
         lifespan=lifespan,
-        # App-wide so every state-changing route — current and future — passes the CSRF guard.
-        dependencies=[Depends(enforce_same_origin)],
+        # AUTH_THREAT_MODEL §4: the session allow-list is /api/health + /api/auth/* and NOTHING
+        # else — and that must include FastAPI's own bootstrap surface. /openapi.json, /docs,
+        # /redoc, and /docs/oauth2-redirect are registered by FastAPI.setup() as plain Starlette
+        # Routes, not APIRoutes, so the app-wide `dependencies=[...]` below NEVER runs for them:
+        # with auth configured, the full API schema (refresh endpoint included) was being served
+        # unauthenticated. Disabled outright rather than allow-listed — this is a two-operator
+        # private dashboard whose API surface is documented in the code, not a public API.
+        # test_auth_routes.py enumerates every reachable route to pin the allow-list closed.
+        openapi_url=None,
+        docs_url=None,
+        redoc_url=None,
+        # App-wide so every route — current and future — passes both guards without anyone
+        # remembering to add them (SECURITY.md §6 invariant 3; AUTH_THREAT_MODEL §4). Order
+        # matters: the CSRF guard runs first, then the session gate. enforce_authenticated
+        # allow-lists /api/health and the auth routes themselves, and nothing else; when
+        # AUTH_DATABASE_URL is configured but unreachable it REFUSES with 503 (fail closed,
+        # AUTH_THREAT_MODEL §8 / §11.6), never a default-allow.
+        dependencies=[Depends(enforce_same_origin), Depends(enforce_authenticated)],
     )
 
     # Default: allow localhost/127.0.0.1 on any port (the frontend port is random) via regex, plus any
@@ -202,6 +260,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(account.router)
     app.include_router(refresh.router)
     app.include_router(scan.router)

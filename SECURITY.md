@@ -57,10 +57,18 @@ admission that nothing does yet.*
   (`docker-compose.yml:14,46`); fixed as F3. Remote use is via SSH tunnel.
 - **Vector:** online password guessing against prod basic auth (no lockout, no rate limit,
   bcrypt-verified only), historically with the username pre-given as `admin`.
-  **Defense (partial):** `deploy/.env.example` no longer ships a default username, and
-  `SERVER_DEPLOY.md` makes Cloudflare Access mandatory before the hostname exists. **Open:** the
-  lockout/rate-limit gap itself, and actually configuring Access — issue #17. Prod is not deployed,
-  so today this surface does not exist.
+  **Defense (partial, and no longer the whole story):** `deploy/.env.example` no longer ships a
+  default username, and `SERVER_DEPLOY.md` makes Cloudflare Access mandatory before the hostname
+  exists. **The replacement system now exists** — per-operator authentication (Argon2id password +
+  TOTP, 5-strike/15-minute lockout, `__Host-`-prefixed sessions) is built, migrated into `rh-db`,
+  and covered by 241 backend + 194 db tests; see `docs/AUTH_THREAT_MODEL.md`'s status banner for
+  exactly what was verified. **It has not replaced anything yet.** `deploy/Caddyfile` still runs
+  `basic_auth` and the live prod container has not been rebuilt to pick up this work — checked
+  directly, it has neither `AUTH_DATABASE_URL` in its environment nor the `auth_enforced` field in
+  `/api/health`. No operator account has been seeded anywhere. **Open, still:** the basic-auth
+  lockout/rate-limit gap itself remains live in prod today, Cloudflare Access is still
+  unconfigured, and the cutover (seed an operator, verify an end-to-end login, then remove
+  `basic_auth`) has not happened — issue #17, runbook now in `SERVER_DEPLOY.md`.
 - **Vector:** reaching the origin around Cloudflare.
   **Defense (by construction, for the documented target):** only Caddy binds a host port and only
   on loopback (`deploy/docker-compose.prod.yml`); no public DNS A record points at M.
@@ -135,9 +143,11 @@ admission that nothing does yet.*
   **Defense (exists, verified):** `backend/.env` is gitignored (`.gitignore:11`) and excluded from
   build context (`.dockerignore`); gitleaks runs in CI on every PR (`.github/workflows/gitleaks.yml`);
   the key is read only by the client constructor (`backend/app/debate/anthropic_client.py`) and
-  never echoed. **Not claimed:** there is no repo-local `.gitleaks.toml`; scanning runs with the
-  action's default ruleset. If one is ever added it MUST contain `[extend] useDefault = true` —
-  without that line a custom config silently disables all default rules.
+  never echoed. A repo-local `.gitleaks.toml` was added 2026-08-13; it carries
+  `[extend] useDefault = true`, without which a custom config silently disables every default
+  rule. Its allowlist matches two exact strings only — a runbook's literal `curl -u
+  USER:PASSWORD` and the fake api_key inside the test asserting the redaction filter scrubs it —
+  verified by planting an AWS key in the same tree and confirming it is still caught.
 - **Vector:** a held button or client loop fans out unbounded paid debates.
   **Defense (exists, verified):** one shared cooldown limiter for *both* token-spending routes
   (debate + pipeline share a single budget, `backend/app/ratelimit.py`), lock-guarded against
@@ -216,9 +226,13 @@ admission that nothing does yet.*
   credential in `db/.env` (0600).
 - **Vector:** destructive or tampered migrations.
   **Defense (exists):** runner-owned transactions, checksums, filename-declared destructive gate
-  (see `db/` and ADR-002). **Open, security-adjacent:** #34 (`ALTER DEFAULT PRIVILEGES` re-opens
-  append-only for future tables), #31 (untrue comment about `rh_app` authentication), #30
-  (migration lock blocks silently).
+  (see `db/` and ADR-002). #34, #31 and #30 were all closed 2026-08-13: migration 011 makes future
+  tables born `SELECT, INSERT` only for `rh_app` (so a later append-only table cannot be silently
+  mutable), 010 corrected 001's untrue `rh_app` authentication comment via `COMMENT ON ROLE`, and
+  `db/migrate.py` now takes a bounded lock that names the blocking backend instead of waiting
+  forever. **Residual, tracked in `docs/AUTH_THREAT_MODEL.md` §8:** the default still grants
+  `SELECT`, which 011 did not change and which cannot simply be revoked — verifying a login
+  requires reading those columns.
 
 ## 4. The order path that does not exist yet
 
@@ -245,10 +259,10 @@ doc's P2 list — none are implemented, because the feature they gate is not imp
 
 | # | Gap | Severity |
 |---|-----|----------|
-| #17 | Basic auth: no lockout/rate limit; Cloudflare Access not yet configured (prod not deployed); the structural session-cookie auth rework | High (blocking exposure) |
-| #16 | Remaining: full script-src CSP; frontend `read_only`; headers exist only on the (undeployed) Caddy path — the dev stack serves none | Medium |
+| #17 | Basic auth is still the live prod gate: no lockout/rate limit; Cloudflare Access not yet configured. The replacement (per-operator Argon2id+TOTP auth, `docs/AUTH_THREAT_MODEL.md`) is built, migrated, and tested — but not cut over: no operator seeded, prod container not rebuilt onto it, `basic_auth` still in `deploy/Caddyfile`. See `SERVER_DEPLOY.md` for the onboarding + cutover runbook | High (blocking exposure) |
+| #16 | Remaining: full script-src CSP; frontend `read_only`. The Caddy headers are now live in prod (deployed 2026-08-13) but are absent on Caddy's own 401/502 responses, and the dev stack serves none | Medium |
 | #22 | Live slate drifted from documentation — a risk-control gap, not code | Blocking (risk) |
-| #34/#31/#30 | Database privilege/lock issues above | Medium |
+| ~~#34/#31/#30~~ | Closed 2026-08-13 (migrations 011/010, bounded migration lock). Residual read-exposure tracked in `AUTH_THREAT_MODEL.md` §8 | — |
 | — | Backend pins are version-pinned, not hash-pinned | Low |
 
 Fixed in this tree (branch `account-config-and-security-hardening`) but with issues still open

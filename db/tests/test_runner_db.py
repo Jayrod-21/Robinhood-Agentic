@@ -358,6 +358,8 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         ("009", False, True),  # down drops mark_kind — the labels are data
         ("010", False, False),  # up and down only set/clear a role comment
         ("011", False, False),  # privilege defaults + comment markers; no data touched either way
+        ("012", False, True),  # down drops the auth store — accounts, sessions, audit log
+        ("013", False, False),  # comment-only correction to 012's ciphertext byte layout
     ]
 
 
@@ -491,7 +493,7 @@ def test_real_migrations_up_down_up(db_url: str) -> None:
     # 004's trigger functions leave no residue either.
     assert q(db_url, "SELECT count(*) FROM pg_proc WHERE proname LIKE 'enforce\\_%%'")[0][0] == 0
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 11
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 13
 
 
 # ── 004: the evaluation tables ────────────────────────────────────────────────────────────────
@@ -730,6 +732,12 @@ APPEND_ONLY_FLOOR = frozenset({
     "knowledge_base_entries",
     "guardrail_events",
     "risk_free_rates",
+    # 012 (AUTH_THREAT_MODEL §5.12): the auth audit log opts INTO the marker — rh_app keeps its
+    # inherited SELECT+INSERT (audit rows carry no secrets by construction) and the marker buys
+    # the erasure guarantee. The six secret-bearing auth tables are deliberately NOT marked:
+    # rh_app holds nothing on them at all (012's REVOKE), which this gate's "append-only must
+    # still allow appends" half would rightly refuse.
+    "auth_events",
 })
 
 
@@ -1524,7 +1532,7 @@ def test_prd_backfill_rollback_refuses_to_launder_history(db_url: str) -> None:
     q(db_url, "DELETE FROM portfolio_returns_daily WHERE portfolio_id = %s", (pid,))
     assert main(["down", "--allow-destructive", "--target", "008", "--migrations-dir", md]) == EXIT_OK
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 11
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 13
 
 
 # ── 010: the rh_app role comment states the verified truth (issue #31) ───────────────────────

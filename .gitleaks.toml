@@ -27,4 +27,9 @@ regexes = [
   '''curl -u USER:PASSWORD''',
   # The redaction test's fake key. Deliberately narrow: this exact value only.
   '''api_key=abcd1234efgh''',
+  # A Python keyword argument, not a credential: routers/auth.py forwards the resend decision's
+  # TTL as `send_verification_email(decision.email, decision.token, ttl_hours=decision.ttl_hours)`
+  # and generic-api-key fires on the `token, …=…` shape. Pinned to the exact expression so it
+  # cannot widen — a literal assigned near the word "token" anywhere else is still caught.
+  '''ttl_hours=decision\.ttl_hours''',
 ]

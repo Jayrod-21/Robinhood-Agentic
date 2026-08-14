@@ -24,6 +24,8 @@ logs/cron/
 node_modules/
 frontend/.next/
 frontend/node_modules/
+# tsc -b incremental build state — machine-local, rewritten by every build.
+*.tsbuildinfo
 
 # Data caches
 *.csv

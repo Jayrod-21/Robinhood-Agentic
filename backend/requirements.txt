@@ -15,4 +15,14 @@ httpx==0.28.1
 # migration/loader containers never argue about wire behavior against the one shared rh-db.
 psycopg[binary]==3.3.4
 psycopg-pool==3.3.1
+# Operator authentication (issue #17, docs/AUTH_THREAT_MODEL.md). argon2-cffi is the reference
+# Argon2id implementation and is what §5.1 specifies; pyotp implements RFC 6238 TOTP for §5.4.
+# Versions verified to resolve on python:3.12-slim, the image CI and the containers actually use —
+# the host runs 3.14, so a host-only resolve proves nothing about what ships.
+argon2-cffi==25.1.0
+pyotp==2.10.0
+# AES-256-GCM for operator_totp.secret_encrypted (§5.4). The key lives in backend/.env and never in
+# rh-db — see §7 for why encrypting a column with a key stored in the same database is obfuscation
+# rather than encryption at rest.
+cryptography==50.0.0
 pytest==9.1.1
