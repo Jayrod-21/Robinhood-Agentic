@@ -42,11 +42,24 @@ readonly SELF=":(exclude).github/scripts/repo_hygiene.sh"
 # don't trip it) within 40 characters of the word "account" on the same line, either side,
 # case-insensitive. The rendered placeholder __AGENTIC_ACCOUNT_NUMBER__ contains no digits and
 # never matches — the check cannot regress the scrub that introduced it.
+# Captured third-party API payloads are excluded, and ONLY these. A financial statement is wall to
+# wall "accountsPayables": 902000000 — the word "account" beside nine digits is its normal content,
+# so leaving them in means the gate cries wolf on every fixture refresh until someone silences it
+# for good. The exclusion is narrow and carries a standing condition:
+#
+#   FIXTURES MUST COME FROM ENDPOINTS THAT TAKE NO ACCOUNT CONTEXT.
+#
+# Everything under here is public-company reference data (AAPL fundamentals) fetched by symbol. A
+# fixture captured from an account-scoped or authenticated endpoint could carry a real account
+# number past this gate, so it does not belong in this directory — put it somewhere the gate still
+# reads, or mask it before committing.
+readonly VENDOR_FIXTURES=":(exclude)tests/fixtures/fmp/*.json"
+
 check_account_number() {
   local hits
   hits="$(git grep -I -n -i -E \
     'account[^0-9]{0,40}[0-9]{9}([^0-9]|$)|(^|[^0-9])[0-9]{9}[^0-9]{0,40}account' \
-    -- . "${SELF}" || true)"
+    -- . "${SELF}" "${VENDOR_FIXTURES}" || true)"
   if [[ -n "${hits}" ]]; then
     fail "account-number: unmasked 9-digit account number found in tracked files:"
     printf '%s\n' "${hits}"
