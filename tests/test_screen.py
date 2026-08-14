@@ -5,13 +5,10 @@ Pure functions only — no network. Synthetic fundamentals exercise each gate an
 
 import math
 
-import pytest
-
-from src.data import fundamentals_from_info
+from src.data import _safe_num, fundamentals_from_fmp
 from src.screen import (
     MAX_PEG,
     MIN_FCF_YIELD,
-    MIN_MARKET_CAP,
     screen_ticker,
     tier1_liquidity,
     tier2_sprinkle_sauce,
@@ -127,29 +124,27 @@ def test_screen_ranks_cheaper_higher():
 
 
 # --- Data mapping ---------------------------------------------------------------------
-
-def test_fundamentals_from_info_computes_fcf_yield():
-    data = fundamentals_from_info({
-        "marketCap": 1_000_000_000,
-        "freeCashflow": 50_000_000,
-        "trailingPegRatio": 1.5,
-    })
-    assert data["fcf_yield"] == pytest.approx(5.0)
-    assert data["peg"] == 1.5
-
-
-def test_fundamentals_from_info_handles_nan_and_missing():
-    data = fundamentals_from_info({"marketCap": float("nan"), "pegRatio": None})
-    assert data["market_cap"] is None
-    assert data["peg"] is None
-    assert data["fcf_yield"] is None  # cannot compute without market cap
+# The yfinance mapping tests that lived here were deleted with the function they covered. Their
+# coverage did not vanish: tests/test_fmp.py::test_fcf_yield_is_a_percentage_and_recomputable_by_hand
+# and ::test_missing_market_cap_returns_none_not_a_zeroed_row assert the same two properties against
+# the FMP mapping — and against a REAL captured payload rather than a hand-built dict, which is
+# strictly stronger.
+def test_safe_num_rejects_nan_and_non_numeric():
+    """_safe_num survived the provider swap and still guards every mapped field. NaN must become
+    None rather than propagate: a NaN margin compares false against every gate threshold, so the
+    name would be rejected for failing a test it was never actually measured against."""
+    assert _safe_num(math.nan) is None
+    assert _safe_num(None) is None
+    assert _safe_num("not-a-number") is None
+    assert _safe_num("3.5") == 3.5
+    assert _safe_num(0) == 0.0
 
 
-def test_fundamentals_from_info_peg_fallback():
-    data = fundamentals_from_info({"marketCap": 1e9, "pegRatio": 2.2})
-    assert data["peg"] == 2.2  # falls back to legacy field when trailing missing
-
-
-def test_safe_num_rejects_nan():
-    data = fundamentals_from_info({"marketCap": 1e9, "grossMargins": math.nan})
-    assert data["gross_margin"] is None
+def test_nan_in_a_provider_payload_becomes_none_not_a_gate_failure():
+    """End-to-end through the live mapping: a NaN margin from the provider must arrive as None."""
+    bundle = {
+        "profile": {"symbol": "X", "marketCap": 1e9},
+        "ratios": {"grossProfitMargin": math.nan},
+        "income": {}, "cash_flow": {}, "growth": {},
+    }
+    assert fundamentals_from_fmp(bundle)["gross_margin"] is None

@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import logging
 
-from src.data import fetch_fundamentals
+from src.data import fetch_fundamentals_fmp
 from src.screen import MIN_MARKET_CAP, ScreenResult, screen_ticker
 from src.universe import flat_universe
 
@@ -31,7 +31,7 @@ def run_scan(tickers: list[str], min_market_cap: float = DEFAULT_MIN_CAP) -> lis
     """Fetch + screen every ticker. Tickers with no data are skipped (logged)."""
     results: list[ScreenResult] = []
     for ticker in tickers:
-        fundamentals = fetch_fundamentals(ticker)
+        fundamentals = fetch_fundamentals_fmp(ticker)
         if fundamentals is None:
             continue
         results.append(screen_ticker(ticker, fundamentals, min_market_cap=min_market_cap))

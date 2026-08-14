@@ -1,9 +1,19 @@
-"""Live market marks via yfinance, with a short TTL cache and per-symbol soft-fail.
+"""Live market marks via FMP, with a short TTL cache and per-symbol soft-fail.
 
-yfinance is unofficial and rate-limited, so this module is defensive by construction: a failure to
-price one symbol returns ``None`` for that symbol and never raises, and results are cached for a few
-seconds so a dashboard that polls every couple of seconds doesn't hammer the upstream. Network I/O
-is synchronous here; callers run it off the event loop via ``asyncio.to_thread``.
+Defensive by construction: a failure to price one symbol returns ``None`` for that symbol and never
+raises, and results are cached so a dashboard polling every ten seconds does not fetch per tab.
+Network I/O is synchronous here; callers run it off the event loop via ``asyncio.to_thread``.
+
+WHY THE CACHE MATTERS MORE THAN IT LOOKS
+    FMP's Starter plan has no batch-quote endpoint (`batch-quote` answers 402), so N positions cost
+    N calls. The dashboard polls /api/account every 10s, per open tab, per operator. Without the
+    cache that is 8 positions x 2 operators x however many tabs, every ten seconds, against a
+    300/min ceiling. The cache is process-wide and keyed by symbol, so every caller in the process
+    shares one fetch — and the client itself is the shared singleton, so the rate gate sees all of
+    it (src/fmp.py::get_shared_client).
+
+    Replaced yfinance, which was an unofficial scrape that rate-limited by IP. FMP is the paid feed
+    the rest of the data path now uses; one source, one set of failure modes.
 """
 
 from __future__ import annotations
@@ -22,21 +32,18 @@ _LOCK = threading.Lock()
 def _fetch_one(symbol: str) -> float | None:
     """Best-effort last price for one symbol. Returns None on any failure."""
     try:
-        import yfinance as yf
+        from src.fmp import quote
 
-        ticker = yf.Ticker(symbol)
-        # fast_info is the cheap path; fall back to .info's currentPrice if it's empty.
-        price = None
-        try:
-            price = ticker.fast_info.get("last_price")
-        except Exception:  # noqa: BLE001 — fast_info can raise on odd symbols
-            price = None
-        if price is None:
-            price = ticker.info.get("currentPrice")
+        row = quote(symbol)
+        if not row:
+            return None
+        price = row.get("price")
         if price is None:
             return None
         price = float(price)
-        return price if price == price and price > 0 else None  # reject NaN / non-positive
+        # Reject NaN and non-positive: a zero mark would price a position at nothing and render as
+        # a total loss on the dashboard, which is a far worse answer than "unavailable".
+        return price if price == price and price > 0 else None
     except Exception as exc:  # noqa: BLE001 — pricing one name must never crash the request
         logger.warning("mark fetch failed for %s: %s", symbol, exc)
         return None

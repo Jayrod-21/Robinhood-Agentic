@@ -36,7 +36,7 @@ router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
 NODES = ["screen", "bull", "bear", "jury", "decision"]
 
-# Cap on history rows returned (and marked): bounds the yfinance fan-out for the current-price
+# Cap on history rows returned (and marked): bounds the FMP fan-out for the current-price
 # overlay no matter how large the JSONL file grows.
 HISTORY_LIMIT = 200
 
@@ -50,7 +50,7 @@ def _screen(ticker: str, fundamentals: dict | None) -> dict:
     from src.screen import screen_ticker
 
     if fundamentals is None:
-        return {"passed": False, "reason": "no fundamentals (yfinance miss)"}
+        return {"passed": False, "reason": "no fundamentals (FMP returned nothing for this symbol)"}
     res = screen_ticker(ticker, fundamentals, min_market_cap=DEFAULT_MIN_CAP)
     return {
         "passed": res.passed,
@@ -133,7 +133,7 @@ async def _run_pipeline(ticker: str):
 def _build_history() -> list[dict]:
     """History rows with the entry-vs-current comparison computed server-side (issue #28).
 
-    Current marks come from ``app.services.marks.get_marks`` — the shared TTL-cached yfinance
+    Current marks come from ``app.services.marks.get_marks`` — the shared TTL-cached FMP
     layer the account page already uses — never a second pricing path. An unpriceable symbol
     degrades to ``priced: False`` with null deltas rather than failing the request.
     """
@@ -166,7 +166,7 @@ def _build_history() -> list[dict]:
 @router.get("/history")
 async def history() -> list[dict]:
     """Every persisted pipeline run, newest first, with price-at-run vs current mark."""
-    # yfinance I/O in get_marks is blocking; keep it off the event loop (same as /api/account).
+    # FMP I/O in get_marks is blocking; keep it off the event loop (same as /api/account).
     return await asyncio.to_thread(_build_history)
 
 
