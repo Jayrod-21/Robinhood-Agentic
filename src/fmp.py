@@ -315,7 +315,7 @@ class FmpClient:
 
     CALLS_PER_SYMBOL = 5
 
-    def fundamentals_bundle(self, symbol: str) -> dict[str, Any]:
+    def fundamentals_bundle(self, symbol: str, *, periods: int = 1) -> dict[str, Any]:
         """Every payload needed to build one fundamentals row. 5 calls.
 
         Budget is checked for the WHOLE bundle up front: a symbol half-fetched because the budget
@@ -327,10 +327,24 @@ class FmpClient:
                 f"{self.budget.remaining()} FMP calls left, {self.CALLS_PER_SYMBOL} needed for "
                 f"{symbol}; refusing to fetch a partial bundle"
             )
+        ratios = self.ratios(symbol, limit=periods)
+        income = self.income_statement(symbol, limit=periods)
+        cash_flow = self.cash_flow(symbol, limit=periods)
+        growth = self.growth(symbol, limit=periods)
         return {
             "profile": self.profile(symbol),
-            "ratios": (self.ratios(symbol) or [None])[0],
-            "income": (self.income_statement(symbol) or [None])[0],
-            "cash_flow": (self.cash_flow(symbol) or [None])[0],
-            "growth": (self.growth(symbol) or [None])[0],
+            # [0] is the most recent period — what the screen gates on.
+            "ratios": (ratios or [None])[0],
+            "income": (income or [None])[0],
+            "cash_flow": (cash_flow or [None])[0],
+            "growth": (growth or [None])[0],
+            # Full lists, so the ingest can write one annual row PER period. Each carries its own
+            # acceptedDate, which is what makes several periods real history rather than one figure
+            # repeated: a backtest can ask what was knowable on any date and get a different answer.
+            "periods": {
+                "ratios": ratios,
+                "income": income,
+                "cash_flow": cash_flow,
+                "growth": growth,
+            },
         }
