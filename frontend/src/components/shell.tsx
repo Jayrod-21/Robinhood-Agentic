@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import useSWR from "swr";
-import { Activity, Gavel, LayoutDashboard, LineChart, ListFilter, LogOut, Target } from "lucide-react";
+import { Activity, Gavel, LayoutDashboard, LineChart, ListFilter, LogOut, Scale, Target } from "lucide-react";
 import { fetchAuthState, fetchMe, logout } from "@/lib/auth";
 import { cn } from "@/lib/format";
 
@@ -15,6 +15,7 @@ const PUBLIC_PATHS = new Set(["/login", "/verify-email"]);
 
 const NAV = [
   { href: "/", label: "Portfolio", icon: LayoutDashboard },
+  { href: "/reconciliation", label: "Reconcile", icon: Scale },
   { href: "/performance", label: "Performance", icon: LineChart },
   { href: "/calibration", label: "Calibration", icon: Target },
   { href: "/scan", label: "Scan", icon: ListFilter },
