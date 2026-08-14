@@ -38,8 +38,9 @@ deliberate, documented trade — do not weaken it by publishing a port.
 trigger file into the bind-mounted `data/`; the host-side daemon (`bin/refresh_daemon.sh`) acts on
 it. The `data/` directory is therefore a trust boundary crossed in both directions.
 
-**Prod target (documented, NOT deployed):** Caddy (basic auth + headers) on `127.0.0.1`, reached
-only through the existing Cloudflare Tunnel; no hostname assigned yet. See `SERVER_DEPLOY.md`.
+**Prod (DEPLOYED):** Caddy (security headers, reverse proxy — no basic auth since 2026-08-14) on
+`127.0.0.1:1855`, reached only through the existing Cloudflare Tunnel at `ww.jaredstudio.com`.
+Access control is the application's own per-operator authentication. See `SERVER_DEPLOY.md`.
 
 **Database:** separate compose project, no host port, egress-blocked internal network
 (`docker-compose.db.yml`, ADR-001).
@@ -57,18 +58,19 @@ admission that nothing does yet.*
   (`docker-compose.yml:14,46`); fixed as F3. Remote use is via SSH tunnel.
 - **Vector:** online password guessing against prod basic auth (no lockout, no rate limit,
   bcrypt-verified only), historically with the username pre-given as `admin`.
-  **Defense (partial, and no longer the whole story):** `deploy/.env.example` no longer ships a
-  default username, and `SERVER_DEPLOY.md` makes Cloudflare Access mandatory before the hostname
-  exists. **The replacement system now exists** — per-operator authentication (Argon2id password +
-  TOTP, 5-strike/15-minute lockout, `__Host-`-prefixed sessions) is built, migrated into `rh-db`,
-  and covered by 241 backend + 194 db tests; see `docs/AUTH_THREAT_MODEL.md`'s status banner for
-  exactly what was verified. **It has not replaced anything yet.** `deploy/Caddyfile` still runs
-  `basic_auth` and the live prod container has not been rebuilt to pick up this work — checked
-  directly, it has neither `AUTH_DATABASE_URL` in its environment nor the `auth_enforced` field in
-  `/api/health`. No operator account has been seeded anywhere. **Open, still:** the basic-auth
-  lockout/rate-limit gap itself remains live in prod today, Cloudflare Access is still
-  unconfigured, and the cutover (seed an operator, verify an end-to-end login, then remove
-  `basic_auth`) has not happened — issue #17, runbook now in `SERVER_DEPLOY.md`.
+  **RESOLVED 2026-08-14 — the basic-auth gate no longer exists.** Per-operator authentication
+  (Argon2id password + TOTP second factor, 5-strike/15-minute lockout, `__Host-`-prefixed
+  server-side sessions, full `auth_events` audit trail) is live in prod, verified by a real browser
+  login against the deployed stack before the gate was removed. `deploy/Caddyfile` has no
+  `basic_auth`; `DASH_USER` / `DASH_PASSWORD_HASH` are inert. Issue #17 closed.
+  **What the cutover cost, stated:** removing the gate exposed the login form to the internet, and
+  the §5.1 rate limiter was at that moment a *single unkeyed budget* — 12 requests/60 s shared by
+  every caller — so any stranger could deny sign-in to both operators. Fixed the same day by keying
+  the budget per client and adding a separate global ceiling; a Cloudflare per-IP rule sits at the
+  edge as an additional filter. Full account in `docs/AUTH_THREAT_MODEL.md` §5.14.
+  **Open:** Cloudflare Access remains unconfigured and is no longer compensating for anything; the
+  login form is internet-reachable by design. During a deploy window or crash-loop nothing stands
+  in front of the app (`/api/*` returns 502, so no data escapes) — accepted, not mitigated.
 - **Vector:** reaching the origin around Cloudflare.
   **Defense (by construction, for the documented target):** only Caddy binds a host port and only
   on loopback (`deploy/docker-compose.prod.yml`); no public DNS A record points at M.

@@ -7,12 +7,22 @@
 # ). See SERVER_DEPLOY.md.
 
 :80 {
-	# Basic auth on every request (runs before routing). The live account is behind this.
-	# Known limitation (issue #17): no lockout, no rate limit — Cloudflare Access in front of the
-	# hostname is the compensating control and is treated as mandatory in SERVER_DEPLOY.md.
-	basic_auth {
-		{$DASH_USER} {$DASH_PASSWORD_HASH}
-	}
+	# NO basic auth here any more (issue #17 closed). It was a placeholder: one shared password,
+	# no lockout, no rate limit, no audit trail, and no way to tell Jared's session from Joe's.
+	# The application now authenticates every request itself — Argon2id password + TOTP second
+	# factor, opaque server-side sessions behind a __Host- cookie, a 5-strike lockout, and an
+	# auth_events audit row for every attempt (docs/AUTH_THREAT_MODEL.md). That is strictly
+	# stronger than what was removed, and it is enforced by the backend rather than by this file.
+	#
+	# The one thing the outer gate did that the app does not: keep unauthenticated strangers away
+	# from the login page itself. That surface is deliberately small and defended — §5.2
+	# enumeration parity (unknown email and wrong password are byte- and timing-identical), a
+	# 12 req/60 s route-wide rate limit, and no signup or emailed password-reset path to abuse.
+	#
+	# /api/health stays reachable without a session by design (the container healthcheck and
+	# uptime probes need it) and answers with a MASKED account number and booleans only — never a
+	# DSN, a key, or a balance. Re-read app/routers/health.py before adding a field to it: what it
+	# returns is now internet-facing.
 
 	# Security response headers (issue #16 / finding F10). TLS terminates at the Cloudflare edge,
 	# so the browser sees these over HTTPS even though this origin speaks HTTP on loopback.

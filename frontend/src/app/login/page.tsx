@@ -19,8 +19,8 @@
 // the other (valid) operator client-side is exactly the silently-blocking-
 // guardrail failure this project already paid for.
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, KeyRound, ShieldCheck, TimerReset } from "lucide-react";
 import { Button, Card, CardBody, Spinner } from "@/components/ui";
 import { cn } from "@/lib/format";
@@ -66,8 +66,26 @@ function fmtWait(totalS: number): string {
   return m > 0 ? `${m}m ${r.toString().padStart(2, "0")}s` : `${r}s`;
 }
 
-export default function LoginPage() {
+/** Where to land after a successful sign-in, from the `next` query parameter.
+ *
+ *  `next` arrives in a URL, so it is attacker-supplied: a link to
+ *  /login?next=https://evil.example would otherwise turn this page into an open
+ *  redirect that borrows the dashboard's hostname to make a phishing landing
+ *  look legitimate — and it would fire immediately after a real sign-in, when
+ *  the operator has every reason to trust what they see.
+ *
+ *  Accepted only if it is a path on this origin: one leading slash, and NOT a
+ *  second (`//evil.example` is protocol-relative — the browser reads it as a
+ *  different HOST, not a path). Everything else falls back to the dashboard. */
+function safeNextPath(raw: string | null): string {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
+  return raw;
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = safeNextPath(searchParams.get("next"));
   const [phase, setPhase] = useState<Phase>({ step: "password" });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -84,12 +102,12 @@ export default function LoginPage() {
   useEffect(() => {
     let cancelled = false;
     void fetchMe().then((me) => {
-      if (me && !cancelled) router.replace("/");
+      if (me && !cancelled) router.replace(nextPath);
     });
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, nextPath]);
 
   // 1 s ticker, only while something on screen counts down.
   const ticking = phase.step === "totp" || lockedUntil !== null;
@@ -160,7 +178,7 @@ export default function LoginPage() {
     if (r.kind === "authenticated") {
       // Full navigation, not router.push: the shell must refetch /api/auth/me
       // with the fresh session cookie attached.
-      window.location.assign("/");
+      window.location.assign(nextPath);
     } else if (r.kind === "locked") {
       setLockedUntil(Date.now() + r.retryAfterS * 1000);
       setCode("");
@@ -339,5 +357,24 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+/** useSearchParams() forces a client-side bail-out, which Next requires to sit
+ *  behind a Suspense boundary or the /login prerender fails outright (it did).
+ *  The fallback is the page's own frame, so a signed-out visitor never sees a
+ *  blank screen while the client bundle hydrates — the failure mode that sent
+ *  this page's predecessor to a grey page with no way forward. */
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center px-4">
+          <Spinner />
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }

@@ -221,11 +221,46 @@ export async function resendVerification(email: string): Promise<ResendResult> {
 
 /** Resolves null when logged out, when the session has expired or been revoked,
  *  or when the auth backend is unreachable/not yet built — callers render the
- *  logged-out state in all of those cases rather than try/catching. */
+ *  logged-out state in all of those cases rather than try/catching.
+ *
+ *  Fine for HIDING a control (the worst case is a missing Sign out button). NOT
+ *  fine for deciding to navigate: see fetchAuthState below. */
 export async function fetchMe(): Promise<MeResponse | null> {
   try {
     return await getJSON<MeResponse>("/api/auth/me");
   } catch {
     return null;
+  }
+}
+
+/** Auth state with the four causes of "no session" kept APART.
+ *
+ *  `fetchMe` collapses them all into null, which is why nothing could safely
+ *  redirect on it: an auth-database outage (503) and a logged-out browser (401)
+ *  are the same value, so a redirect would bounce an operator to a login page
+ *  during an outage where logging in is exactly what cannot work — and, because
+ *  /login itself calls this on mount, would do it in a loop.
+ *
+ *  Only `anonymous` — the server explicitly answering 401 — means "no valid
+ *  session". `indeterminate` covers 503, offline, and the pre-auth deployment
+ *  where AUTH_DATABASE_URL is unset; callers must treat it as "do not navigate". */
+export type AuthState =
+  | { kind: "authenticated"; me: MeResponse }
+  | { kind: "anonymous" }
+  | { kind: "indeterminate" };
+
+export async function fetchAuthState(): Promise<AuthState> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/api/auth/me`, { cache: "no-store", credentials: CREDENTIALS });
+  } catch {
+    return { kind: "indeterminate" }; // network failure — not evidence of anything
+  }
+  if (res.status === 401) return { kind: "anonymous" };
+  if (!res.ok) return { kind: "indeterminate" }; // 503 fail-closed, 5xx, anything else
+  try {
+    return { kind: "authenticated", me: (await res.json()) as MeResponse };
+  } catch {
+    return { kind: "indeterminate" };
   }
 }

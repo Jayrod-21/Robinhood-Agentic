@@ -265,11 +265,33 @@ def make_encrypted_secret(key: bytes) -> tuple[str, str]:
 
 
 def print_enrolment_material(email: str, secret: str, codes: list[str]) -> None:
-    """The single place plaintext enrolment material is shown. Printed once, never persisted."""
+    """The single place plaintext enrolment material is shown. Printed once, never persisted.
+
+    MANUAL ENTRY IS THE PRIMARY PATH, not a fallback. This is a terminal on a headless host: it
+    cannot draw a QR code, and the first version of this function printed a bare otpauth:// URI
+    under the instruction "Scan it now" — telling the operator to do the one thing the output made
+    impossible. The secret is right there inside the URI as the `secret=` parameter, but nothing
+    said so, and an operator who does not already know the otpauth format has no way to enrol.
+
+    So the fields every authenticator's "enter a setup key" screen asks for are printed
+    explicitly, and the key is grouped in fours because it is being typed by hand off a screen.
+    The URI stays for anyone piping it into a QR renderer.
+    """
     uri = pyotp.totp.TOTP(secret).provisioning_uri(name=email, issuer_name=TOTP_ISSUER)
+    grouped = " ".join(secret[i : i + 4] for i in range(0, len(secret), 4))
     print()
-    print("TOTP enrolment URI — shown ONCE, never stored in plaintext. Scan it now:")
-    print(f"  {uri}")
+    print("TOTP enrolment — shown ONCE, never stored in plaintext and never shown again.")
+    print()
+    print("  MANUAL ENTRY (in your authenticator: 'Enter a setup key' / 'Enter key manually')")
+    print(f"    Account name : {email}")
+    print(f"    Issuer       : {TOTP_ISSUER}")
+    print(f"    Key          : {grouped}")
+    print("    Type         : Time-based (TOTP), SHA-1, 6 digits, 30-second period")
+    print("                   — these are the defaults in every mainstream app; change nothing.")
+    print()
+    print("  Or scan this URI as a QR code (render it locally — do not paste it into a website,")
+    print("  a QR generator you do not control receives your second factor):")
+    print(f"    {uri}")
     print()
     print("Recovery codes — shown ONCE. Each works exactly once; store them offline:")
     for i, code in enumerate(codes, 1):

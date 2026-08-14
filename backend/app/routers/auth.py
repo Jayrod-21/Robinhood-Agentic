@@ -31,6 +31,7 @@ default-allow (§8).
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import threading
 from typing import Any
@@ -40,7 +41,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
-from app.ratelimit import WindowLimiter
+from app.ratelimit import KeyedWindowLimiter, WindowLimiter
 from app.services import auth as auth_service
 from app.services.auth import SESSION_COOKIE_NAME, client_ip
 from app.services.email import EmailDeliveryError, send_verification_email
@@ -64,6 +65,48 @@ logger = logging.getLogger("agentic.auth.routes")
 AUTH_RATE_MAX_REQUESTS = 12
 AUTH_RATE_WINDOW_SECONDS = 60.0
 
+# The GLOBAL ceiling, across every client. Higher than the per-client budget on purpose: its job is
+# to bound total Argon2 work (60 x ~130 ms ~= 8 s of CPU per minute, transient 64 MiB each), not to
+# decide who gets refused. Deciding that is the per-client gate's job, and conflating the two is
+# what made a single shared budget into a denial-of-service against the operators (§5.13).
+AUTH_RATE_GLOBAL_MAX_REQUESTS = 60
+
+# Cloudflare sets CF-Connecting-IP at the edge to the true client address and OVERWRITES whatever
+# the client sent, so it cannot be forged by a remote caller travelling the only route in.
+_CLIENT_IP_HEADER = "cf-connecting-ip"
+
+
+def rate_limit_key(request: Request) -> str:
+    """The per-client key for the auth gate — NOT the value written to the audit log.
+
+    Deliberately separate from services.auth.client_ip, which stays on the direct peer address and
+    refuses forwarded headers because a forged value there would poison the audit trail. These two
+    want different things: the audit log wants what it can PROVE, the rate limiter wants who the
+    caller most likely IS, and it fails safe when it guesses wrong (a wrong key refuses that key,
+    it does not admit anyone).
+
+    WHY THE HEADER IS TRUSTABLE HERE, AND THE INVARIANT THAT KEEPS IT TRUE
+        The backend publishes no host port (deploy/docker-compose.prod.yml: `expose`, never
+        `ports`), so the only route to it is cloudflared -> Caddy -> here, and Cloudflare rewrites
+        CF-Connecting-IP at the edge. **If that ever changes — a published port, a second ingress,
+        a proxy that forwards the header unchanged — this header becomes attacker-chosen and this
+        function must stop trusting it.** The damage would be bounded rather than total: a caller
+        rotating the header evades only their own per-client budget and still meets the global
+        ceiling, which is precisely why the ceiling is not optional.
+
+    Falls back to the peer address (dev stack, tests, local curl), then to a fixed key so an
+    unidentifiable caller shares one budget rather than escaping the gate entirely.
+    """
+    forwarded = request.headers.get(_CLIENT_IP_HEADER, "").strip()
+    if forwarded:
+        try:
+            return str(ipaddress.ip_address(forwarded))  # normalised; garbage never becomes a key
+        except ValueError:
+            pass  # malformed header: ignore it and fall through, never trust it verbatim
+    peer = request.client.host if request.client else None
+    return peer or "unidentified"
+
+
 # Safe methods are exempt on purpose, documented deviation from a literal "all /api/auth/*
 # routes": the cost this gate guards is credential-verification work, and the only GET here
 # (/api/auth/me) does none — it is the frontend's sole source of auth state, called on every page
@@ -74,6 +117,18 @@ AUTH_RATE_WINDOW_SECONDS = 60.0
 _RATE_EXEMPT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 _limiter_init_lock = threading.Lock()
+
+
+def _per_client_limiter_for(request: Request) -> KeyedWindowLimiter:
+    """The per-client gate, app-instance-scoped for the same reason as the global one below."""
+    limiter = getattr(request.app.state, "auth_client_rate_limiter", None)
+    if limiter is None:
+        with _limiter_init_lock:
+            limiter = getattr(request.app.state, "auth_client_rate_limiter", None)
+            if limiter is None:
+                limiter = KeyedWindowLimiter()
+                request.app.state.auth_client_rate_limiter = limiter
+    return limiter
 
 
 def _rate_limiter_for(request: Request) -> WindowLimiter:
@@ -103,22 +158,38 @@ def enforce_auth_cooldown(request: Request) -> None:
     Argon2, the TOTP verifier, or the database."""
     if request.method in _RATE_EXEMPT_METHODS:
         return
-    wait = _rate_limiter_for(request).check_and_consume(
-        AUTH_RATE_MAX_REQUESTS, AUTH_RATE_WINDOW_SECONDS
+    # Per-client FIRST: a caller over their own budget must be refused without spending a slot of
+    # the global ceiling, or a single hammering client would still starve everyone else — the very
+    # denial-of-service this gate was split in two to fix.
+    key = rate_limit_key(request)
+    wait = _per_client_limiter_for(request).check_and_consume(
+        key, AUTH_RATE_MAX_REQUESTS, AUTH_RATE_WINDOW_SECONDS
     )
+    scope = "this client"
+    if not wait:
+        wait = _rate_limiter_for(request).check_and_consume(
+            AUTH_RATE_GLOBAL_MAX_REQUESTS, AUTH_RATE_WINDOW_SECONDS
+        )
+        scope = "all clients"
     if not wait:
         return
     # Guardrails never block silently: name the gate, the reason, and the caller in the server
     # log, and put the honest wait in the response body.
+    # The scope is in the message because the two gates mean very different things operationally:
+    # "this client" is one caller hitting their own ceiling (routine), "all clients" means the
+    # global cap is saturated — i.e. either a distributed attempt or a budget that needs raising,
+    # and the operators may be unable to sign in. Those must not look identical in the log.
     logger.warning(
-        "auth rate limit hit: %s %s from %s blocked for ~%ss — over %s requests in the last %ss "
-        "across /api/auth/* (route-wide §5.1 gate against credential guessing and Argon2 memory "
+        "auth rate limit hit (%s): %s %s from %s [key=%s] blocked for ~%ss — over %s requests in "
+        "the last %ss across /api/auth/* (§5.1 gate against credential guessing and Argon2 memory "
         "exhaustion; per-operator §5.8 lockout state is unaffected)",
+        scope,
         request.method,
         request.url.path,
         client_ip(request),
+        key,
         wait,
-        AUTH_RATE_MAX_REQUESTS,
+        AUTH_RATE_MAX_REQUESTS if scope == "this client" else AUTH_RATE_GLOBAL_MAX_REQUESTS,
         int(AUTH_RATE_WINDOW_SECONDS),
     )
     # 423 + retry_after, NOT 429: the built frontend (frontend/src/lib/auth.ts) maps 423 with a

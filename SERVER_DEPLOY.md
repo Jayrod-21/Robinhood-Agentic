@@ -5,19 +5,24 @@
 > (`deploy-backend-1`, `deploy-frontend-1`, `deploy-caddy-1`) runs alongside the dev stack, which
 > keeps its own loopback ports.
 >
-> **The gate is still a single shared basic-auth credential** — one username and password used by
-> both owners. Cloudflare Access was specified as the compensating control and was deliberately
-> NOT configured; issue #17 records that acceptance and the conditions that void it. The app is
-> read-only with no order-placement path anywhere, so the realistic worst case from a guessed
-> credential is disclosure of holdings, not trading. That calculation changes the day an order path
-> ships, and `docs/AUTH_THREAT_MODEL.md` specifies the replacement.
+> **2026-08-14 — CUT OVER. Per-operator authentication is live and the basic-auth gate is gone.**
+> Both operators are seeded with confirmed TOTP enrolments, and a real browser login was completed
+> end-to-end against the deployed stack before the gate came down. `deploy/Caddyfile` no longer
+> contains `basic_auth`; `DASH_USER` / `DASH_PASSWORD_HASH` are inert and unread.
 >
-> **2026-08-13 update: the replacement is now built** — per-operator Argon2id+TOTP auth, migrated
-> into `rh-db`, 241 backend + 194 db tests. **It has not been cut over.** The running prod
-> containers have not been rebuilt onto this code and no operator has been seeded. See
-> [Operator authentication](#operator-authentication--onboarding-and-cutover-issue-17) below for the
-> onboarding runbook and the cutover procedure — basic-auth stays in place until a real end-to-end
-> login is proven against the deployed stack.
+> **What now stands in front of the app**, in order of reliance: the application's own
+> Argon2id + TOTP authentication with server-side sessions and a 5-strike lockout; a per-client and
+> a global rate limit on `/api/auth/*`; and a Cloudflare rate limiting rule at the edge. The
+> reasoning, the residual risks, and the regression this cutover briefly introduced are recorded in
+> `docs/AUTH_THREAT_MODEL.md` §5.13–§5.14 — read §5.14 before changing any of it.
+>
+> **Cloudflare Access is still NOT configured**, and with basic-auth removed it is no longer a
+> compensating control for anything — it is simply absent. The login form is reachable from the
+> internet by design.
+>
+> **Unchanged and still true:** the app is read-only with no order-placement path anywhere, so the
+> realistic worst case from a compromised credential is disclosure of holdings, not trading. That
+> calculation changes the day an order path ships.
 
 The production target is **this machine (M)** — the same box the dev stack, the database, and 9b
 Korean Master already run on. There is no separate server. Public reachability comes from the
@@ -100,18 +105,21 @@ cp backend/.env.example backend/.env
 chmod 600 backend/.env
 ```
 
-### 2. Dashboard auth (Caddy basic-auth)
+### 2. Dashboard port
 
 ```bash
 cp deploy/.env.example deploy/.env
-# generate a bcrypt hash for your password:
-docker run --rm caddy caddy hash-password --plaintext 'YOUR-STRONG-PASSWORD'
-# edit deploy/.env → DASH_USER=<non-obvious username>, DASH_PASSWORD_HASH=<that hash>, DASH_PORT=<free port>
+# edit deploy/.env → DASH_PORT=<free port>
 chmod 600 deploy/.env
 ```
 
-Pick a non-default username (the old example shipped `admin` — that was half the credential for
-free), and **verify the port is actually free before binding it** — M hosts several live stacks:
+`DASH_USER` and `DASH_PASSWORD_HASH` are **no longer used**. They configured the Caddy basic-auth
+gate, which was removed on 2026-08-14 when per-operator authentication went live (threat model
+§5.14). Existing values in `deploy/.env` are inert; nothing reads them. Dashboard access is now
+seeding an operator account — see
+[Operator authentication](#operator-authentication--onboarding-and-cutover-issue-17) below.
+
+**Verify the port is actually free before binding it** — M hosts several live stacks:
 
 ```bash
 ss -ltn "sport = :8088"    # no output = free; otherwise pick another port

@@ -122,9 +122,10 @@ services:
     depends_on:
       - backend
       - frontend
-    environment:
-      - DASH_USER=${DASH_USER:?set DASH_USER in deploy/.env}
-      - DASH_PASSWORD_HASH=${DASH_PASSWORD_HASH:?set DASH_PASSWORD_HASH (caddy hash-password) in deploy/.env}
+    # No DASH_USER / DASH_PASSWORD_HASH any more: the shared-password gate was removed from the
+    # Caddyfile once the app grew real per-operator authentication (issue #17). Leaving the two
+    # `:?` required-variable guards here would fail the whole stack's startup over credentials
+    # nothing reads. The values may still sit in deploy/.env; they are inert.
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
