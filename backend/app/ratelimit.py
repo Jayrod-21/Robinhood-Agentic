@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 
 
 class CooldownLimiter:
@@ -103,6 +103,71 @@ class WindowLimiter:
         """Clear the gate. Test-support only — never called from request paths."""
         with self._lock:
             self._admitted.clear()
+
+
+class KeyedWindowLimiter:
+    """One :class:`WindowLimiter` budget per key, with a bounded number of keys.
+
+    WHY THIS EXISTS
+        The auth gate was a single unkeyed budget. That is the correct shape for bounding total
+        Argon2 CPU, and the WRONG shape for deciding who gets refused: with one budget shared by
+        every caller, anyone on the internet can spend it and deny sign-in to the operators. That
+        was survivable only while Caddy basic-auth kept strangers away from the login form. When
+        the outer gate was removed (AUTH_THREAT_MODEL §5.13), the shared budget became a
+        one-request-per-five-seconds denial-of-service against the people who own the account.
+
+        So the auth gate is now two gates: this one, per client, which decides WHO is refused, and
+        the unkeyed one, which caps TOTAL work regardless of how many clients show up. An attacker
+        spending their own per-key budget cannot touch anyone else's; an attacker spreading across
+        many keys still hits the global ceiling.
+
+    MEMORY IS BOUNDED, DELIBERATELY
+        A per-key dict fed by attacker-chosen keys is itself a memory-exhaustion vector — the exact
+        bug class the auth gate exists to prevent. ``max_keys`` caps the dict; when it is full the
+        least-recently-admitted key is evicted. Eviction is safe: a key's absence means "no
+        recorded grants", i.e. the newcomer starts with a full budget, which is what a first-time
+        caller gets anyway. The global ceiling is what holds the line while keys churn, which is
+        why this class must never be used alone on a credential path.
+    """
+
+    def __init__(self, max_keys: int = 4096) -> None:
+        self._lock = threading.Lock()
+        self._max_keys = max_keys
+        # insertion-ordered: the first key is the least-recently-admitted, so eviction is popitem
+        # on the front. Re-inserted on each admit to keep the ordering meaningful.
+        self._buckets: OrderedDict[str, deque[float]] = OrderedDict()
+
+    def check_and_consume(self, key: str, max_requests: int, window_seconds: float) -> int:
+        """Return 0 if admitted for ``key``, else seconds until that key's oldest grant ages out.
+
+        Same convention as the other limiters: a non-positive budget or window disables the gate.
+        """
+        if max_requests <= 0 or window_seconds <= 0:
+            return 0
+        now = time.monotonic()
+        with self._lock:
+            admitted = self._buckets.get(key)
+            if admitted is None:
+                admitted = deque()
+            cutoff = now - window_seconds
+            while admitted and admitted[0] <= cutoff:
+                admitted.popleft()
+            if len(admitted) >= max_requests:
+                # Keep the bucket (and its position) so a blocked caller cannot evict itself into
+                # a fresh budget by hammering — the refusal must be sticky for the full window.
+                self._buckets[key] = admitted
+                return int(admitted[0] + window_seconds - now) + 1
+            admitted.append(now)
+            self._buckets[key] = admitted
+            self._buckets.move_to_end(key)
+            while len(self._buckets) > self._max_keys:
+                self._buckets.popitem(last=False)
+            return 0
+
+    def reset(self) -> None:
+        """Clear every bucket. Test-support only — never called from request paths."""
+        with self._lock:
+            self._buckets.clear()
 
 
 # One shared budget for every token-spending debate path (debate router + pipeline router).

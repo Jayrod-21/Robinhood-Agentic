@@ -851,6 +851,12 @@ verification" as a meaningful barrier to entry in this app has misread it.
 
 ### 5.13 Composition with the outer Caddy gate
 
+> **SUPERSEDED 2026-08-14 — the gate was removed, deliberately, by the account owner.** The
+> analysis below stands as written; it was not wrong, and one of its predictions came true within
+> the hour. It is kept unedited because a threat model that quietly rewrites its own history to
+> match what shipped is worth nothing. What actually happened, and what replaced the gate, is
+> recorded in §5.14.
+
 - **Vector — "we have real auth now, delete the basic-auth."** A tempting cleanup that removes the
   only control standing between the internet and the app during a deploy window, a migration, a
   crash-loop, or any period when the app cannot answer for itself.
@@ -862,6 +868,48 @@ verification" as a meaningful barrier to entry in this app has misread it.
   **Test:** not a unit test — a line in `SERVER_DEPLOY.md` and an entry in the §11 invariants. Stated
   plainly: this one is a documented convention, not an enforced control, and calling it "tested"
   would be the exact overstatement this document is trying to avoid.
+
+### 5.14 What replaced the outer gate (2026-08-14)
+
+The owner removed Caddy basic-auth once real authentication was live and proven end-to-end in a
+browser. The decision was theirs and it is defensible: the removed control was one shared password
+with no lockout, no rate limit, no audit trail, and no way to distinguish one operator from the
+other — every axis on which §5.1–§5.8 is stronger.
+
+**§5.13 predicted the cost, and the prediction was correct.** Its wording — the gate "keeps
+unauthenticated strangers away from the login form itself, including away from the Argon2 CPU
+cost" — described precisely what broke. The §5.1 rate limiter was a *single unkeyed budget*: 12
+requests per 60 s shared by every caller on earth. Behind the gate that was a sound CPU bound.
+Exposed, it became a denial-of-service **against the operators** — any stranger sending 12 requests
+a minute could deny sign-in to both, at no cost and with no credentials. No data exposure, no path
+to authentication, and no §5.8 lockout involvement: availability only, but the availability of
+signing in to a live brokerage account.
+
+Recorded plainly because it is the more useful lesson: the gate's removal was reviewed and approved
+on the strength of the app's own controls **without checking how those controls were keyed**, while
+this document had already written down the reason to check.
+
+What now stands in its place, in order of how much they are relied on:
+
+1. **A per-client rate limit** (`routers/auth.py::rate_limit_key` + `ratelimit.KeyedWindowLimiter`).
+   The budget is keyed by true client address, so a caller can exhaust only their own. This is the
+   control that actually fixes the regression above, and it is tested by
+   `test_one_client_over_budget_does_not_block_another` — which fails, with `got 423`, against the
+   old shared budget.
+2. **A global ceiling** (`AUTH_RATE_GLOBAL_MAX_REQUESTS`), which keeps the property the single
+   budget was originally there for: total Argon2 work stays bounded no matter how many distinct
+   clients appear. Per-client keying alone would have traded a denial-of-service for an
+   unbounded-CPU hole, so the ceiling is not optional.
+3. **A Cloudflare rate limiting rule** at the edge, per-IP across the auth paths of every hostname
+   on the zone. Deployed 2026-08-14. Useful and free, but explicitly **not** a substitute: the free
+   plan's 10-second window forces a threshold above what the origin budget allows, and anything
+   reaching the origin by another route bypasses it entirely. Treat it as a filter, exactly as
+   §5.13 treated basic-auth.
+
+**Residual, stated:** during a deploy window, a migration, or a crash-loop the app cannot answer for
+itself, and nothing else now stands in front of it. In those windows the frontend serves and `/api/*`
+returns 502 — no data escapes — but the reasoning in §5.13 about "periods when the app cannot answer
+for itself" is no longer mitigated, only accepted.
 
 ---
 

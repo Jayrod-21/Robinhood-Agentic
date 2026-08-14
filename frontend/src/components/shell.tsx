@@ -1,12 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import useSWR from "swr";
 import { Activity, Gavel, LayoutDashboard, LineChart, ListFilter, LogOut } from "lucide-react";
-import { fetchMe, logout } from "@/lib/auth";
+import { fetchAuthState, fetchMe, logout } from "@/lib/auth";
 import { cn } from "@/lib/format";
+
+/** Pages that must render for a signed-out visitor. Redirecting away from these
+ *  would loop: /login is where the redirect SENDS people, and /verify-email is
+ *  reached from an email link before any session exists. */
+const PUBLIC_PATHS = new Set(["/login", "/verify-email"]);
 
 const NAV = [
   { href: "/", label: "Portfolio", icon: LayoutDashboard },
@@ -16,8 +21,44 @@ const NAV = [
   { href: "/debate", label: "Debate", icon: Gavel },
 ];
 
+/** Send a signed-out visitor to the sign-in page.
+ *
+ *  Without this the app had no route to its own login form: the dashboard
+ *  rendered, every data call 401'd, and the page showed an error with no link
+ *  and no redirect — the only way in was to type /login by hand. The route
+ *  tests confirmed /login existed and served 200, which was true and useless;
+ *  nothing tested that a person could REACH it.
+ *
+ *  Redirects only on `anonymous` (an explicit 401). During an auth-database
+ *  outage /api/auth/me answers 503 fail-closed, and bouncing to a login page
+ *  that also cannot work would turn an outage into a redirect loop — so
+ *  `indeterminate` deliberately does nothing and leaves the page's own error
+ *  state visible. Same for the pre-auth deployment where AUTH_DATABASE_URL is
+ *  unset: the dashboard keeps working exactly as it did before auth existed.
+ *
+ *  `next` carries the path being visited so the login page can return there
+ *  instead of dumping everyone on the dashboard root. */
+function useRedirectWhenSignedOut(pathname: string) {
+  useEffect(() => {
+    if (PUBLIC_PATHS.has(pathname)) return;
+    let cancelled = false;
+    void (async () => {
+      const state = await fetchAuthState();
+      if (cancelled || state.kind !== "anonymous") return;
+      const next = `${window.location.pathname}${window.location.search}`;
+      // Full navigation, not router.push: every client cache must restart cold
+      // so no stale authenticated data survives into the signed-out view.
+      window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
+}
+
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  useRedirectWhenSignedOut(pathname);
   return (
     <div className="flex min-h-screen">
       <aside className="hidden w-56 shrink-0 flex-col border-r border-ink-800 bg-ink-900/50 px-3 py-5 md:flex">

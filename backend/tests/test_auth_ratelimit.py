@@ -204,3 +204,99 @@ def test_default_budget_admits_a_full_legitimate_login_flow(configured):
     for path, payload in flow:
         res = client.post(path, json=payload, headers=JSON)
         assert res.status_code != 423, f"{path} was rate-limited inside a legitimate flow"
+
+
+# --- Per-client keying (§5.13) ----------------------------------------------------------------
+# Added after the outer Caddy basic-auth gate was removed. While that gate stood, a single unkeyed
+# budget was survivable: strangers could not reach the login form at all. Without it, one shared
+# budget means ANY caller can spend it and deny sign-in to the operators — a denial-of-service on
+# the account owners, delivered by a stranger sending a dozen requests a minute.
+
+
+def test_one_client_over_budget_does_not_block_another(configured, budget_of_three):
+    """THE regression this split exists to prevent: an attacker must be able to lock out only
+    themselves. Before per-client keying every one of these assertions passed for the wrong
+    reason — the second client was refused because the FIRST had spent the shared budget."""
+    c = _client()
+    attacker = {**JSON, "CF-Connecting-IP": "203.0.113.7"}
+    operator = {**JSON, "CF-Connecting-IP": "198.51.100.22"}
+
+    for _ in range(3):
+        c.post("/api/auth/login", json=OP1, headers=attacker)
+    blocked = c.post("/api/auth/login", json=OP1, headers=attacker)
+    assert blocked.status_code == 423, "the attacker must hit their own ceiling"
+
+    # The operator's request must still be admitted — it reaches the (unreachable) auth DB and
+    # fails closed with 503, which proves it got PAST the gate rather than being refused by it.
+    theirs = c.post("/api/auth/login", json=OP2, headers=operator)
+    assert theirs.status_code == 503, (
+        f"a different client must not be rate-limited by the attacker's spending, got "
+        f"{theirs.status_code}"
+    )
+
+
+def test_global_ceiling_still_caps_total_work_across_many_clients(configured, monkeypatch):
+    """The per-client gate decides WHO is refused; the global one bounds TOTAL Argon2 work. A
+    caller rotating the header must still meet a ceiling, or per-client keying would have traded
+    the denial-of-service for an unbounded-CPU hole."""
+    monkeypatch.setattr(auth_routes, "AUTH_RATE_MAX_REQUESTS", 3)
+    monkeypatch.setattr(auth_routes, "AUTH_RATE_GLOBAL_MAX_REQUESTS", 5)
+    monkeypatch.setattr(auth_routes, "AUTH_RATE_WINDOW_SECONDS", 60.0)
+    c = _client()
+    seen = [
+        c.post(
+            "/api/auth/login", json=OP1, headers={**JSON, "CF-Connecting-IP": f"203.0.113.{i}"}
+        ).status_code
+        for i in range(8)
+    ]
+    assert seen.count(423) >= 1, "a header-rotating caller must still hit the global ceiling"
+    assert 503 in seen, "early requests must have been admitted (503 = past the gate)"
+
+
+def test_forged_or_absent_header_never_escapes_the_gate(configured, budget_of_three):
+    """A malformed header must not become a key, and a caller sending none must not be exempt:
+    both fall back to a shared bucket rather than an unmetered path."""
+    c = _client()
+    junk = {**JSON, "CF-Connecting-IP": "not-an-ip-address; drop table"}
+    codes = [c.post("/api/auth/login", json=OP1, headers=junk).status_code for _ in range(5)]
+    assert 423 in codes, "garbage in the header must not buy an unmetered request"
+
+
+def test_rate_limit_key_prefers_edge_header_then_peer():
+    """Unit-level: the key is the normalised edge header when present and valid, the peer address
+    otherwise. Normalisation matters — two spellings of one address must not be two budgets."""
+
+    class _Req:
+        def __init__(self, headers, peer):
+            self.headers = headers
+            self.client = type("C", (), {"host": peer})() if peer else None
+
+    assert auth_routes.rate_limit_key(_Req({"cf-connecting-ip": "203.0.113.9"}, "10.0.0.1")) == "203.0.113.9"
+    # IPv6 written two ways is ONE client, so it must normalise to one key.
+    a = auth_routes.rate_limit_key(_Req({"cf-connecting-ip": "2001:0db8:0000::1"}, None))
+    b = auth_routes.rate_limit_key(_Req({"cf-connecting-ip": "2001:db8::1"}, None))
+    assert a == b, "two spellings of one address must share one budget"
+    assert auth_routes.rate_limit_key(_Req({}, "10.0.0.5")) == "10.0.0.5"
+    assert auth_routes.rate_limit_key(_Req({"cf-connecting-ip": "garbage"}, "10.0.0.5")) == "10.0.0.5"
+    assert auth_routes.rate_limit_key(_Req({}, None)) == "unidentified"
+
+
+def test_keyed_limiter_evicts_oldest_keys_and_stays_bounded():
+    """The per-key dict is fed attacker-chosen keys, so it is itself a memory-exhaustion vector
+    unless bounded — the exact bug class this gate exists to prevent."""
+    lim = ratelimit_mod.KeyedWindowLimiter(max_keys=4)
+    for i in range(50):
+        assert lim.check_and_consume(f"key-{i}", 3, 60) == 0
+    assert len(lim._buckets) <= 4
+
+
+def test_blocked_client_cannot_evict_itself_into_a_fresh_budget():
+    """A refusal must be sticky for the window. If a blocked key were dropped from the dict, the
+    next request would look like a first-time caller and the gate would admit it forever."""
+    lim = ratelimit_mod.KeyedWindowLimiter(max_keys=8)
+    for _ in range(2):
+        assert lim.check_and_consume("victim", 2, 60) == 0
+    assert lim.check_and_consume("victim", 2, 60) > 0
+    for _ in range(20):  # churn other keys past max_keys
+        lim.check_and_consume("noise", 2, 60)
+    assert lim.check_and_consume("victim", 2, 60) > 0, "the refusal must survive key churn"
