@@ -18,7 +18,10 @@
 #   1. ruff        — backend/app src db
 #   2. screen      — pytest tests
 #   3. backend     — pytest backend/tests
-#   4. database    — pytest db/tests (testcontainers spins its own postgres:16-alpine)
+#   4. database    — pytest db/tests (testcontainers spins its own postgres:16-alpine). Also
+#                    installs the CLI's crypto deps: db/tests/test_manage_operator.py imports
+#                    bin/manage_operator.py, which SystemExits at import without them — which
+#                    kills pytest COLLECTION, not just that test.
 #   5. frontend    — npm ci && npm run build
 #   6. shellcheck  — bin/*.sh
 #
@@ -101,7 +104,7 @@ suite_database() {
   docker_py --network host --group-add "${docker_gid}" \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v "${REPO_ROOT}:/repo:ro" -w /repo "${PY_IMAGE}" \
-    sh -ec 'pip install --quiet --no-cache-dir --disable-pip-version-check "psycopg[binary]==3.3.4" "testcontainers[postgres]>=4,<5" "pytest>=8" >/dev/null && python -m pytest db/tests -q -p no:cacheprovider'
+    sh -ec 'pip install --quiet --no-cache-dir --disable-pip-version-check "psycopg[binary]==3.3.4" "testcontainers[postgres]>=4,<5" "pytest>=8" "argon2-cffi==25.1.0" "pyotp==2.10.0" "cryptography==50.0.0" >/dev/null && python -m pytest db/tests -q -p no:cacheprovider'
 }
 
 suite_frontend() {

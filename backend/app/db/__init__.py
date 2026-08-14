@@ -7,7 +7,8 @@ clear "unavailable" state instead of taking the account/scan/debate pages down w
 
 Public surface:
     get_db_settings / reset_db_settings — settings-driven DSN + pool tunables
-    connection()                        — pooled psycopg connection (context manager)
+    connection()                        — pooled psycopg connection as rh_app (degrades)
+    auth_connection()                   — pooled connection as rh_auth (MUST fail closed)
     db_health()                         — structured health report, never raises
     DbUnavailable                       — the one exception callers handle for degradation
     close_pool()                        — teardown hook (tests, shutdown)
@@ -16,11 +17,18 @@ Public surface:
 from __future__ import annotations
 
 from app.db.config import DbSettings, get_db_settings, reset_db_settings
-from app.db.pool import DbUnavailable, close_pool, connection, db_health
+from app.db.pool import (
+    DbUnavailable,
+    auth_connection,
+    close_pool,
+    connection,
+    db_health,
+)
 
 __all__ = [
     "DbSettings",
     "DbUnavailable",
+    "auth_connection",
     "close_pool",
     "connection",
     "db_health",

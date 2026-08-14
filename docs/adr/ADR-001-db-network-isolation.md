@@ -2,7 +2,10 @@
 
 **Status:** accepted · **Date:** 2026-07-28 · **Amended:** 2026-07-28 (fixpass — the original
 overstated on-box isolation; the Consequences section below now states what was actually verified.
-The decision itself is unchanged.)
+The decision itself is unchanged.) · **Amended:** 2026-08-13 (auth prerequisite, issue #6 — the
+backend is now dual-homed onto `rh-internal`, which spends part of the isolation this record
+originally guaranteed. See the dated amendment at the end. The decision for `rh-db` itself —
+internal-only, no host port — is unchanged.)
 
 ## Context
 
@@ -46,6 +49,9 @@ Access paths:
   forwarding.
 - Nothing off-box can reach the database, and neither can containers on other Docker bridges
   (inter-bridge isolation, verified both directions against the 3b dashboard bridge and `km-db`).
+  *(Narrowed 2026-08-13: the dashboard backend is now deliberately attached to `rh-internal` as
+  well as its own bridge, so "the 3b dashboard bridge cannot reach the database" no longer holds
+  for that one container. See the amendment below.)*
 - Containerizing the migration runner and the loader also **pins their Python to 3.12**, matching the
   deploy target. M's host Python is 3.14, so this closes part of P9 (the "passes locally ≠ passes in
   CI" gap) as a side effect rather than as separate work.
@@ -78,3 +84,65 @@ containerized. The escape hatch is to move the DB to a non-internal bridge with 
 publishing, accepting egress in exchange — at which point the least-privilege `rh_app` role (no
 superuser, therefore no `COPY … FROM PROGRAM`) becomes the primary control rather than
 defense-in-depth. That is a deliberate trade to make explicitly, not to drift into.
+
+---
+
+## Amendment — 2026-08-13: the backend is dual-homed; part of the isolation is spent
+
+*(Auth prerequisite — issue #6's second half, specified in `docs/AUTH_THREAT_MODEL.md` §8. Same
+standard as the 2026-07-28 correction above: a decision record that quietly stops being true is
+worse than one that says what changed.)*
+
+The dashboard backend is now attached to `rh-internal` **in addition to** its own bridge, in both
+`docker-compose.yml` and `deploy/docker-compose.prod.yml`. It connects as `rh_app`
+(`DATABASE_URL`) for everything except authentication and as `rh_auth` (`AUTH_DATABASE_URL`) for
+the auth path only. This was **not** the escape hatch above — `rh-db` did not move to a routable
+bridge and still has no egress and no host port. Instead the backend came to it.
+
+**Say it plainly: the backend is now the egress path this record's isolation assumed did not
+exist.** Until this change, nothing that could talk to `rh-db` could also talk to the internet.
+Now one container can do both. An attacker with code execution in the backend container can read
+the database and exfiltrate in the same process. What this record originally guaranteed — "the
+data cannot leave *through the database's own network*" — remains true; `internal: true` still
+strips the default route, and `COPY … FROM PROGRAM` still dies inside a container with no egress
+and no superuser connection. What is spent is the practical margin around that guarantee.
+
+**What is gained.** Auth state gets the only store that can hold it correctly. Every auth
+security property that matters — atomic single-use recovery codes, rowcount-gated token
+consumption, the monotonic TOTP step, an append-only audit log — is a transactional guarantee;
+files under the bind-mounted `data/` tree cannot provide them (and that tree is the repo's
+documented soft spot, finding F2). Coupling the DSN to the auth work also means there is never a
+build where the database is reachable from an unauthenticated surface. The history/evaluation
+features stop being dead code.
+
+**What is given up.** The clean statement "no container with internet access can reach this
+database". Also a soft invariant: `rh-internal` membership used to imply "DB-side
+infrastructure"; now one member is an internet-facing app container.
+
+**Compensating controls** (all landed with, not after, this change):
+
+- **Least-privilege roles, split in two.** The backend never connects as the container superuser.
+  `rh_app` cannot `COPY … FROM PROGRAM` (not superuser) and — per migration 012's REVOKE — holds
+  *no* privileges on the auth tables, so an injection in any non-auth code path cannot read
+  password hashes, TOTP secrets, or recovery-code hashes. `rh_auth` holds column-level grants on
+  exactly the auth tables and nothing on market data.
+- **Passwordless-until-provisioned.** Both roles ship from their migrations with no password and
+  cannot authenticate over the network (`scram-sha-256`) until an operator runs
+  `ALTER ROLE … WITH PASSWORD`; the DSNs live in `backend/.env` (mode 0600, gitignored,
+  dockerignored) and are never logged or serialized (`backend/app/db/config.py`, `pool.py`,
+  `db_health()`).
+- **The container is a hard target.** Issue #16 hardening is what makes "code execution in the
+  backend container" a high bar: `no-new-privileges`, `cap_drop: ALL`, read-only rootfs, resource
+  caps, non-root uid.
+- **Membership stays minimal.** Only the backend joins `rh-internal`. The frontend and Caddy do
+  not, in either compose — every service kept off the network keeps the remaining isolation worth
+  something.
+
+**Not compensated, stated honestly:** both DSNs live in the same backend process, so the role
+split defends against SQL injection and over-broad queries in non-auth code — the realistic bug
+class — not against arbitrary code execution in the backend container. Nothing here defends
+against host compromise; it never did.
+
+**Revisit** (in addition to the conditions above) if any second service asks to join
+`rh-internal`, or if an egress-restricted sidecar/broker pattern ever becomes worth its
+complexity here — that would buy back the spent margin at the cost of a new moving part.

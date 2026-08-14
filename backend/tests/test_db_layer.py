@@ -22,8 +22,14 @@ UNREACHABLE_DSN = "postgresql://rh_app:sekritpw@127.0.0.1:9/rh"
 
 @pytest.fixture(autouse=True)
 def clean_db_state(monkeypatch):
-    """Each test starts DB-less and with fresh settings; pools never leak between tests."""
+    """Each test starts DB-less and with fresh settings; pools never leak between tests.
+
+    POSTURE — both DSNs explicitly absent: this file asserts the "no database" contract itself,
+    so the delenvs below are the subject under test, not just hygiene. conftest guarantees
+    backend/.env cannot re-supply either DSN behind these delenvs.
+    """
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("AUTH_DATABASE_URL", raising=False)
     reset_db_settings()
     close_pool()
     yield
@@ -60,6 +66,29 @@ def test_connection_without_dsn_raises_typed_unavailable():
             pytest.fail("must not yield a connection with no DSN configured")
     assert excinfo.value.reason == "not_configured"
     assert "DATABASE_URL" in str(excinfo.value)
+
+
+def test_no_auth_dsn_is_first_class_not_an_error():
+    # AUTH_DATABASE_URL (role rh_auth, AUTH_THREAT_MODEL §8) has the same optionality contract as
+    # DATABASE_URL: unset means "not configured", never a startup error.
+    assert get_db_settings().auth_database_url is None
+
+
+def test_empty_auth_dsn_treated_as_absent(monkeypatch):
+    # docker-compose passes ${AUTH_DATABASE_URL:-} == "" when unset; same idiom as DATABASE_URL.
+    monkeypatch.setenv("AUTH_DATABASE_URL", "   ")
+    reset_db_settings()
+    assert get_db_settings().auth_database_url is None
+
+
+def test_dsn_settings_are_independent(monkeypatch):
+    # Setting one DSN must not make the other look configured: the roles are split on purpose
+    # (rh_app is REVOKEd from the auth tables), so the two "configured" states never conflate.
+    monkeypatch.setenv("DATABASE_URL", UNREACHABLE_DSN)
+    reset_db_settings()
+    settings = get_db_settings()
+    assert settings.database_url == UNREACHABLE_DSN
+    assert settings.auth_database_url is None
 
 
 def test_health_without_dsn_reports_not_configured():

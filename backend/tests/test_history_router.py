@@ -29,7 +29,13 @@ VALID_EXIT_BODY = {
 
 @pytest.fixture(autouse=True)
 def clean_db_state(monkeypatch):
+    # POSTURE — pre-auth stand-down, on purpose: AUTH_DATABASE_URL is explicitly absent, so the
+    # history routes answer with their DEGRADATION status codes (503/422/403), not the session
+    # layer's 401. The authenticated posture for these same routes is pinned in
+    # test_auth_routes.py. (conftest strips the DSNs and disables backend/.env; the delenvs here
+    # make the asserted posture visible in this file.)
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("AUTH_DATABASE_URL", raising=False)
     reset_db_settings()
     close_pool()
     yield

@@ -126,6 +126,20 @@ Read in this order:
 - **Guardrails must be tunable, observable, and overridable — never a silent block.** A guardrail
   that blocks a valid action must announce that it did, and why.
 
+## Authentication
+
+Per-operator authentication (Argon2id password + TOTP, `__Host-`-prefixed sessions, single-use
+recovery codes, 5-strike/15-minute lockout) is built and migrated into `rh-db` — see
+`docs/AUTH_THREAT_MODEL.md` for the full threat model, its status banner for exactly what has been
+verified against the tree, and §10 for the reconciled test-plan status. **It has not been cut over
+in production**: Caddy basic-auth (`SECURITY.md` §3.1) remains the live gate today, and
+`SERVER_DEPLOY.md` has the onboarding and cutover runbook.
+
+**Account creation is CLI-only by design.** There is no signup route and no self-service password
+reset. New operators are seeded with `bin/db_manage_operator.sh seed --email …`; the same script
+disables, unlocks, and resets accounts (`bin/manage_operator.py`). This is a deliberate invariant
+(`docs/AUTH_THREAT_MODEL.md` §11), not a missing feature — never add a signup endpoint.
+
 ## Ownership
 
 Co-owned. Decision rights, approval authority, and the autonomy ladder are defined in the charter

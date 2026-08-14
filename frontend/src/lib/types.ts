@@ -139,6 +139,40 @@ export interface PipelineRunView {
   priced: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Auth wire shapes — docs/AUTH_THREAT_MODEL.md §4. These mirror the specified
+// contract, not a running backend (none exists yet); any drift from §4 is a bug
+// here, not there. Flow-level result unions live in lib/auth.ts.
+// ---------------------------------------------------------------------------
+
+/** POST /api/auth/login response body. Success is `status: "mfa_required"` WITH
+ *  a challenge_token; every password-step failure arrives in the IDENTICAL shape
+ *  (§5.2 — unknown address and wrong password must be indistinguishable), so the
+ *  token fields are optional and the client must not branch on anything finer
+ *  than "mfa_required with a token" vs "not". */
+export interface LoginStepResponse {
+  status: string;
+  challenge_token?: string;
+  /** Challenge TTL in seconds. The challenge only confers the right to attempt
+   *  the TOTP step — it is never a session (§4). */
+  expires_in?: number;
+}
+
+/** GET /api/auth/me — the only source of client-side auth state. The session
+ *  cookie (__Host-rh_sid) is HttpOnly and deliberately unreadable from JS. */
+export interface MeResponse {
+  email: string;
+  /** §5.11: an unverified address is flagged here so the UI can surface it.
+   *  It is NOT a login gate — fail toward the operator retaining access. */
+  email_verified: boolean;
+}
+
+/** POST /api/auth/verify response. A racing double-consume loses gracefully and
+ *  resolves to a friendly "already_verified" (§5.6). */
+export interface VerifyResponse {
+  status: "verified" | "already_verified" | string;
+}
+
 export interface ScanResult {
   ticker: string;
   ok: boolean;

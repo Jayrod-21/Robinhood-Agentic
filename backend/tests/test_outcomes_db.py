@@ -148,8 +148,15 @@ def seeded(urls) -> dict[str, int]:
 
 @pytest.fixture(autouse=True)
 def app_db_state(urls, monkeypatch):
-    """Point the app's pool at the migrated database AS rh_app — grants in full force."""
+    """Point the app's pool at the migrated database AS rh_app — grants in full force.
+
+    POSTURE — DATA database configured, AUTH database explicitly absent: this file exercises the
+    rh_app outcome path, and the one API test rides the pre-auth stand-down so its status codes
+    come from the history router, not the session layer (which test_auth_routes.py pins). The
+    rh_auth role's own grants are integration-tested in test_auth_db.py.
+    """
     monkeypatch.setenv("DATABASE_URL", urls["app"])
+    monkeypatch.delenv("AUTH_DATABASE_URL", raising=False)
     reset_db_settings()
     close_pool()
     yield

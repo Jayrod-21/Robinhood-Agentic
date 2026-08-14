@@ -18,6 +18,10 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile
+    # backend/.env carries the secrets, including DATABASE_URL (role rh_app) and AUTH_DATABASE_URL
+    # (role rh_auth) — see backend/.env.example for the role split and the ALTER ROLE step. Unset
+    # or empty DSNs are a supported "no database" state; the backend degrades instead of failing
+    # (backend/app/db/config.py).
     env_file:
       - ../backend/.env
     environment:
@@ -39,6 +43,19 @@ services:
     # and the refresh trigger forgeable by any local account, and baking the host uid into the image
     # would make the image host-specific.
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    # Proton Mail Bridge (the SMTP relay for auth email) listens on the docker host; this maps
+    # host.docker.internal to the host-gateway address so SMTP_HOST=host.docker.internal resolves
+    # from inside the container. Same pattern as 9b Korean Master's compose files.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Dual-homed, deliberately (ADR-001 amendment of 2026-08-13; docs/AUTH_THREAT_MODEL.md §8):
+    # `default` for Caddy/frontend and internet egress, `rh-internal` for rh-db. The backend is
+    # now the one process that can both read the database and reach the internet; the ADR records
+    # what that spends and what compensates. `default` listed explicitly — naming any network on a
+    # service drops the implicit one. Frontend and Caddy stay OFF rh-internal.
+    networks:
+      - default
+      - rh-internal
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
       interval: 30s
@@ -145,3 +162,11 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+
+networks:
+  # The db stack's internal-only bridge (docker-compose.db.yml owns and creates it). External:
+  # this compose attaches, never creates. Prod standup order therefore matters — the db stack
+  # (bin/db_up.sh) must be up (or the network created) before this stack starts.
+  rh-internal:
+    external: true
+    name: rh-internal

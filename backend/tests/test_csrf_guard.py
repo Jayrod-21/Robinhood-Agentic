@@ -11,6 +11,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
+from app.db import reset_db_settings
 from app.main import create_app
 from app.routers import refresh as refresh_mod
 
@@ -32,6 +33,13 @@ class _RefreshSettings:
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
+    # POSTURE — pre-auth stand-down, on purpose: AUTH_DATABASE_URL is explicitly absent, so
+    # enforce_authenticated stands down and every status code below is the CSRF guard's own
+    # verdict, not a 401 from the session layer. Auth enforcement composing OVER this guard is
+    # pinned separately in test_auth_routes.py. (conftest already strips the DSNs and disables
+    # backend/.env; the delenv here makes the posture this suite asserts visible in this file.)
+    monkeypatch.delenv("AUTH_DATABASE_URL", raising=False)
+    reset_db_settings()
     # Point the refresh endpoint at tmp_path so an *allowed* request can really queue, and reset
     # the module-global cooldown clock so tests don't bleed into each other.
     monkeypatch.setattr(refresh_mod, "get_settings", lambda: _RefreshSettings(tmp_path))

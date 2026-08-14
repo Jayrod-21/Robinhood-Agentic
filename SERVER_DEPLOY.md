@@ -1,9 +1,23 @@
 # Production Deployment — M, behind the existing Cloudflare Tunnel
 
-> **Status: NOT DEPLOYED.** This document describes the real target and the real procedure, but the
-> stack has not been stood up in prod and no public hostname exists for it. Two decisions are open
-> and belong to the owners (Jared + Joe) — see [Open decisions](#open-decisions) before doing
-> anything in the Cloudflare section.
+> **Status: DEPLOYED 2026-08-13.** Live at **`ww.jaredstudio.com`** ("ww" for Wasden Watch), served
+> through the existing named tunnel to Caddy on `127.0.0.1:1855`. The prod compose stack
+> (`deploy-backend-1`, `deploy-frontend-1`, `deploy-caddy-1`) runs alongside the dev stack, which
+> keeps its own loopback ports.
+>
+> **The gate is still a single shared basic-auth credential** — one username and password used by
+> both owners. Cloudflare Access was specified as the compensating control and was deliberately
+> NOT configured; issue #17 records that acceptance and the conditions that void it. The app is
+> read-only with no order-placement path anywhere, so the realistic worst case from a guessed
+> credential is disclosure of holdings, not trading. That calculation changes the day an order path
+> ships, and `docs/AUTH_THREAT_MODEL.md` specifies the replacement.
+>
+> **2026-08-13 update: the replacement is now built** — per-operator Argon2id+TOTP auth, migrated
+> into `rh-db`, 241 backend + 194 db tests. **It has not been cut over.** The running prod
+> containers have not been rebuilt onto this code and no operator has been seeded. See
+> [Operator authentication](#operator-authentication--onboarding-and-cutover-issue-17) below for the
+> onboarding runbook and the cutover procedure — basic-auth stays in place until a real end-to-end
+> login is proven against the deployed stack.
 
 The production target is **this machine (M)** — the same box the dev stack, the database, and 9b
 Korean Master already run on. There is no separate server. Public reachability comes from the
@@ -178,6 +192,100 @@ cat logs/cron/$(date -u +%Y%m%d)-open.log
 cat logs/reports/$(date -u +%Y-%m-%d)-open.md
 ```
 
+## Operator authentication — onboarding and cutover (issue #17)
+
+**Status, 2026-08-13: built and migrated, NOT cut over.** `docs/AUTH_THREAT_MODEL.md` has the full
+spec and the reconciled test-plan status. What follows is the runbook to actually stand it up. Do
+not skip the precondition on the cutover step — Caddy basic-auth stays in place until a real login
+has been proven end to end.
+
+### A. One-time onboarding
+
+1. **Set both database roles' passwords**, if not already done (they ship passwordless from
+   migrations 001/012 and cannot authenticate until this runs — see the block comment above
+   `DATABASE_URL`/`AUTH_DATABASE_URL` in `backend/.env.example`):
+   ```bash
+   bin/db_psql.sh -c "ALTER ROLE rh_app  WITH PASSWORD '<openssl rand -hex 24>'"
+   bin/db_psql.sh -c "ALTER ROLE rh_auth WITH PASSWORD '<openssl rand -hex 24>'"
+   ```
+   Then set `DATABASE_URL` and `AUTH_DATABASE_URL` in `backend/.env` to match (`rh-db:5432`, no host
+   port — ADR-001).
+
+2. **Generate the TOTP encryption key** and put it in `backend/.env`:
+   ```bash
+   openssl rand -base64 32
+   # → TOTP_SECRET_ENC_KEY=<the output>, chmod 600 backend/.env
+   ```
+   Back this up in the password vault immediately. If it is lost, every enrolled TOTP secret
+   becomes undecryptable and every operator must re-enroll (`docs/AUTH_THREAT_MODEL.md` §7);
+   `bin/manage_operator.py` validates it decodes to exactly 32 bytes and fails loudly, before any
+   write, if it does not.
+
+3. **Confirm the mail transport**, since nothing enforces this automatically at startup —
+   `backend/app/services/email.py::assert_production_transport` exists to refuse booting prod on
+   the mock transport, but it is **not currently wired into the app's startup path** (`lifespan` in
+   `backend/app/main.py` does not call it). Check by hand: `SMTP_HOST` must be set in `backend/.env`
+   (this deployment points it at Proton Mail Bridge, `host.docker.internal`) — an unset `SMTP_HOST`
+   silently selects `MockEmailTransport`, which logs the verification link instead of emailing it,
+   and there is currently no automated guard that would catch that in prod.
+
+4. **Seed the first operator** — the only account-lifecycle surface; there is no signup route:
+   ```bash
+   bin/db_manage_operator.sh seed --email you@example.com
+   ```
+   This prompts for a password (8+ chars, ≤256 bytes, rejected if on the common-password block
+   list) and prints, **once, to the terminal only**:
+   - An `otpauth://` **provisioning URI** — this is text, not a rendered QR image. Either paste it
+     into a QR generator to scan with an authenticator app (`echo "$URI" | qrencode -t ansiutf8`
+     works if `qrencode` is installed), or add the account to the authenticator manually using the
+     URI's `secret=` parameter.
+   - 10 single-use recovery codes (Crockford base32, no I/L/O/U).
+
+   Store both in the password vault immediately — this output is not persisted anywhere and is not
+   recoverable; losing it means running `reset-totp` on the host.
+
+5. **Verify the email address.** Seeding does not verify email by itself. Complete the
+   `/verify-email` flow the app sends (fragment-linked token, per §5.6) before relying on the
+   account.
+
+6. **Repeat 1–5 for the second operator**, if this deployment is meant to serve both. Each operator
+   is a fully separate account (§3.2 — independent revocation and attribution, deliberately not a
+   shared login).
+
+`bin/db_manage_operator.sh disable / unlock / reset-password / reset-totp --email …` cover the rest
+of the lifecycle. All five subcommands are exercised by `db/tests/test_manage_operator.py`.
+
+### B. Cutover — removing Caddy basic-auth
+
+**Precondition, not optional: a successful end-to-end login through the real app must happen
+first.** Do not remove `basic_auth` from `deploy/Caddyfile` on the strength of the tests passing —
+the tests run against testcontainers and the FastAPI test client, not against the deployed prod
+stack.
+
+1. Rebuild and restart the prod stack so it actually picks up this work — checked directly on
+   2026-08-13, the running `deploy-backend-1` predates it and has neither `AUTH_DATABASE_URL` in
+   its environment nor the `auth_enforced` field in `/api/health`:
+   ```bash
+   docker compose -f deploy/docker-compose.prod.yml up -d --build
+   curl -u USER:PASSWORD "http://localhost:${DASH_PORT:-8088}/api/health"
+   # confirm the response now includes "auth_enforced": true
+   ```
+2. With an operator seeded and email-verified (section A), log in through the real
+   `/login` page over the tunnel hostname, complete the TOTP step, and confirm `/api/me` reflects
+   the session and a protected route (e.g. the portfolio page) loads.
+3. Confirm logout and re-login both work, and that a wrong TOTP code is rejected without granting
+   a session.
+4. **Only then** remove the `basic_auth` block from `deploy/Caddyfile`, redeploy Caddy, and confirm
+   the dashboard is unreachable without a valid session cookie (`curl` with no cookie should now get
+   401 from the backend on any non-`/api/health`/`/api/auth/*` route, fronted by Caddy with no
+   basic-auth prompt).
+5. Update `SECURITY.md` §5's #17 row and this file's status banner in the same change — a cutover
+   that happens without the docs being updated in lockstep is exactly the failure mode this repo
+   keeps hitting.
+
+Cloudflare Access (see [Open decisions](#open-decisions)) remains a separate, still-open decision —
+cutting over to per-operator auth does not by itself close that half of issue #17.
+
 ## Operations
 
 - **Logs:** `docker compose -f deploy/docker-compose.prod.yml logs -f backend`; cron output in
@@ -194,9 +302,12 @@ cat logs/reports/$(date -u +%Y-%m-%d)-open.md
 
 ## Security posture (summary — the full model is `SECURITY.md`)
 
-- Caddy basic-auth gates everything, plus security response headers and `Cache-Control: private,
-  no-store` on `/api/*`. Basic auth alone is **not** considered sufficient for a public hostname —
-  Cloudflare Access is mandatory before exposure (issue #17).
+- Caddy basic-auth gates everything **today**, plus security response headers and
+  `Cache-Control: private, no-store` on `/api/*`. Basic auth alone is **not** considered sufficient
+  for a public hostname — Cloudflare Access is mandatory before exposure (issue #17). A
+  per-operator replacement (Argon2id password + TOTP, `docs/AUTH_THREAT_MODEL.md`) is built and
+  migrated but not yet cut over — see [Operator authentication](#operator-authentication--onboarding-and-cutover-issue-17)
+  above for the runbook and the precondition on removing basic-auth.
 - The Anthropic key lives only in `backend/.env` (gitignored, `chmod 600`) — never in an image
   layer or any API response.
 - No Robinhood credentials are stored; the MCP OAuth token lives in Claude Code's own config on the

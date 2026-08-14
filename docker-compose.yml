@@ -24,11 +24,38 @@ services:
       # Empty by default → the backend allows localhost/127.0.0.1 on any port via its built-in
       # CORS_ORIGIN_REGEX. Set CORS_ORIGINS to explicit origins for a shared/remote deploy.
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # Database DSNs (see backend/.env.example). Empty is a first-class "no database" state —
+      # every consumer degrades (backend/app/db/config.py) — so `${VAR:-}` is deliberate: the
+      # stack must come up with backend/.env absent or the DSNs unset. rh_app = general app role,
+      # rh_auth = auth-path role with column-level grants (docs/AUTH_THREAT_MODEL.md §8; the auth
+      # tables are REVOKEd from rh_app entirely by migration 012).
+      - DATABASE_URL=${DATABASE_URL:-}
+      - AUTH_DATABASE_URL=${AUTH_DATABASE_URL:-}
+      # AES-256-GCM key for operator_totp.secret_encrypted (docs/AUTH_THREAT_MODEL.md §7).
+      # Without it the second login step cannot decrypt any TOTP secret, so a dev stack with
+      # AUTH_DATABASE_URL set but no key silently cannot complete a login. Empty when auth is
+      # not configured — the crypto layer raises a clear EncryptionKeyError only when a decrypt
+      # is actually attempted.
+      - TOTP_SECRET_ENC_KEY=${TOTP_SECRET_ENC_KEY:-}
     volumes:
       # Live data + logs are read/written through the host so the refresh bridge and debate
       # archive survive container restarts and are visible to the host-side refresh daemon.
       - ./data:/app/data
       - ./logs:/app/logs
+    # Proton Mail Bridge (the SMTP relay for auth email) listens on the docker host; this maps
+    # host.docker.internal to the host-gateway address so SMTP_HOST=host.docker.internal resolves
+    # from inside the container. Same pattern as 9b Korean Master's compose files.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Dual-homed, deliberately (ADR-001 amendment of 2026-08-13; AUTH_THREAT_MODEL §8): one foot
+    # on this stack's default bridge (frontend + internet egress), one foot on `rh-internal` to
+    # reach rh-db. This makes the backend the one process that can both read the database and
+    # reach the internet — the trade and its compensating controls are recorded in the ADR, not
+    # here. `default` must be listed explicitly: naming any network on a service drops the
+    # implicit one.
+    networks:
+      - default
+      - rh-internal
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
       interval: 30s
@@ -71,15 +98,22 @@ services:
         max-file: "5"
 
   frontend:
+    # NOT on rh-internal — the frontend has no business reaching the database, and every service
+    # kept off that network keeps ADR-001's remaining isolation worth something.
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    ports:
-      # Loopback only — same reasoning as the backend. Reach it over an SSH tunnel from another box.
-      - "127.0.0.1:${FRONTEND_PORT}:3000"
+    # No host port: the browser reaches this service only through the `proxy` service below, so
+    # the page and the API share ONE origin. Publishing the dev server directly is what broke
+    # login — see the proxy service comment.
     environment:
-      # Browser-facing: the frontend calls the backend on the host's published backend port.
-      - NEXT_PUBLIC_API_URL=http://localhost:${BACKEND_PORT}
+      # Empty means "same origin" (lib/api.ts uses `??`, so the empty string is honored): the
+      # browser calls relative /api/... on the proxy origin, exactly as production does behind
+      # Caddy. The old value (http://localhost:${BACKEND_PORT}) pointed the page at a DIFFERENT
+      # origin, where the login 204's __Host-rh_sid Set-Cookie was discarded — fetch defaults to
+      # same-origin credentials and the backend deliberately ships allow_credentials=False — so
+      # login could never complete in the dev stack once AUTH_DATABASE_URL was set.
+      - NEXT_PUBLIC_API_URL=
     depends_on:
       backend:
         condition: service_healthy
@@ -106,3 +140,78 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  proxy:
+    # The dev stack's single browser-facing origin, mirroring production's Caddy shape: /api/* is
+    # routed to the backend, everything else to the Next dev server, all on ONE host port. This
+    # exists because the previous topology (page on FRONTEND_PORT, API on BACKEND_PORT) made the
+    # two different origins, and a login could never complete: the frontend's fetches carry the
+    # default `same-origin` credentials mode and the backend's CORS deliberately sets
+    # allow_credentials=False (docs/AUTH_THREAT_MODEL.md §5.9), so the __Host-rh_sid Set-Cookie
+    # on the /api/auth/login/totp 204 was discarded and /api/auth/me never saw a session. Going
+    # same-origin fixes that WITHOUT weakening the CSRF posture — credentialed CORS is exactly
+    # the door §5.9 keeps shut. NOT on rh-internal, same reasoning as the frontend.
+    image: caddy:2
+    ports:
+      # Loopback only, and it takes over ${FRONTEND_PORT} so bin/up.sh's printed dashboard URL
+      # keeps working unchanged.
+      - "127.0.0.1:${FRONTEND_PORT}:8080"
+    configs:
+      - source: dev_caddyfile
+        target: /etc/caddy/Caddyfile
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+    # Same hardening posture as the other services, with one necessary exception: the caddy
+    # binary ships with the cap_net_bind_service FILE capability, and exec'ing a file-caps binary
+    # fails outright ("operation not permitted") when that capability is missing from the
+    # bounding set — so a bare `cap_drop: ALL` cannot even start the container (verified against
+    # caddy:2 on this host). Adding the single capability back keeps every other one dropped.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    memswap_limit: 256m
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "1.0"
+          pids: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+configs:
+  # Inline so the routing contract lives next to the services it binds (no separate file to
+  # drift). `handle` blocks are mutually exclusive in Caddy; first match wins.
+  dev_caddyfile:
+    content: |
+      {
+        auto_https off
+      }
+      :8080 {
+        handle /api/* {
+          reverse_proxy backend:8000
+        }
+        handle {
+          reverse_proxy frontend:3000
+        }
+      }
+
+networks:
+  # The db stack's internal-only bridge (docker-compose.db.yml owns and creates it; `internal:
+  # true`, no egress, no host ports). External here: this compose ATTACHES to it, it must never
+  # create or reconfigure it. Consequence: `docker compose up` now requires the network to exist —
+  # bring the db stack up first (bin/db_up.sh) or create it by hand
+  # (`docker network create --internal rh-internal`) on a box with no database.
+  rh-internal:
+    external: true
+    name: rh-internal

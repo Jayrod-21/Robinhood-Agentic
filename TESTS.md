@@ -38,7 +38,8 @@ are not in the system interpreter.
 - **Network:** none required — all pure functions on synthetic fundamentals.
 
 ### 2. Dashboard backend unit tests
-- **Command:** `python3 -m pytest backend/tests/ -q`
+- **Command:** `python3 -m pytest backend/tests/ -q` (from the project root — running from
+  `backend/` picks up `backend/.env` and flips auth enforcement on)
 - **Pass criteria:** all tests pass. Covers jury aggregation (6+ majority decides, a true BUY/SELL
   directional deadlock escalates while a BUY/HOLD or SELL/HOLD tie resolves to HOLD, plurality holds,
   odd juries can't deadlock), account snapshot validation, the live-marks overlay P&L/weights math +
@@ -46,7 +47,23 @@ are not in the system interpreter.
   cooldown limiter (debate ↔ pipeline share one budget), the scan ticker-list cap + all-invalid
   rejection, the atomic refresh-trigger write + cooldown/pending gates, input validation, and — the
   security regression test — `get_record` rejecting path-traversal record ids.
-- **Network:** none — yfinance/Anthropic calls are monkeypatched.
+- **Auth suites (AUTH_THREAT_MODEL §10), all inside this one command:**
+  - `test_auth_routes.py` — §4 allow-list proven CLOSED over every reachable route (recursive
+    enumeration; the FastAPI bootstrap routes /openapi.json, /docs, /redoc are disabled and pinned
+    404), no password-reset-shaped route exists (§5.7), lookalike-prefix `/api/authz` is gated,
+    CSRF composition, pre-deployment stand-down posture.
+  - `test_auth_ratelimit.py` — the §5.1/§3.3 route-wide cooldown: per-route-not-per-account
+    (spec-named test), one budget shared across every auth POST route, a blocked request never
+    reaches Argon2, GET /api/auth/me exempt so page loads can't starve logins, per-app-instance
+    gate, the default budget admits a full legitimate login flow, plus WindowLimiter unit
+    behavior (window expiry, blocked calls don't extend the wait, non-positive disables).
+  - `test_auth_cookie.py` (cookie attributes), `test_auth_db_failure.py` (fail-closed 503s),
+    `test_auth_totp_window.py` (±1-step pin), `test_auth_db.py` (DB-backed semantics: lockout,
+    replay high-water mark, recovery codes, sessions, verification, audit events —
+    **testcontainers, needs Docker**), and `test_log_redaction.py` (secret scrubbing incl. the
+    §5.4 `otpauth://`-URI and base32-secret rules).
+- **Network:** none — yfinance/Anthropic calls are monkeypatched. Docker only, for
+  `test_auth_db.py` and `test_outcomes_db.py` (throwaway testcontainers postgres).
 
 ### 3. Frontend build
 - **Command:** `cd frontend && npm install --no-audit --no-fund && npm run build`
@@ -57,7 +74,7 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
 
 ### 3b. Migration runner + loader tests (needs Docker)
 - **Command:** `python3 -m pytest db/tests/ -q`
-- **Pass criteria:** all tests pass (currently 148). Five layers: discovery tests for the
+- **Pass criteria:** all tests pass (currently 194). Six layers: discovery tests for the
   filename-based destructive classification (ADR-002: `NNN_name.destructive.{up,down}.sql`),
   loud rejection of near-miss filenames (uppercase `.SQL`, trailing junk — never silently
   skipped), byte-level rejection (NUL / BOM / invalid UTF-8), the best-effort keyword sniff
@@ -78,7 +95,14 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
   suite (`test_loaders_db.py`: one test per fix-pass BLOCKER — B-1 loud provider failures,
   B-2 corrupt-archive survival, B-S1 as-of-bounded split factors, B-S2 required return_basis,
   B-S3/B-S4 catalog-comment truth + the 15:59-close behaviour pin, B-S5 splice/infer — each
-  proven red-on-revert in docs/fixpass/FIX_REPORT_phaseA.md).
+  proven red-on-revert in docs/fixpass/FIX_REPORT_phaseA.md); and the auth store suites
+  (AUTH_THREAT_MODEL §10): `test_auth_schema.py` — migration-applied auth schema invariants
+  (rh_app/rh_auth grant separation, append-only auth_events, shape constraints, the
+  single-live-verification-token partial index, clean down-migration) — and
+  `test_manage_operator.py` — the host-CLI recovery path (seed with pinned argon2id params +
+  encrypted TOTP secret + hashed single-use recovery codes, weak-password rejection, unlock,
+  disable, reset-password/reset-totp with session revocation, exit-code contract, and no
+  secret ever printed).
 - **Network:** Docker only — testcontainers spins a throwaway postgres:16-alpine; the live rh-db
   is never touched.
 
