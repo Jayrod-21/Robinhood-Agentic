@@ -9,6 +9,11 @@ pydantic==2.13.4
 pydantic-settings==2.15.0
 anthropic==0.121.0
 yfinance==1.5.2
+# src/fmp.py's HTTP transport. Declared EXPLICITLY even though it already resolves transitively
+# through yfinance: yfinance is the dependency FMP is replacing, and the day it is dropped the FMP
+# client would break with an ImportError in production while every test still passed locally —
+# an undeclared dependency is only invisible until the thing that dragged it in leaves.
+requests==2.34.2
 pandas==3.0.5
 httpx==0.28.1
 # DB connection layer (issue #6). Same psycopg pin as db/requirements.txt so the backend and the
