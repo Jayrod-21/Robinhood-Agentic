@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { RefreshCw, AlertTriangle } from "lucide-react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
@@ -145,7 +146,11 @@ export default function PortfolioPage() {
                 <tbody>
                   {data?.positions.map((p) => (
                     <tr key={p.symbol} className="border-b border-ink-850 last:border-0 hover:bg-ink-850/50">
-                      <td className="px-5 py-2.5 font-medium text-zinc-100">{p.symbol}</td>
+                      <td className="px-5 py-2.5 font-medium">
+                        <Link href={`/position/${encodeURIComponent(p.symbol)}`} className="text-zinc-100 transition-colors hover:text-brass">
+                          {p.symbol}
+                        </Link>
+                      </td>
                       <td className="px-3 py-2.5 text-right tnum text-zinc-300">{usd(p.current_price)}</td>
                       <td className="px-3 py-2.5 text-right tnum text-zinc-400">{usd(p.average_buy_price)}</td>
                       <td className="px-3 py-2.5 text-right tnum text-zinc-200">{usd(p.market_value)}</td>
