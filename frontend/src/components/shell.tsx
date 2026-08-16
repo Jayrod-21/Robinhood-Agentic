@@ -7,6 +7,7 @@ import useSWR from "swr";
 import { Activity, Gavel, LayoutDashboard, LineChart, ListFilter, LogOut, Scale, Target } from "lucide-react";
 import { fetchAuthState, fetchMe, logout } from "@/lib/auth";
 import { cn } from "@/lib/format";
+import { DataTrustStrip } from "@/components/data-trust";
 
 /** Pages that must render for a signed-out visitor. Redirecting away from these
  *  would loop: /login is where the redirect SENDS people, and /verify-email is
@@ -96,7 +97,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </aside>
-      <main className="flex-1 overflow-x-hidden px-4 py-6 sm:px-8">{children}</main>
+      <main className="flex-1 overflow-x-hidden px-4 py-6 sm:px-8">
+        {/* Always-visible honesty bar: how fresh/real/covered the data is. Hidden on the signed-out
+            public pages, where there is no account data to speak to and the strip would just be noise. */}
+        {!PUBLIC_PATHS.has(pathname) && <DataTrustStrip />}
+        {children}
+      </main>
     </div>
   );
 }
