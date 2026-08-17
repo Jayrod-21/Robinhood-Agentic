@@ -21,8 +21,10 @@ from app.routers import (
     debate,
     health,
     history,
+    market_context,
     pipeline,
     position,
+    reconciliation,
     refresh,
     scan,
 )
@@ -279,7 +281,9 @@ def create_app() -> FastAPI:
     app.include_router(debate.router)
     app.include_router(pipeline.router)
     app.include_router(history.router)
+    app.include_router(market_context.router)
     app.include_router(position.router)
+    app.include_router(reconciliation.router)
     return app
 
 
