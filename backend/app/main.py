@@ -22,6 +22,7 @@ from app.routers import (
     health,
     history,
     pipeline,
+    position,
     refresh,
     scan,
 )
@@ -278,6 +279,7 @@ def create_app() -> FastAPI:
     app.include_router(debate.router)
     app.include_router(pipeline.router)
     app.include_router(history.router)
+    app.include_router(position.router)
     return app
 
 
