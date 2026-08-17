@@ -13,8 +13,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.services.broker import get_snapshot
 from app.services.marks import get_marks
-from app.services.snapshot import SnapshotError, load_snapshot
+from app.services.snapshot import SnapshotError
 
 router = APIRouter(prefix="/api", tags=["account"])
 
@@ -58,7 +59,7 @@ class AccountView(BaseModel):
 
 def _build_view() -> AccountView:
     settings = get_settings()
-    snapshot = load_snapshot(settings.snapshot_path)
+    snapshot = get_snapshot(settings.snapshot_path)
     marks = get_marks(snapshot.symbols, settings.marks_ttl_seconds)
 
     # First pass: cost basis, market value, P&L per position.
