@@ -39,6 +39,13 @@ by that debate's decision and shows a **summary of the trade**.
   reuse the **host bridge pattern**: button → backend writes a `trade.request` → host daemon →
   `claude` runs `review_equity_order` → **human confirm** → `place_equity_order` → writes a fill
   record back → the button shows the summary.
+- **Note (2026-08-17), not yet reconciled with the above:** the account of record for the dashboard
+  is now an Alpaca paper account (`backend/app/services/broker.py` → `src/alpaca.py`), which is a
+  plain REST API reachable directly from the container — no host-side MCP bridge is structurally
+  required to place an Alpaca order the way it is for a Robinhood one. Whether Commit should target
+  Alpaca (simpler, container-native) or still needs the Robinhood host-bridge pattern above depends
+  on which broker holds real capital when this is built, which is an owner decision not made here.
+  The risk rules, idempotency, and confirmation requirements below apply regardless of broker.
 - Must honor the charter's risk rules (≤25%/name, 10–20% cash floor, exit-before-entry, no averaging
   down) and be **idempotent** (no double-fills on a double-click). Confirmation is mandatory — this
   spends real money on the live account.
@@ -97,7 +104,9 @@ the portfolio against the market over the same range.
   Options to source it:
   1. Have the twice-daily **cycle job append a value point** to a `logs/portfolio_value.jsonl` each
      open/close (simple, forward-only — history builds over time).
-  2. Use **Robinhood `get_portfolio_historicals`** via the MCP bridge (real historical account value).
+  2. Use **Robinhood `get_portfolio_historicals`** via the MCP bridge (real historical account value)
+     — or Alpaca's equivalent portfolio-history endpoint, now that Alpaca is the account of record
+     (2026-08-17); not yet evaluated against this option.
   3. **Synthesize** a curve from yfinance historical prices × current holdings (approximate, but
      instant history).
   A pragmatic combo: synthesize past history (option 3) now, and accumulate real points (option 1) going

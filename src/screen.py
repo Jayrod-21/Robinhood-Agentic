@@ -1,7 +1,10 @@
 """Sprinkle Sauce fundamental screen — lean re-implementation.
 
 Mirrors the tier logic in 3a's ``backend/app/services/screening_engine.py`` and the
-``sprinkle_sauce_spec.md`` spec, but self-contained and fed from free yfinance data.
+``sprinkle_sauce_spec.md`` spec, but self-contained and fed from FMP (``src/fmp.py`` via
+``src/data.py::fundamentals_from_fmp``). It said "free yfinance data" until that source was
+removed; the gate thresholds are unchanged because FMP reports margins and growth as the same
+fractions yfinance did — which was checked against a real payload, not assumed.
 
 Only the *fundamental* tiers run here (Tier 1 liquidity, Tier 2 Sprinkle Sauce). Tiers 3-5
 in the original design (quant models, Wasden RAG verdict, final ranking) are handled by the

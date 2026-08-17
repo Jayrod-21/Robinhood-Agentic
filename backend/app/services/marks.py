@@ -24,6 +24,13 @@ import time
 
 logger = logging.getLogger("agentic.marks")
 
+# The provider these marks come from, declared HERE — beside _fetch_one, the function that actually
+# calls it — so anything displaying the source reads it from the code that does the work. A literal
+# "FMP" in a route, or a config field, is true until the day the provider changes and then it is a
+# lie on a page whose entire job is telling the operator what to trust. /api/health reported the
+# wrong broker for exactly this reason.
+MARKS_PROVIDER = "FMP"
+
 # symbol -> (price_or_None, monotonic_timestamp)
 _CACHE: dict[str, tuple[float | None, float]] = {}
 _LOCK = threading.Lock()

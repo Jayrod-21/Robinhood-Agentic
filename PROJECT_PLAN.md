@@ -41,6 +41,11 @@ distinguishable.
 | Dashboard prototype (Portfolio / Scan / Pipeline / Debate) | ⚠️ exists, unpolished |
 | 204 tests, CI green | ✅ |
 
+*(2026-08-17 update: the dashboard's account of record is now an Alpaca paper account, read
+directly via `src/alpaca.py`; the "Robinhood MCP connected" row above is unchanged and still
+describes the refresh-daemon/scheduled-cycle path, which still runs and still serves as the
+fallback when Alpaca credentials are absent — see `SECURITY.md` §0.)*
+
 **The honest summary: we have a trustworthy place to put data, and almost nothing that produces it.**
 
 ---

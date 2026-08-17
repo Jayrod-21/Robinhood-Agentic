@@ -1,8 +1,12 @@
 """GET /api/account — the real account snapshot overlaid with live FMP marks.
 
-Read-only by design: this endpoint computes current value and unrealized P&L from the snapshot's
-cost basis and live prices, but exposes no path to place or modify orders. Holdings come from the
-volume-mounted snapshot (refreshed via the bridge); prices refresh autonomously here.
+Read-only by design: this endpoint computes current value and unrealized P&L from the account's
+cost basis and live prices, but exposes no path to place or modify orders.
+
+Holdings come from ``services/broker.py``: a live Alpaca read when credentials are configured,
+otherwise the volume-mounted Robinhood snapshot file refreshed via the host bridge. The payload's
+``source`` field says which — do not infer it from this docstring, and do not assume the file.
+Prices refresh independently from FMP.
 """
 
 from __future__ import annotations
