@@ -14,7 +14,17 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import account, auth, debate, health, history, pipeline, refresh, scan
+from app.routers import (
+    account,
+    auth,
+    data_trust,
+    debate,
+    health,
+    history,
+    pipeline,
+    refresh,
+    scan,
+)
 from app.services.auth import auth_enforcement_configured, enforce_authenticated
 from app.services.email import assert_production_transport
 
@@ -260,6 +270,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router)
+    app.include_router(data_trust.router)
     app.include_router(auth.router)
     app.include_router(account.router)
     app.include_router(refresh.router)

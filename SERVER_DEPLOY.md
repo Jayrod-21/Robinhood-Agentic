@@ -1,5 +1,15 @@
 # Production Deployment — M, behind the existing Cloudflare Tunnel
 
+> **Current state, 2026-08-17.** The account of record is now an **Alpaca paper account**
+> (`••••I1PN`, $100,000 cash). `/api/account` reads Alpaca live when `ALPACA_API_KEY_ID` /
+> `ALPACA_API_SECRET_KEY` are set in `backend/.env`; `ALPACA_BASE_URL` is the one variable
+> separating paper from live, and paper is the default. If Alpaca is configured but unreachable, the
+> app refuses the read rather than falling back to the Robinhood snapshot. **Everything below about
+> the Robinhood MCP, `refresh_once.sh`/`refresh_daemon.sh`, and the twice-daily cycle is unchanged
+> and still required** — that path still runs unconditionally as the scheduled cycle, and serves as
+> the account-read fallback whenever Alpaca credentials are absent. Market data (prices,
+> fundamentals) now comes from FMP; yfinance was removed from everything the dashboard ships.
+
 > **Status: DEPLOYED 2026-08-13.** Live at **`ww.jaredstudio.com`** ("ww" for Wasden Watch), served
 > through the existing named tunnel to Caddy on `127.0.0.1:1855`. The prod compose stack
 > (`deploy-backend-1`, `deploy-frontend-1`, `deploy-caddy-1`) runs alongside the dev stack, which
@@ -44,9 +54,12 @@ The porting rationale (what we take from 9b's battle-tested posture and why) is 
                                             Caddy  127.0.0.1:${DASH_PORT}
                                             (basic auth + security headers)
                                               ├── /api/*  ──▶ backend  (FastAPI, no host port)
+                                              │     └── /api/account ──▶ Alpaca API (paper by default,
+                                              │           ALPACA_BASE_URL selects paper/live) when
+                                              │           configured, else data/account_snapshot.json
                                               └── /*      ──▶ frontend (Next.js prod build, no host port)
                                                             data/ + logs/ (bind-mounted, 0700)
-  cron (open/close) ──▶ bin/scheduled_cycle.sh
+  cron (open/close) ──▶ bin/scheduled_cycle.sh          (unchanged — runs regardless of Alpaca)
         ├─ host: bin/refresh_once.sh ──▶ claude + robinhood MCP ──▶ data/account_snapshot.json
         └─ container: python -m app.jobs.cycle ──▶ scan + debates + logs/reports/
 ```
@@ -58,9 +71,12 @@ Posture, ported from 9b (see `docs/PATTERNS_FROM_9B.md` §5):
 - **TLS terminates at the Cloudflare edge.** The origin speaks HTTP on loopback; nothing on the
   public internet can reach it except through the tunnel.
 - **No public DNS A record points at M's IP**, so the origin cannot be reached around Cloudflare.
-- Holdings come from the snapshot, refreshed by the host-side `claude` + MCP (no brokerage
-  credentials are ever stored). **No order-placement path exists anywhere in the app** — verified;
-  see `SECURITY.md` § "The order path that does not exist yet".
+- **As of 2026-08-17**, holdings come from Alpaca directly (`ALPACA_API_KEY_ID` /
+  `ALPACA_API_SECRET_KEY` in `backend/.env`, paper by default via `ALPACA_BASE_URL`) when
+  configured; the snapshot, refreshed by the host-side `claude` + MCP (no brokerage credentials are
+  ever stored), remains the fallback source and is still written unconditionally by the twice-daily
+  cycle. **No order-placement path exists anywhere in the app** — verified; see `SECURITY.md` §
+  "The order path that does not exist yet".
 
 ## Open decisions
 
@@ -80,10 +96,14 @@ Do not proceed past step 4 until the owners have decided:
 1. **Docker + Compose v2** — `docker --version`, `docker compose version`.
 2. **Claude Code** — installed and logged in (`claude` on PATH).
 3. **robinhood-trading MCP at USER scope, authenticated** — this is what the twice-daily refresh
-   rides on (step 3 below proves it).
-4. **cloudflared** — already running as a systemd service for korean/uvrl. `systemctl status
+   rides on (step 3 below proves it). Still required as of 2026-08-17 — the scheduled cycle runs it
+   unconditionally, independent of Alpaca.
+4. **Alpaca paper API credentials** (`ALPACA_API_KEY_ID` / `ALPACA_API_SECRET_KEY`) — as of
+   2026-08-17 these are what `/api/account` reads by default. Without them, the app falls back to
+   the Robinhood snapshot from step 3.
+5. **cloudflared** — already running as a systemd service for korean/uvrl. `systemctl status
    cloudflared` should say `active`.
-5. This repo checked out somewhere on the host.
+6. This repo checked out somewhere on the host.
 
 > **On paths in this document.** `/srv/agentic/robinhood-agentic` throughout is a **placeholder for
 > wherever you cloned the repo** — substitute your own checkout path, including in
@@ -102,6 +122,9 @@ Do not proceed past step 4 until the owners have decided:
 cd "/srv/agentic/robinhood-agentic"
 cp backend/.env.example backend/.env
 # edit backend/.env → set ANTHROPIC_API_KEY=sk-ant-...   (jurors=haiku, synth=sonnet by default)
+# as of 2026-08-17, also set ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY for /api/account to read
+# Alpaca directly (paper by default via ALPACA_BASE_URL); without them it falls back to the
+# Robinhood snapshot from step 3 of Prerequisites.
 chmod 600 backend/.env
 ```
 
@@ -126,6 +149,10 @@ ss -ltn "sport = :8088"    # no output = free; otherwise pick another port
 ```
 
 ### 3. Prove the Robinhood MCP refresh works headlessly
+
+Still required as of 2026-08-17, independent of whether Alpaca credentials are set — the scheduled
+cycle (step 7 below) runs this unconditionally, and it is the account-read fallback whenever Alpaca
+is not configured or is unreachable.
 
 The scheduled refresh runs `claude --print` with a read-only tool allow-list
 (`bin/refresh_once.sh`). The MCP's OAuth must have been completed once interactively; then:
@@ -301,8 +328,10 @@ cutting over to per-operator auth does not by itself close that half of issue #1
   `logs/events.jsonl`. Container logs are rotation-capped (10m × 5) so they cannot fill the disk.
 - **Update:** `git pull && docker compose -f deploy/docker-compose.prod.yml up -d --build`.
 - **MCP re-auth (the one recurring chore):** Robinhood OAuth tokens expire. If a scheduled refresh
-  logs "snapshot NOT updated", run `claude` once to re-authenticate the robinhood MCP. The
-  dashboard keeps working on the last snapshot + live prices until then.
+  logs "snapshot NOT updated", run `claude` once to re-authenticate the robinhood MCP. When Alpaca
+  credentials are configured, `/api/account` is unaffected by this — it reads Alpaca directly and
+  never touches the snapshot. When they are not configured, the dashboard keeps working on the last
+  snapshot + live prices until the MCP is re-authenticated.
 - **Change the schedule:** edit the crontab times (they're US/Eastern via `CRON_TZ`).
 - **Coexistence:** M also runs 9b (blue/green + shared Postgres), the uvrl stacks, MLflow, and
   `rh-db`. The prod compose carries memory/cpu/pids caps so this stack cannot starve them. Never
@@ -316,10 +345,13 @@ cutting over to per-operator auth does not by itself close that half of issue #1
   per-operator replacement (Argon2id password + TOTP, `docs/AUTH_THREAT_MODEL.md`) is built and
   migrated but not yet cut over — see [Operator authentication](#operator-authentication--onboarding-and-cutover-issue-17)
   above for the runbook and the precondition on removing basic-auth.
-- The Anthropic key lives only in `backend/.env` (gitignored, `chmod 600`) — never in an image
-  layer or any API response.
+- The Anthropic and Alpaca keys live only in `backend/.env` (gitignored, `chmod 600`) — never in an
+  image layer or any API response.
 - No Robinhood credentials are stored; the MCP OAuth token lives in Claude Code's own config on the
-  host, and the refresh scripts run `claude` with a read-only tool allow-list.
+  host, and the refresh scripts run `claude` with a read-only tool allow-list. **As of 2026-08-17**
+  the account of record for `/api/account` is an Alpaca paper account read via API key when
+  configured; the Robinhood MCP path above is unchanged and still runs as the scheduled-cycle and
+  fallback path.
 - The account is read-only today: scans/debates/reports only. The order path does not exist, and
   `SECURITY.md` lists the gates that must precede it (step-up auth per order, server-side charter
   guardrails, signed trade triggers).

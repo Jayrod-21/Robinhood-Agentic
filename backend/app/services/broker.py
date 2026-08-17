@@ -94,7 +94,16 @@ def get_snapshot(snapshot_path) -> AccountSnapshot:
 
 
 def reset_cache() -> None:
-    """Drop the cached snapshot. Test-support and the refresh path — never a request path."""
+    """Drop the cached snapshot. TEST SUPPORT ONLY — nothing in the app calls this.
+
+    The docstring used to claim "and the refresh path", which was never true: routers/refresh.py
+    does not import this module, and the refresh it triggers rewrites the fallback FILE rather than
+    anything Alpaca serves. A docstring naming a caller that does not exist sends the next reader
+    hunting for wiring that was never built.
+
+    Nothing needs it, either — the TTL is five seconds, so a stale entry outlives its usefulness
+    before anyone could act on it.
+    """
     global _cache
     with _lock:
         _cache = None

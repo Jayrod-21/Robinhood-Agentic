@@ -3,7 +3,7 @@ import "./globals.css";
 import { Shell } from "@/components/shell";
 
 export const metadata: Metadata = {
-  title: "Agentic Robinhood Dashboard",
+  title: "Agentic Alpaca Dashboard",
   description: "Live read-only monitor + Sprinkle Sauce screen + jury debate engine for the Agentic account.",
 };
 

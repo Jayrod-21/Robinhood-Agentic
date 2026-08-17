@@ -70,8 +70,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="font-serif text-xl text-zinc-100">Agentic</div>
           {/* Deliberately not the account number: this is a static layout shell with no API data,
               so a hard-coded identifier here can silently disagree with the real account. The
-              Portfolio page renders the live `account_masked` value from /api/account instead. */}
-          <div className="text-[11px] uppercase tracking-[0.2em] text-brass">Robinhood</div>
+              Portfolio page renders the live `account_masked` value from /api/account instead.
+              The same logic caps this line at the broker of record (Alpaca paper): the snapshot's
+              live `source` — which is what discloses the Robinhood-file fallback when Alpaca
+              credentials are absent — is rendered on the Portfolio page, not hard-coded here. */}
+          <div className="text-[11px] uppercase tracking-[0.2em] text-brass">Alpaca Paper</div>
         </div>
         <nav className="mt-8 flex flex-col gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {

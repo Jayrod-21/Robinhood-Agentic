@@ -8,6 +8,32 @@
 > checked against the code before being written down. Where a defense does not exist yet, it says
 > so, with the tracking issue number.** Closed by issue #8.
 
+## 0. Current-state addendum (2026-08-17)
+
+Everything below this point was verified against the tree on 2026-08-13 and describes that tree
+accurately — it is **not** rewritten here, because it is an accurate historical record of what was
+reviewed and when. One material fact has changed since:
+
+- **The account of record for the dashboard is now an Alpaca paper account** (`••••I1PN`, $100,000
+  cash, 0 positions). `/api/account` reads Alpaca live (`backend/app/services/broker.py` →
+  `src/alpaca.py`), verified against the live API. `ALPACA_BASE_URL` is the one variable separating
+  paper from live; paper is the default. When Alpaca is configured but unreachable, the app refuses
+  the read rather than falling back to the Robinhood snapshot — serving another broker's stale
+  holdings during an outage was judged worse than an honest error.
+- **The Robinhood MCP snapshot path described throughout §1–§3 below is unchanged and still live.**
+  It is used unconditionally by the twice-daily scheduled cycle, and as the account-read fallback
+  whenever Alpaca credentials are absent. Every vector/defense pair below that references the
+  Robinhood MCP, the refresh bridge, or `data/account_snapshot.json` is still an accurate
+  description of code that still exists and still runs — none of it was removed or needs
+  re-verifying on account of the Alpaca change.
+- **Market data (prices, fundamentals) now comes from FMP.** yfinance was removed from everything
+  the dashboard ships; it survives only in the corporate-actions/delistings loader image, which is
+  out of scope for this document's asset list.
+- This addendum does not re-run the asset ranking in §1 or re-verify any defense — it only states
+  what changed. Alpaca paper trading has no real money behind it, which is a materially different
+  risk profile than the live Robinhood account §1 was written against; that re-assessment has not
+  been done and should not be assumed.
+
 ## 1. What we are actually protecting
 
 The asset is **not** the ~$240 balance. Ranked:
@@ -16,14 +42,19 @@ The asset is **not** the ~$240 balance. Ranked:
    balance is a parameter; the authority survives deposits. Today no order path exists in the app
    (§8) — but the host it runs on holds a Claude Code session whose robinhood-trading MCP *does*
    expose `place_equity_order`. Anything that can influence what that session runs is an attack on
-   the brokerage account, not on a dashboard.
+   the brokerage account, not on a dashboard. *(See §0: the dashboard's own account view now reads
+   an Alpaca paper account by default; the Robinhood MCP session and this asset description are
+   otherwise unchanged.)*
 2. **The host-side Claude + MCP session.** The dashboard's refresh flow is an internet-facing
    button that ends with the host spawning a `claude` process holding an authenticated Robinhood
    OAuth token. That process's tool allow-list is a security control, not a convenience.
 3. **`ANTHROPIC_API_KEY`** — loss means an attacker spends our money and impersonates the app.
 4. **The holdings snapshot** (`data/account_snapshot.json`) — cash, buying power, every position,
    quantity, cost basis. Confidential, and also *trusted input*: debates and the twice-daily cycle
-   reason over it, so tampering with it means poisoning decisions about real money.
+   reason over it, so tampering with it means poisoning decisions about real money. *(See §0: since
+   2026-08-17 `/api/account` reads Alpaca directly when configured and only falls back to this file
+   when Alpaca credentials are absent; the twice-daily cycle still writes and reads it
+   unconditionally.)*
 5. **The market-data database** (`rh-db`) — evaluation integrity; a poisoned price history
    corrupts every backtest and paper-portfolio mark.
 
@@ -110,6 +141,11 @@ admission that nothing does yet.*
   `localhost:1.evil.com` does not match), `allow_credentials=False`.
 
 ### 3.3 The refresh bridge and the host Claude + MCP session
+
+*(This subsection is unchanged and still accurate — see §0. As of 2026-08-17 it describes the
+legacy/scheduled-cycle path: the dashboard's own account read prefers Alpaca when configured, but
+this bridge still runs unconditionally as part of the twice-daily cycle and as the fallback when
+Alpaca credentials are absent.)*
 
 - **Vector:** the refresh Claude session is tricked or misused into placing orders.
   **Defense (exists, verified):** the tool allow-list in `bin/refresh_once.sh:35-40` and

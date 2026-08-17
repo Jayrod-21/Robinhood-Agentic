@@ -20,6 +20,16 @@ const DONUT = ["#e0b34d", "#34d399", "#60a5fa", "#f472b6", "#a78bfa", "#fb923c",
 
 const fmtWeight = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(1)}%`);
 
+// Human names for the snapshot `source` values the backend emits (src/alpaca.py, services/snapshot.py).
+// Rendered from the live payload — never hard-coded — so the page cannot claim a broker the data did
+// not actually come from (Alpaca is preferred; the Robinhood file only serves when creds are absent).
+const SOURCE_LABELS: Record<string, string> = {
+  "alpaca-paper": "the Alpaca paper account",
+  "alpaca-live": "the Alpaca live account",
+  "robinhood-mcp": "the saved Robinhood snapshot",
+};
+const sourceLabel = (source: string) => SOURCE_LABELS[source] ?? source;
+
 export default function PortfolioPage() {
   const { data, error, isLoading } = useSWR<AccountView>("/api/account", fetcher, { refreshInterval: 10_000 });
   const [refreshing, setRefreshing] = useState(false);
@@ -89,7 +99,7 @@ export default function PortfolioPage() {
             {refreshMsg && <span className="text-xs text-zinc-500">{refreshMsg}</span>}
             <Button variant="brass" onClick={onRefresh} disabled={refreshing}>
               {refreshing ? <Spinner className="border-ink-950/40 border-t-ink-950" /> : <RefreshCw className="h-4 w-4" />}
-              {refreshing ? "Refreshing…" : "Refresh from Robinhood"}
+              {refreshing ? "Refreshing…" : "Refresh snapshot"}
             </Button>
           </div>
         }
@@ -196,8 +206,14 @@ export default function PortfolioPage() {
               ))}
             </div>
             <p className="mt-4 text-[11px] leading-relaxed text-zinc-600">
-              Positions &amp; cost basis are the real Robinhood snapshot; prices and P&amp;L refresh live from yfinance.
-              Click <Badge tone="neutral">Refresh from Robinhood</Badge> to re-pull holdings via the MCP bridge.
+              Positions &amp; cost basis come from {data ? sourceLabel(data.source) : "the connected account"}; prices
+              and P&amp;L refresh live from FMP.
+              {data?.source === "robinhood-mcp" && (
+                <>
+                  {" "}
+                  Click <Badge tone="neutral">Refresh snapshot</Badge> to re-pull holdings via the MCP bridge.
+                </>
+              )}
             </p>
           </CardBody>
         </Card>

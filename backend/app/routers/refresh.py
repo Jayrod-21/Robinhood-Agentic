@@ -5,6 +5,10 @@ the host). So "refresh" is a bridge: this endpoint drops a trigger file on the s
 ``bin/refresh_daemon.sh`` — running on the host, outside Docker — picks it up, pops a terminal/VS
 Code tab running ``claude`` (which has the MCP), rewrites the snapshot, and removes the trigger.
 
+The file this refreshes is now the FALLBACK account source: when Alpaca credentials are configured,
+``/api/account`` reads the broker live (services/broker.py) and never touches the snapshot file, so
+this endpoint only matters on the Robinhood-file path.
+
 We only signal intent here; we never touch Robinhood credentials. A short cooldown stops a mashed
 button from queuing a tab storm.
 """
@@ -21,6 +25,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.services.broker import alpaca_configured
 from app.services.snapshot import SnapshotError, load_snapshot
 
 router = APIRouter(prefix="/api", tags=["refresh"])
@@ -47,6 +52,19 @@ class RefreshStatus(BaseModel):
 
 
 def _snapshot_generated_at() -> str | None:
+    """When the FALLBACK snapshot file was written — or None when it is not the live source.
+
+    This used to load the file unconditionally, which meant that with Alpaca serving the account
+    view the status panel reported the age of a file nothing was reading: a weeks-old timestamp
+    displayed beside live holdings, under a label saying when the data was generated. The number
+    was real; what it described was not the thing on screen.
+
+    With Alpaca configured this returns None, because the file's age is not a fact about the
+    displayed account. The account's own freshness is on /api/data-trust and /api/account, which
+    read it from the source actually being served.
+    """
+    if alpaca_configured():
+        return None
     settings = get_settings()
     try:
         return load_snapshot(settings.snapshot_path).generated_at
@@ -120,7 +138,8 @@ def request_refresh() -> RefreshResponse:
 
     return RefreshResponse(
         status="queued",
-        detail="Refresh queued. The host daemon will pull live data via the Robinhood MCP.",
+        detail="Refresh queued. The host daemon will rewrite the Robinhood snapshot file "
+        "(the fallback account source) via the Robinhood MCP.",
         requested_at=requested_at,
     )
 

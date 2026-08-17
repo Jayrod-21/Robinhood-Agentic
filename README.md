@@ -1,12 +1,29 @@
 # Robinhood Agentic
 
-A live, fundamentals-first agentic trading loop on a small Robinhood cash account — and, underneath
-it, the measurement layer needed to tell whether any of it is actually working.
+A live, fundamentals-first agentic trading loop — started on a small Robinhood cash account, now
+running against an Alpaca paper account (see the current-state note below) — and, underneath it, the
+measurement layer needed to tell whether any of it is actually working.
 
 > **The project is not done when it makes money. It is done when a good decision and a lucky one
 > are distinguishable.** Everything below follows from that.
 
 Private repo. Co-owned — see [Ownership](#ownership).
+
+> **Current state, 2026-08-17.** The account of record is now an **Alpaca paper account**
+> (`••••I1PN`, $100,000 cash, 0 positions, margin multiplier 1 so buying power == equity), not the
+> Robinhood account this file otherwise describes. `/api/account` reads Alpaca live
+> (`backend/app/services/broker.py` → `src/alpaca.py`), verified against the live API.
+> `ALPACA_BASE_URL` is the one variable separating paper from live trading; paper is the default.
+> When Alpaca is configured but unreachable, the dashboard refuses rather than falling back to the
+> Robinhood snapshot file — serving another broker's months-old holdings during an outage would show
+> positions the operator does not have. The Robinhood MCP snapshot path (`data/account_snapshot.json`,
+> `bin/refresh_daemon.sh`, the twice-daily cycle) still exists, is unchanged, and is still used —
+> as the legacy fallback when Alpaca credentials are absent, and unconditionally by the scheduled
+> cycle described below. Market data (prices, fundamentals) now comes from FMP; yfinance was removed
+> from everything the dashboard ships and survives only in the corporate-actions/delistings loader
+> image (`db/load_corporate_actions.py`, `db/load_delistings.py`). Everything below this note that
+> describes a *past* decision or dated event keeps its original Robinhood wording on purpose — see
+> `PROJECT_HISTORY.md` for the full account.
 
 ---
 
@@ -14,11 +31,12 @@ Private repo. Co-owned — see [Ownership](#ownership).
 
 Two things share this repository, and they are at very different stages.
 
-**1. The live trading loop.** A real Robinhood cash account. A Claude session running on the host
-machine acts as the intelligence layer: it runs a fundamentals screen, holds a structured bull/bear
-debate with a ten-agent jury, and proposes orders. **A human owner confirms every order before it
-places.** There is no code path anywhere in this repository that can place an order unattended, and
-that absence is deliberate.
+**1. The live trading loop.** A real brokerage cash account — Alpaca paper as of 2026-08-17, see the
+current-state note above (it started, and for most of its history has been, a Robinhood account). A
+Claude session running on the host machine acts as the intelligence layer: it runs a fundamentals
+screen, holds a structured bull/bear debate with a ten-agent jury, and proposes orders. **A human
+owner confirms every order before it places.** There is no code path anywhere in this repository that
+can place an order unattended, and that absence is deliberate.
 
 **2. The measurement platform.** Most recent engineering effort. Trading returns are easy to
 generate and famously easy to fool yourself about — split-adjust a price series wrong and a 10-for-1
@@ -152,8 +170,13 @@ name one person as approver. They are deliberately not rewritten — see the not
 
 ## A note on the account
 
-The trading account is small by design; concentration, not leverage or day-trading churn, is the
-source of aggression. The interesting asset here is not the balance — it is order-placement
-authority against a live brokerage account, plus a host session authenticated to that broker. The
-security posture is built around protecting that, and `docs/SECURITY_FINDINGS_2026-07-27.md`
-catalogues what is still open.
+The trading account was small by design; concentration, not leverage or day-trading churn, was the
+source of aggression on the original $100 Robinhood account. The interesting asset was never the
+balance — it was order-placement authority against a live brokerage account, plus a host session
+authenticated to that broker. The security posture is built around protecting that, and
+`docs/SECURITY_FINDINGS_2026-07-27.md` catalogues what is still open.
+
+**As of 2026-08-17** the account of record is an Alpaca **paper** account ($100,000 simulated cash) —
+see the current-state note near the top of this file. No real capital is presently at stake through
+it. The reasoning above still holds for whichever account is live at a given time; it will apply
+again, unchanged, once the account of record is a funded brokerage account.

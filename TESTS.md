@@ -30,20 +30,27 @@ are not in the system interpreter.
   `pyproject.toml`, and CI pins the ruff version — so a lint failure means a real code change,
   not a new ruff release.
 
-### 1. Screen unit tests
+### 1. Screen and adapter unit tests
 - **Command:** `python3 -m pytest tests/ -q`
-- **Pass criteria:** all tests pass (currently 18). Covers the Sprinkle Sauce tier logic
-  (liquidity floor, PEG/FCF/Piotroski gates, proportional single-snapshot scoring, ranking)
-  and the yfinance `.info` field mapping (FCF-yield computation, PEG fallback, NaN/missing handling).
-- **Network:** none required — all pure functions on synthetic fundamentals.
+- **Pass criteria:** all tests pass. Covers the Sprinkle Sauce tier logic (liquidity floor,
+  PEG/FCF/Piotroski gates, proportional single-snapshot scoring, ranking, `tests/test_screen.py`),
+  the FMP field mapping that replaced yfinance's `.info` mapping (FCF-yield computation, PEG
+  fallback, NaN/missing handling, `tests/test_fmp.py`), and — added for the 2026-08-17 broker
+  switch — the Alpaca adapter (`tests/test_alpaca.py`: snapshot mapping, account masking,
+  paper-vs-live `ALPACA_BASE_URL` recognition and normalization, credential-missing and
+  secret-redaction error paths).
+- **Network:** none required — all pure functions on synthetic fundamentals / mocked HTTP.
 
 ### 2. Dashboard backend unit tests
 - **Command:** `python3 -m pytest backend/tests/ -q` (from the project root — running from
   `backend/` picks up `backend/.env` and flips auth enforcement on)
 - **Pass criteria:** all tests pass. Covers jury aggregation (6+ majority decides, a true BUY/SELL
   directional deadlock escalates while a BUY/HOLD or SELL/HOLD tie resolves to HOLD, plurality holds,
-  odd juries can't deadlock), account snapshot validation, the live-marks overlay P&L/weights math +
-  unpriced soft-fail, marks TTL caching, debate-record archive parsing + round-trip, the shared
+  odd juries can't deadlock), account snapshot validation, broker source selection
+  (`test_broker_source.py`: Alpaca preferred when configured, refusal — not snapshot fallback — on
+  an unreachable Alpaca, snapshot fallback when Alpaca is unconfigured, the freshness cache), the
+  live-marks overlay P&L/weights math + unpriced soft-fail, marks TTL caching, debate-record archive
+  parsing + round-trip, the shared
   cooldown limiter (debate ↔ pipeline share one budget), the scan ticker-list cap + all-invalid
   rejection, the atomic refresh-trigger write + cooldown/pending gates, input validation, and — the
   security regression test — `get_record` rejecting path-traversal record ids.
@@ -131,9 +138,13 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
 - **Full stack:** `bash bin/up.sh` (needs a reachable Docker daemon) → open `http://localhost:$FRONTEND_PORT`:
   Portfolio shows the real account with live P&L; Refresh opens an MCP-bridge tab; Scan streams the
   screen; Pipeline/Debate run the live jury (needs `ANTHROPIC_API_KEY` in `backend/.env`).
-- **Preconditions for the live paths:** Portfolio/Refresh need the host `robinhood-trading` MCP added
-  and OAuth-authenticated (`claude mcp add --scope user --transport http robinhood-trading <URL>`);
-  without it `/api/account` returns 503 with a message saying so. Debate/Pipeline need
-  `ANTHROPIC_API_KEY`; without it they 503 and `/api/health` reports `debate_ready: false`.
-  Scan and both test suites need neither.
+- **Preconditions for the live paths:** as of 2026-08-17, Portfolio (`/api/account`) prefers Alpaca —
+  set `ALPACA_API_KEY_ID` / `ALPACA_API_SECRET_KEY` in `backend/.env` (`ALPACA_BASE_URL` selects
+  paper vs. live; paper by default). If Alpaca is configured but unreachable, `/api/account` refuses
+  rather than falling back. Without Alpaca credentials configured at all, Portfolio/Refresh fall back
+  to the host `robinhood-trading` MCP added and OAuth-authenticated
+  (`claude mcp add --scope user --transport http robinhood-trading <URL>`) and the
+  `data/account_snapshot.json` file it refreshes; without either source, `/api/account` returns 503
+  with a message saying so. Debate/Pipeline need `ANTHROPIC_API_KEY`; without it they 503 and
+  `/api/health` reports `debate_ready: false`. Scan and both test suites need neither.
 - **Ports:** `bash bin/pick_ports.sh` twice → two distinct free ports each run, different across runs.

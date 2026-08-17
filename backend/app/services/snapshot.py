@@ -1,8 +1,11 @@
-"""Load and validate the volume-mounted account snapshot.
+"""Load and validate the volume-mounted account snapshot — the FALLBACK account source.
 
-The snapshot is the bridge between this read-only dashboard and the real Robinhood account: the
-in-session Claude agent (or the host-side refresh daemon) writes it from MCP data; we only read it.
-Because it crosses a trust boundary (a file written by another process), every field is validated
+The snapshot file is how the dashboard reads the real Robinhood account when no Alpaca credentials
+are configured (services/broker.py prefers a live Alpaca read whenever they are): the in-session
+Claude agent (or the host-side refresh daemon) writes it from MCP data; we only read it. The models
+below also double as the broker-neutral snapshot contract — src/alpaca.py maps Alpaca's answer into
+the same ``AccountSnapshot`` shape.
+Because the file crosses a trust boundary (written by another process), every field is validated
 with Pydantic and bad input fails loudly with a clear error rather than silently producing wrong P&L.
 """
 
@@ -23,7 +26,7 @@ SNAPSHOT_SCHEMA_VERSION = 1
 
 
 class SnapshotPosition(BaseModel):
-    """One held position as captured from Robinhood. Read-only; no execution fields."""
+    """One held position as reported by the broker. Read-only; no execution fields."""
 
     symbol: str = Field(min_length=1, max_length=8)
     # A listed position must be a real long holding: strictly positive. A zero or negative quantity

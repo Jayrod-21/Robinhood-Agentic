@@ -2,12 +2,15 @@
 
 Run inside the backend container (it has the engine, the API key, src/, and the mounted volumes):
     python -m app.jobs.cycle open      # or: close
-The host refreshes the account snapshot FIRST (bin/scheduled_cycle.sh → bin/refresh_once.sh), because
-the Robinhood MCP lives host-side; this job reads the freshly-written snapshot from the shared volume.
+The host refreshes the Robinhood snapshot file FIRST (bin/scheduled_cycle.sh → bin/refresh_once.sh),
+because the Robinhood MCP lives host-side; this job then reads the account through the broker service
+(services/broker.py) — a live Alpaca read when credentials are configured, otherwise that
+freshly-written fallback file from the shared volume.
 
 Each per-position debate runs the real engine directly (no HTTP, no rate limit) and persists itself to
 logs/debates + logs/events.jsonl. This job adds a consolidated logs/reports/<date>-<phase>.md and a
-single `cycle` event. It degrades gracefully: no snapshot → scan-only; no API key → skip debates.
+single `cycle` event. It degrades gracefully: no account data (missing snapshot file, or Alpaca
+configured but unreachable) → scan-only; no API key → skip debates.
 """
 
 from __future__ import annotations
@@ -65,7 +68,7 @@ def _account_view_sync():
     try:
         return _build_view()
     except SnapshotError as exc:
-        logger.warning("no account snapshot: %s", exc)
+        logger.warning("account view unavailable: %s", exc)
         return None
 
 
@@ -87,7 +90,7 @@ def _format_report(phase: str, now: datetime, account, survivors, scanned, debat
             "",
         ]
     else:
-        lines += ["## Account", "- No snapshot available (run a refresh first).", ""]
+        lines += ["## Account", "- No snapshot available (fix the broker connection, or run a refresh for the fallback file).", ""]
 
     lines += [f"## Scan — {len(survivors)} survivors of {len(scanned)} scanned"]
     if survivors:
@@ -126,7 +129,7 @@ async def run_cycle(phase: str, max_debates: int = 0) -> str:
     if not settings.anthropic_api_key:
         logger.info("no ANTHROPIC_API_KEY — skipping position debates")
     elif account is None:
-        logger.info("no snapshot — skipping position debates")
+        logger.info("no account data — skipping position debates")
     else:
         symbols = [p.symbol for p in account.positions]
         if max_debates > 0:

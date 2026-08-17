@@ -1,8 +1,10 @@
 """Runtime configuration, loaded from the environment (and ``backend/.env`` for local dev).
 
-Every tunable lives here so the rest of the app never reaches into ``os.environ`` directly. The
-Anthropic key is the one true secret: it is read here, used only by the debate engine, and is never
-serialized into any API response or exposed to the frontend.
+Every tunable lives here so the rest of the app never reaches into ``os.environ`` directly — with
+one deliberate exception: the Alpaca credential pair (``ALPACA_API_KEY_ID`` /
+``ALPACA_API_SECRET_KEY``) is checked straight from the environment by ``services/broker.py``. The
+Anthropic key is the one secret loaded here: it is read here, used only by the debate engine, and is
+never serialized into any API response or exposed to the frontend.
 """
 
 from __future__ import annotations
@@ -42,8 +44,11 @@ class Settings(BaseSettings):
     jury_size: int = Field(default=10, ge=3, le=20)
     debate_max_concurrency: int = Field(default=10, ge=1, le=20)
 
-    # --- Account / Robinhood ----------------------------------------------------------------
-    # The ONLY account this dashboard reads. Trades are never placed from here.
+    # --- Account / Robinhood (fallback snapshot path) ---------------------------------------
+    # Masked number of the Robinhood account behind the fallback snapshot file and the refresh
+    # bridge. When Alpaca credentials are configured, services/broker.py serves the Alpaca account
+    # of record instead and this identifies only the fallback/refresh path. Trades are never
+    # placed from here either way.
     agentic_account_masked: str = Field(default="••••4025")
 
     # --- Paths (inside the container; the data/ + logs/ dirs are volume-mounted) ------------
@@ -52,6 +57,18 @@ class Settings(BaseSettings):
 
     # --- Live marks (FMP) -------------------------------------------------------------------
     marks_ttl_seconds: int = Field(default=45, ge=5, le=600)
+
+    # How old the ACCOUNT data may be before the Data-Trust strip calls it stale.
+    #
+    # There was no such rule until now, and its absence is why a snapshot dated 27 July rendered
+    # for three weeks without a word: the account view tracked whether PRICES were live and never
+    # asked whether the HOLDINGS were. Price freshness and position freshness are different
+    # questions, and only one of them was being answered.
+    #
+    # 10 minutes suits both sources. A live broker read is seconds old, so this never fires for
+    # Alpaca unless something is genuinely wrong; the fallback snapshot file is written by a
+    # human-triggered refresh, so anything older than a coffee break is worth flagging.
+    snapshot_max_age_seconds: int = Field(default=600, ge=30, le=86_400)
 
     # --- CORS -------------------------------------------------------------------------------
     # Comma-separated list of explicitly-allowed browser origins. Empty by default: the dashboard's
