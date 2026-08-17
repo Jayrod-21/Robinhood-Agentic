@@ -3,28 +3,61 @@
 Nothing here reaches Alpaca: the submission client is substituted. What is tested is everything
 that decides WHETHER to submit, and the ordering around the submission — which is where a mistake
 costs money rather than a test run.
+
+PRECONDITIONS ARE GUARDED THE WAY test_auth_db.py GUARDS THEM, and for the reason its comment
+gives: CI's backend job HAS a Docker daemon but installs only backend/requirements.txt, which does
+not include testcontainers. A module-scope `from testcontainers... import` therefore kills
+COLLECTION — not this file's tests, the WHOLE suite, because a collection error is fatal to the
+run. That is exactly what happened on the first push of this file, and the pattern below already
+existed to prevent it.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import shutil
+import subprocess
 import sys
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
-import psycopg
 import pytest
 from app.config import get_settings
 from app.services import execution as ex
 
-try:
-    from testcontainers.community.postgres import PostgresContainer
-except ImportError:  # pragma: no cover
-    from testcontainers.postgres import PostgresContainer
-
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "db"))
-from migrate import main as migrate_main  # noqa: E402
+
+
+def _docker_available() -> bool:
+    if shutil.which("docker") is None:
+        return False
+    try:
+        return subprocess.run(["docker", "info"], capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _testcontainers_available() -> bool:
+    return importlib.util.find_spec("testcontainers") is not None
+
+
+_INTEGRATION_READY = _docker_available() and _testcontainers_available()
+
+pytestmark = pytest.mark.skipif(
+    not _INTEGRATION_READY,
+    reason="integration test needs docker AND the testcontainers package",
+)
+
+if _INTEGRATION_READY:  # guarded so collection succeeds without either precondition
+    import psycopg
+    from migrate import main as migrate_main
+
+    try:  # testcontainers >= 4.x moved community modules; keep the fallback for older installs
+        from testcontainers.community.postgres import PostgresContainer
+    except ImportError:  # pragma: no cover
+        from testcontainers.postgres import PostgresContainer
 
 PG_IMAGE = "postgres:16-alpine"
 
