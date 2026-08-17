@@ -70,6 +70,55 @@ class Settings(BaseSettings):
     # human-triggered refresh, so anything older than a coffee break is worth flagging.
     snapshot_max_age_seconds: int = Field(default=600, ge=30, le=86_400)
 
+    # --- Execution (docs/EXECUTION_DESIGN.md) -------------------------------------------------
+    # THE OUTER SWITCH. False means the order endpoints answer 403 and arming is impossible — not
+    # "orders are unlikely", but "there is no path". This is what ships, and turning it on is a
+    # deliberate act by someone who has read the design doc.
+    execution_enabled: bool = Field(default=False)
+
+    # Live trading is a SECOND, separate switch. execution_enabled alone only ever reaches the paper
+    # endpoint: every execution path calls assert_paper() unless this is true. Two switches because
+    # one switch means the day you enable execution you also enable it against real money, and those
+    # are different decisions made on different days.
+    execution_allow_live: bool = Field(default=False)
+
+    # Order types permitted, comma-separated. Defaults to limit-only (design §6.2). Limit is a strict
+    # SUBSET of limit+market, so widening this later is additive; shipping permissive and narrowing
+    # later breaks whatever came to depend on it. A market order also hands the price decision to the
+    # book, and the preview an owner approved is the whole control in this design.
+    execution_order_types: str = Field(default="limit")
+
+    # How long an arming window lasts. Confirmation is still required per order; the window only
+    # spares the operator from re-arming between them.
+    execution_arm_ttl_seconds: int = Field(default=900, ge=60, le=3600)
+
+    # A preview older than this cannot be confirmed. It is sized against account state and prices
+    # fetched at preview time; confirming a stale one would submit an order the operator approved
+    # against numbers that no longer hold. Refused, never silently re-priced.
+    execution_preview_ttl_seconds: int = Field(default=120, ge=15, le=900)
+
+    # Hard cap on submission ATTEMPTS per window, enforced server-side and independent of any client.
+    # Counts attempts rather than successes: a loop failing validation still burns the budget, which
+    # is the point — the cap exists to stop a runaway, and a runaway that fails fast is still a
+    # runaway. Tripping it DISARMS execution and requires a human to re-arm.
+    execution_max_orders_per_window: int = Field(default=10, ge=1, le=100)
+    execution_rate_window_seconds: int = Field(default=3600, ge=60, le=86_400)
+
+    # --- Guardrail thresholds (charter §5, docs/AGENTIC_ROBINHOOD_v1.md) ----------------------
+    # Config, not constants: the charter's numbers are tuned for a $100 aggressive account and will
+    # not survive contact with a different account size. Tunable and observable — every evaluation
+    # writes a guardrail_events row naming the threshold it used, so a blocked order can always be
+    # traced to the number that blocked it rather than to "the system said no".
+    guardrail_cash_floor_pct: float = Field(default=10.0, ge=0.0, le=100.0)
+    guardrail_max_position_pct: float = Field(default=25.0, ge=1.0, le=100.0)
+    guardrail_max_names: int = Field(default=6, ge=1, le=50)
+    guardrail_max_drawdown_pct: float = Field(default=25.0, ge=1.0, le=100.0)
+
+    @property
+    def execution_order_type_list(self) -> list[str]:
+        """The permitted order types, normalised. Empty means execution is impossible, not open."""
+        return [t.strip().lower() for t in self.execution_order_types.split(",") if t.strip()]
+
     # --- CORS -------------------------------------------------------------------------------
     # Comma-separated list of explicitly-allowed browser origins. Empty by default: the dashboard's
     # randomly-chosen frontend port is instead matched by ``cors_origin_regex`` below (localhost /
