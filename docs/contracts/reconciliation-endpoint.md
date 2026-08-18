@@ -29,8 +29,12 @@ For every symbol in (slate ∪ live):
 - in slate, not held → `missing` (an exit with no record: GEV, PLTR)
 - held, not in slate → `unexpected` (an entry with no record: MU, SVRA)
 
-`drift_pct = live_weight_pct - target_weight_pct`. Cash is reported in `meta` (target vs live), not
-as a position row. `in_sync` is true only when missing = unexpected = 0 and nothing has drifted.
+`drift_pct = live_weight_pct - target_weight_pct` (absolute points), and `drift_rel_pct =
+drift_pct / target_weight_pct * 100` (the same drift relative to the target, null when target is 0 or
+absent). Status is driven by the ABSOLUTE threshold, returned as `meta.drift_tolerance_pct` so the UI
+states the rule instead of hardcoding it; the relative figure is display-only, because 1.5 points is
+7% of a 22% target but 50% of a 3% one. Cash is reported in `meta` (target vs live), not as a position
+row. `in_sync` is true only when missing = unexpected = 0 and nothing has drifted.
 
 ## Discipline checks
 
@@ -52,6 +56,7 @@ rule breached (a name past its stop), `warn` for a soft breach (cash band, floor
     "documented_book_value": 100.00,    // what the slate assumed; a gap means unaccounted deposits
     "target_cash_pct": 10.0,
     "live_cash_pct": 38.6,
+    "drift_tolerance_pct": 1.5,         // absolute-points threshold for match vs drifted; UI states it
     "in_sync": false
   },
   "positions": [
@@ -59,7 +64,8 @@ rule breached (a name past its stop), `warn` for a soft breach (cash band, floor
       "symbol": "GEV",
       "target_weight_pct": 9.0,         // null when unexpected
       "live_weight_pct": null,          // null when missing
-      "drift_pct": null,                // live - target; null if either side absent
+      "drift_pct": null,                // live - target (absolute pts); null if either side absent
+      "drift_rel_pct": null,            // drift relative to target (%); null if target 0/absent
       "status": "missing",              // match | drifted | missing | unexpected
       "market_value": null,
       "unrealized_pl_pct": null,

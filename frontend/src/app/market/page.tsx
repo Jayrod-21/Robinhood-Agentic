@@ -23,6 +23,19 @@ const SENTIMENT_DOT: Record<Sentiment, string> = { positive: "bg-gain", negative
 const daysLabel = (n: number | null) => (n == null ? "" : n <= 0 ? "today" : n === 1 ? "1 day" : `${n} days`);
 const catalystDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
+// The Market Mover feed is third-party text (WW threat model: stored and rendered as DATA, never
+// trusted). A headline's url is no exception: only follow http(s). Anything else (javascript:, data:,
+// a malformed string) renders as non-clickable text rather than becoming a live, clickable link.
+function httpUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function MarketPage() {
   const { data, error, isLoading } = useSWR<MarketContextResponse>(
     MARKET_MOCK ? null : "/api/market-context",
@@ -199,10 +212,11 @@ function HeadlineRow({ h }: { h: Headline }) {
       </div>
     </div>
   );
+  const href = httpUrl(h.url);
   return (
     <li className="px-5 py-3">
-      {h.url ? (
-        <a href={h.url} target="_blank" rel="noopener noreferrer" className="group block">
+      {href ? (
+        <a href={href} target="_blank" rel="noopener noreferrer" className="group block">
           {inner}
         </a>
       ) : (
