@@ -158,7 +158,7 @@ export default function ReconciliationPage() {
                 <th className="px-5 py-2 font-medium">Symbol</th>
                 <th className="px-3 py-2 text-right font-medium">Target</th>
                 <th className="px-3 py-2 text-right font-medium">Live</th>
-                <th className="px-3 py-2 text-right font-medium">Drift</th>
+                <th className="px-3 py-2 text-right font-medium" title={`Drifted past ${meta.drift_tolerance_pct} pts of target; percent is relative to the target weight`}>Drift</th>
                 <th className="px-3 py-2 text-right font-medium">P&amp;L</th>
                 <th className="px-3 py-2 text-center font-medium">Status</th>
                 <th className="px-5 py-2 font-medium">Note</th>
@@ -175,6 +175,9 @@ export default function ReconciliationPage() {
                   <td className="px-3 py-2.5 text-right tnum text-zinc-200">{fmtWeight(p.live_weight_pct)}</td>
                   <td className={cn("px-3 py-2.5 text-right tnum", p.drift_pct == null ? "text-zinc-600" : plColor(p.drift_pct))}>
                     {p.drift_pct == null ? "—" : `${p.drift_pct > 0 ? "+" : ""}${p.drift_pct.toFixed(1)}`}
+                    {p.drift_rel_pct != null && (
+                      <span className="ml-1 text-[10px] text-zinc-600">({p.drift_rel_pct > 0 ? "+" : ""}{p.drift_rel_pct.toFixed(0)}%)</span>
+                    )}
                   </td>
                   <td className={cn("px-3 py-2.5 text-right tnum", plColor(p.unrealized_pl_pct))}>{p.unrealized_pl_pct == null ? "—" : pct(p.unrealized_pl_pct)}</td>
                   <td className="px-3 py-2.5 text-center">

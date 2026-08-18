@@ -21,8 +21,13 @@ export interface ReconPosition {
   target_weight_pct: number | null;
   /** Live weight from the broker snapshot (account-value basis); null when missing. */
   live_weight_pct: number | null;
-  /** live - target, in percentage points; null when either side is absent. */
+  /** live - target, in percentage points; null when either side is absent. Status is driven by
+   *  this absolute threshold (meta.drift_tolerance_pct), not the relative one. */
   drift_pct: number | null;
+  /** (live - target) / target as a percent: the SAME drift expressed relative to the target weight,
+   *  because 1.5 absolute points is 7% of a 22% target but 50% of a 3% one. Display-only; null when
+   *  either side is absent or the target is 0. */
+  drift_rel_pct: number | null;
   status: PositionStatus;
   market_value: number | null;
   unrealized_pl_pct: number | null;
@@ -59,6 +64,9 @@ export interface ReconMeta {
   documented_book_value: number | null;
   target_cash_pct: number | null;
   live_cash_pct: number | null;
+  /** The absolute-points threshold that separates "match" from "drifted", surfaced so the UI states
+   *  the rule instead of hardcoding it (backend owns the number). */
+  drift_tolerance_pct: number;
   /** True only when zero positions are missing/unexpected AND nothing has drifted materially. */
   in_sync: boolean;
 }
@@ -89,7 +97,12 @@ export const RECON_MOCK = process.env.NEXT_PUBLIC_RECON_MOCK === "1";
 const ACCOUNT_VALUE = 239.79;
 const mv = (weightPct: number) => Number(((weightPct / 100) * ACCOUNT_VALUE).toFixed(2));
 
-const POSITIONS: ReconPosition[] = [
+// drift_rel_pct is derived from the absolute drift and the target, so the ten rows below stay the
+// authoritative source for each name's drift and the relative figure can't fall out of sync.
+const relDrift = (drift: number | null, target: number | null): number | null =>
+  drift == null || target == null || target === 0 ? null : Number(((drift / target) * 100).toFixed(1));
+
+const RAW_POSITIONS: Omit<ReconPosition, "drift_rel_pct">[] = [
   { symbol: "TSM", target_weight_pct: 22, live_weight_pct: 15.9, drift_pct: -6.1, status: "drifted", market_value: mv(15.9), unrealized_pl_pct: 2.1, in_universe: true, note: null },
   { symbol: "VST", target_weight_pct: 15, live_weight_pct: 9.5, drift_pct: -5.5, status: "drifted", market_value: mv(9.5), unrealized_pl_pct: -3.5, in_universe: true, note: null },
   { symbol: "NVDA", target_weight_pct: 13, live_weight_pct: 11.0, drift_pct: -2.0, status: "drifted", market_value: mv(11.0), unrealized_pl_pct: 4.2, in_universe: true, note: null },
@@ -101,6 +114,11 @@ const POSITIONS: ReconPosition[] = [
   { symbol: "MU", target_weight_pct: null, live_weight_pct: 6.9, drift_pct: null, status: "unexpected", market_value: mv(6.9), unrealized_pl_pct: -18.2, in_universe: true, note: "no entry recorded; -18.2% near its stop" },
   { symbol: "SVRA", target_weight_pct: null, live_weight_pct: 2.5, drift_pct: null, status: "unexpected", market_value: mv(2.5), unrealized_pl_pct: -8.0, in_universe: false, note: "off-universe: not in src/universe.py; needs a thesis or an exit" },
 ];
+
+const POSITIONS: ReconPosition[] = RAW_POSITIONS.map((p) => ({
+  ...p,
+  drift_rel_pct: relDrift(p.drift_pct, p.target_weight_pct),
+}));
 
 const CHECKS: DisciplineCheck[] = [
   { rule: "Max ~25% per name", source: "charter:67", status: "ok", severity: "info", detail: "OK. TSM is the largest at 15.9%." },
@@ -119,6 +137,7 @@ export const MOCK_RECONCILIATION: ReconciliationResponse = {
     documented_book_value: 100,
     target_cash_pct: 10,
     live_cash_pct: 38.6,
+    drift_tolerance_pct: 1.5,
     in_sync: false,
   },
   positions: POSITIONS,
