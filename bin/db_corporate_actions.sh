@@ -78,6 +78,12 @@ flags=(
 # Pass FMP_API_KEY through only when the caller exported it (load_delistings.py fmp needs it).
 # Via the environment, never argv, so the key cannot be read from `ps`.
 [[ -n "${FMP_API_KEY:-}" ]] && flags+=(--env FMP_API_KEY)
+# Same rule for the broker credentials (sync_real_portfolio.py reads the account): through the
+# environment, never argv. Forwarded only when set, so a loader that does not need them is
+# unaffected — and a missing key still fails loudly inside the container rather than here.
+for _v in ALPACA_API_KEY_ID ALPACA_API_SECRET_KEY ALPACA_BASE_URL; do
+  [[ -n "${!_v:-}" ]] && flags+=(--env "${_v}")
+done
 [[ -t 0 ]] && flags+=(--tty)
 
 # LOADER_SCRIPT lets this wrapper serve any loader that needs BOTH the database and egress.

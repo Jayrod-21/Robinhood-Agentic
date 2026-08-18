@@ -46,9 +46,11 @@ from src.alpaca_execution import (
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("seed_paper_book")
 
+# The fifteen the owner named. TMO was originally written "TMOM", which is not a symbol on any
+# venue this project can reach — resolved with the owner as Thermo Fisher.
 BASKET = [
     "AMD", "NVDA", "GM", "MSFT", "QBTS", "ISRG", "GLD",
-    "BRK.B", "BE", "QCOM", "VST", "V", "CVX", "SVRA",
+    "BRK.B", "BE", "QCOM", "VST", "V", "CVX", "SVRA", "TMO",
 ]
 
 
@@ -57,6 +59,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--notional", type=float, default=500.0, help="dollars per name")
     ap.add_argument("--tag", required=True, help="run tag; makes client_order_id deterministic")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--symbols", default="",
+                    help="comma-separated subset of the basket (default: the whole basket). Use "
+                         "this to seed a name added later — re-running the full basket under a new "
+                         "tag would buy every existing position a second time, because the "
+                         "collision guard is the deterministic client_order_id, which the tag "
+                         "changes.")
     ap.add_argument("--no-audit", action="store_true",
                     help="place without recording rows (requires saying so out loud)")
     args = ap.parse_args(argv)
@@ -64,10 +72,20 @@ def main(argv: list[str] | None = None) -> int:
     client = AlpacaClient()
     client.assert_paper()  # never a live account, whatever the environment says
 
+    basket = BASKET
+    if args.symbols.strip():
+        wanted = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+        unknown = [s for s in wanted if s not in BASKET]
+        if unknown:
+            logger.error("not in the basket: %s — add it to BASKET first so the intended book stays "
+                         "readable in one place", ", ".join(unknown))
+            return 1
+        basket = wanted
+
     acct = client.account()
     equity = float(acct.get("equity") or 0)
-    needed = args.notional * len(BASKET)
-    logger.info("account equity $%.2f | deploying $%.2f across %d names", equity, needed, len(BASKET))
+    needed = args.notional * len(basket)
+    logger.info("account equity $%.2f | deploying $%.2f across %d names", equity, needed, len(basket))
     if needed > equity:
         logger.error("basket needs $%.2f but the account holds $%.2f", needed, equity)
         return 1
@@ -97,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.warning("--no-audit: orders will be PLACED with no row in `orders`")
     placed, failed = [], []
 
-    for symbol in BASKET:
+    for symbol in basket:
         coid = f"seed-{args.tag}-{symbol.replace('.', '')}"
         if args.dry_run:
             logger.info("DRY RUN %s $%.2f (client_order_id=%s)", symbol, args.notional, coid)

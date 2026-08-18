@@ -1,21 +1,40 @@
-# Twice-daily cycle — market open + close, US/Eastern (DST-aware via CRON_TZ).
+# 3b Robinhood Agentic — scheduled jobs.
 # Install with:  crontab -e   (paste, then verify with:  crontab -l)
-# Paths below are M's real checkout; adjust only if the repo moves.
 #
-# Each run: refresh the snapshot via the Robinhood MCP (host), then run the in-container cycle
-# (scan + per-position debates + report). Logs go to logs/cron/<date>-<phase>.log.
+# Paths are M's real checkout. They contain a SPACE, so every path is quoted and every job is
+# invoked through `bash` — cron splits an unquoted command on whitespace and would otherwise run
+# "/home/jared-williams/projects/3b." with "Robinhood" as its first argument.
 
 CRON_TZ=America/New_York
 
 # Point the cycle at the PROD compose so `docker compose exec` hits the prod backend container.
-AGENTIC_COMPOSE_FILE=/srv/agentic/robinhood-agentic/deploy/docker-compose.prod.yml
+# Unquoted on purpose: cron takes an environment value literally to end of line, so the space in
+# the path is fine here — unlike in the job command below, which cron DOES split on whitespace.
+AGENTIC_COMPOSE_FILE=/home/jared-williams/projects/3b. Robinhood Agentic/deploy/docker-compose.prod.yml
 
 # Only needed if the robinhood MCP is PROJECT-scoped (set it to that project dir). If the MCP is
 # added at USER scope (recommended), the cwd doesn't matter — leave this commented out.
-# AGENTIC_MCP_CWD=/srv/agentic
+# AGENTIC_MCP_CWD=/home/jared-williams/projects
 
+# ── Daily marking: the equity curve ───────────────────────────────────────────────────────────
+# Syncs the broker mirror, loads the day's closes, then marks the book. 17:15 ET is after the
+# 16:00 close with room for the vendor to publish the daily bar. Weekdays only; the job skips
+# market holidays itself via market_calendar.
+#
+# This one is NOT optional if the performance page is meant to mean anything. A missed day is a
+# permanent hole: a live mark is refused once it is more than 3 days old and must then be
+# backfilled as an explicitly historical mark.
+15 17 * * 1-5 /usr/bin/env bash "/home/jared-williams/projects/3b. Robinhood Agentic/bin/nightly_marks.sh"
+
+# ── Twice-daily cycle ─────────────────────────────────────────────────────────────────────────
+# Each run: refresh the snapshot via the Robinhood MCP (host), then run the in-container cycle
+# (scan + per-position debates + report). Logs go to logs/cron/<date>-<phase>.log.
+#
+# NOT INSTALLED on M as of 2026-08-18 — it drives a host-side `claude` invocation through the
+# Robinhood MCP, which nobody has run unattended yet. Enable deliberately, not by pasting.
+#
 # Market OPEN 09:30 ET → run at 09:32 (let the open print settle). Mon–Fri.
-32 9 * * 1-5 "/srv/agentic/robinhood-agentic/bin/scheduled_cycle.sh" open
-
+# 32 9 * * 1-5 /usr/bin/env bash "/home/jared-williams/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" open
+#
 # Market CLOSE 16:00 ET → run at 16:02. Mon–Fri.
-2 16 * * 1-5 "/srv/agentic/robinhood-agentic/bin/scheduled_cycle.sh" close
+# 2 16 * * 1-5 /usr/bin/env bash "/home/jared-williams/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" close
