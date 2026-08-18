@@ -61,11 +61,13 @@ def _price_history(symbol: str) -> list[dict[str, Any]]:
     a shape people trust more than text.
     """
     try:
-        from src.fmp import get_shared_client
+        from src.fmp import get_shared_client, to_fmp_symbol
 
         rows = get_shared_client().get(
             "historical-price-eod/full",
-            {"symbol": symbol, "from": _history_start()},
+            # Broker spelling -> vendor spelling. BRK.B vs BRK-B returns an EMPTY series rather
+            # than an error, so without this the chart is silently blank for class shares.
+            {"symbol": to_fmp_symbol(symbol), "from": _history_start()},
         )
     except Exception as exc:  # noqa: BLE001 — a missing chart must not fail the page
         logger.warning("price history unavailable for %s: %s", symbol, exc)

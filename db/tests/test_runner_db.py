@@ -365,6 +365,7 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # was safe because the tables are empty at apply time. Destructiveness is what the SQL does,
         # not what the table happens to hold today.
         ("014", False, True),
+        ("015", False, True),  # down drops requested_notional — the only record of a dollar-sized ask
     ]
 
 
@@ -498,7 +499,7 @@ def test_real_migrations_up_down_up(db_url: str) -> None:
     # 004's trigger functions leave no residue either.
     assert q(db_url, "SELECT count(*) FROM pg_proc WHERE proname LIKE 'enforce\\_%%'")[0][0] == 0
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 14
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 15
 
 
 # ── 004: the evaluation tables ────────────────────────────────────────────────────────────────
@@ -1537,7 +1538,7 @@ def test_prd_backfill_rollback_refuses_to_launder_history(db_url: str) -> None:
     q(db_url, "DELETE FROM portfolio_returns_daily WHERE portfolio_id = %s", (pid,))
     assert main(["down", "--allow-destructive", "--target", "008", "--migrations-dir", md]) == EXIT_OK
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 14
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 15
 
 
 # ── 010: the rh_app role comment states the verified truth (issue #31) ───────────────────────
