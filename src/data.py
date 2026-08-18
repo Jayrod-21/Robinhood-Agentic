@@ -131,3 +131,131 @@ def fetch_fundamentals_fmp(ticker: str) -> dict | None:
     except Exception as exc:  # noqa: BLE001 — one bad ticker must never take down a scan
         logger.warning("fetch_fundamentals_fmp(%s) failed: %s", ticker, exc)
         return None
+
+
+# --- the wider fundamental set ----------------------------------------------------------------
+# Everything the owner's Bloomberg pull carries, sourced from FMP where it exists and computed
+# where it does not. See db/migrations/016_fundamentals_full.up.sql for why derived values are
+# marked rather than mixed in silently.
+
+
+def _split_range(raw) -> tuple[float | None, float | None]:
+    """FMP's profile carries the 52-week range as one string, "169.21-260.10"."""
+    if not isinstance(raw, str) or "-" not in raw:
+        return None, None
+    lo, _, hi = raw.partition("-")
+    return _safe_num(lo), _safe_num(hi)
+
+
+def wide_fundamentals_from_fmp(bundle: dict) -> tuple[dict, dict]:
+    """Map a bundle into the full fundamentals row, plus a record of what we DERIVED.
+
+    Returns ``(row, derived)``. ``derived`` names each computed key and the formula behind it, so a
+    figure that looks wrong can be traced to either the vendor or our arithmetic — they are
+    indistinguishable once both sit in adjacent columns.
+
+    Absent inputs yield None, never zero or a guess. A zero P/B reads as "this company trades at
+    nothing", which is a claim; None reads as "we do not know", which is the truth.
+    """
+    profile = bundle.get("profile") or {}
+    ratios = bundle.get("ratios") or {}
+    income = bundle.get("income") or {}
+    cash = bundle.get("cash_flow") or {}
+    balance = bundle.get("balance") or {}
+    metrics = bundle.get("key_metrics") or {}
+    target = bundle.get("price_target") or {}
+    grades = bundle.get("grades") or {}
+    derived: dict[str, str] = {}
+
+    revenue = _safe_num(income.get("revenue"))
+    rd = _safe_num(income.get("researchAndDevelopmentExpenses"))
+    equity = _safe_num(balance.get("totalStockholdersEquity"))
+    assets = _safe_num(balance.get("totalAssets"))
+    price = _safe_num(profile.get("price"))
+    tbvps = _safe_num(ratios.get("tangibleBookValuePerShare"))
+    lo52, hi52 = _split_range(profile.get("range"))
+
+    rd_to_revenue = None
+    if rd is not None and revenue:
+        rd_to_revenue = rd / revenue
+        derived["rd_to_revenue"] = "researchAndDevelopmentExpenses / revenue"
+
+    equity_to_assets = None
+    if equity is not None and assets:
+        equity_to_assets = equity / assets
+        derived["equity_to_assets"] = "totalStockholdersEquity / totalAssets"
+
+    price_to_tangible_book = None
+    if price is not None and tbvps:
+        price_to_tangible_book = price / tbvps
+        derived["price_to_tangible_book"] = "profile.price / ratios.tangibleBookValuePerShare"
+
+    if lo52 is not None or hi52 is not None:
+        derived["week_52_high"] = "split from profile.range"
+        derived["week_52_low"] = "split from profile.range"
+
+    row = {
+        "dividend_yield": _safe_num(ratios.get("dividendYield")),
+        "ev_to_ebitda": _safe_num(ratios.get("enterpriseValueMultiple")),
+        "price_to_book": _safe_num(ratios.get("priceToBookRatio")),
+        "price_to_sales": _safe_num(ratios.get("priceToSalesRatio")),
+        "price_to_tangible_book": price_to_tangible_book,
+        "beta": _safe_num(profile.get("beta")),
+        "week_52_high": hi52,
+        "week_52_low": lo52,
+        "avg_volume_30d": int(v) if (v := _safe_num(profile.get("averageVolume"))) else None,
+        "revenue_ttm": revenue,
+        "ebitda_ttm": _safe_num(income.get("ebitda")),
+        "capital_expenditure": _safe_num(cash.get("capitalExpenditure")),
+        "net_debt": _safe_num(balance.get("netDebt")),
+        "shares_outstanding": _safe_num(income.get("weightedAverageShsOut")),
+        "tangible_book_value_per_share": tbvps,
+        "rd_to_revenue": rd_to_revenue,
+        "equity_to_assets": equity_to_assets,
+        "roe": _safe_num(metrics.get("returnOnEquity")),
+        "roc": _safe_num(metrics.get("returnOnInvestedCapital")),
+        "debt_to_equity": _safe_num(ratios.get("debtToEquityRatio")),
+        "ebitda_interest": _safe_num(ratios.get("interestCoverageRatio")),
+        "cash_conversion_cycle": _safe_num(metrics.get("cashConversionCycle")),
+        "eps_current": _safe_num(income.get("eps")),
+        "analyst_target_price": _safe_num(target.get("targetConsensus")),
+        "analyst_recommendation": grades.get("consensus"),
+        # Deliberately absent, and recorded as such rather than left to be discovered:
+        #   short_interest       — no FMP endpoint on this plan
+        #   eps_next_year_est    — the analyst-estimates endpoint answers 400 here
+        #   insider/institutional ownership — the ownership endpoint 404s on this plan
+        "short_interest": None,
+        "eps_next_year_est": None,
+    }
+    return row, derived
+
+
+def piotroski_inputs(period_income: dict, period_cash: dict, period_balance: dict) -> dict:
+    """Reshape one annual period into the nine-signal input dict src/piotroski.py expects."""
+    return {
+        "period_end": (period_income or {}).get("date"),
+        "net_income": (period_income or {}).get("netIncome"),
+        "cfo": (period_cash or {}).get("netCashProvidedByOperatingActivities"),
+        "shares_out": (period_income or {}).get("weightedAverageShsOut"),
+        "total_assets": (period_balance or {}).get("totalAssets"),
+        "long_term_debt": (period_balance or {}).get("longTermDebt"),
+        "current_assets": (period_balance or {}).get("totalCurrentAssets"),
+        "current_liabilities": (period_balance or {}).get("totalCurrentLiabilities"),
+        "cost_of_revenue": (period_income or {}).get("costOfRevenue"),
+        "revenue": (period_income or {}).get("revenue"),
+    }
+
+
+def eps_growth_yoy(periods_income: list[dict]) -> float | None:
+    """EPS growth from two annual periods. Derived — FMP has no such field on this plan.
+
+    None when the prior EPS is zero or negative: a growth rate off a negative base is a number
+    with no interpretation, and reporting one would be worse than reporting nothing.
+    """
+    if not periods_income or len(periods_income) < 2:
+        return None
+    cur = _safe_num(periods_income[0].get("eps"))
+    prior = _safe_num(periods_income[1].get("eps"))
+    if cur is None or prior is None or prior <= 0:
+        return None
+    return (cur - prior) / prior

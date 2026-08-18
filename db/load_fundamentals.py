@@ -44,7 +44,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import psycopg
 
-from src.data import known_at_from_statement
+from src import piotroski as piotroski_mod
+from src.data import (
+    eps_growth_yoy,
+    known_at_from_statement,
+    piotroski_inputs,
+    wide_fundamentals_from_fmp,
+)
 from src.fmp import (
     FmpBudgetExhausted,
     FmpClient,
@@ -101,7 +107,21 @@ def annual_row(bundle: dict, security_id: int) -> dict | None:
     if not period_end or not known_at:
         return None
 
-    return {
+    wide, derived = wide_fundamentals_from_fmp(bundle)
+    periods = bundle.get("periods") or {}
+    inc, cf, bal = periods.get("income") or [], periods.get("cash_flow") or [], periods.get("balance") or []
+
+    # Piotroski needs TWO consecutive annual periods. With only one on record the score is not
+    # computed at all rather than computed against nothing — a score built from a single year would
+    # be seven unknown signals wearing a number.
+    pio = None
+    if len(inc) >= 2 and len(cf) >= 2 and len(bal) >= 2:
+        pio = piotroski_mod.score(
+            piotroski_inputs(inc[0], cf[0], bal[0]),
+            piotroski_inputs(inc[1], cf[1], bal[1]),
+        )
+
+    row = {
         "security_id": security_id,
         "period_end": period_end,
         "period_type": "annual",
@@ -121,6 +141,14 @@ def annual_row(bundle: dict, security_id: int) -> dict | None:
         "current_ratio": _num(ratios.get("currentRatio")),
         "quick_ratio": _num(ratios.get("quickRatio")),
         "revenue_growth_yoy": _num(growth.get("revenueGrowth")),
+        **wide,
+        "eps_growth_yoy": eps_growth_yoy(inc),
+        "derived_fields": json.dumps(derived) if derived else None,
+        "piotroski_f_score": pio["score"] if pio and pio["complete"] else None,
+        # The variant travels WITH the score, always: migration 016 enforces it, because a score
+        # whose definition is unknown cannot be compared to anything, including Bloomberg's.
+        "piotroski_variant": pio["variant"] if pio and pio["complete"] else None,
+        "piotroski_signals": json.dumps(pio) if pio else None,
         "extra": json.dumps(
             {
                 "fiscal_year": income.get("fiscalYear"),
@@ -132,6 +160,7 @@ def annual_row(bundle: dict, security_id: int) -> dict | None:
             }
         ),
     }
+    return row
 
 
 def snapshot_row(bundle: dict, security_id: int, fetched_at: datetime) -> dict | None:
@@ -183,14 +212,30 @@ def snapshot_row(bundle: dict, security_id: int, fetched_at: datetime) -> dict |
 _COLUMNS = (
     "security_id, period_end, period_type, known_at, market_cap, price, pe_trailing, pe_forward, "
     "peg_ratio, free_cash_flow, fcf_yield, gross_margin, operating_margin, net_margin, "
-    "ebitda_margin, current_ratio, quick_ratio, revenue_growth_yoy, extra, source_id"
+    "ebitda_margin, current_ratio, quick_ratio, revenue_growth_yoy, "
+    # 016: the rest of the Bloomberg pull.
+    "dividend_yield, ev_to_ebitda, price_to_book, price_to_sales, price_to_tangible_book, beta, "
+    "week_52_high, week_52_low, avg_volume_30d, revenue_ttm, ebitda_ttm, capital_expenditure, "
+    "net_debt, shares_outstanding, tangible_book_value_per_share, eps_growth_yoy, rd_to_revenue, "
+    "equity_to_assets, roe, roc, debt_to_equity, ebitda_interest, cash_conversion_cycle, "
+    "eps_current, eps_next_year_est, short_interest, analyst_target_price, "
+    "analyst_recommendation, derived_fields, piotroski_f_score, piotroski_variant, "
+    "piotroski_signals, extra, source_id"
 )
 _PLACEHOLDERS = ", ".join(["%s"] * (len(_COLUMNS.split(",")) - 1)) + ", %s"
 
 
 def _values(row: dict, source_id: int) -> tuple:
+    """Row -> tuple in _COLUMNS order, with absent keys written as NULL.
+
+    `.get`, not `[]`: the two row kinds carry different columns ON PURPOSE. An annual row has
+    margins and Piotroski and no market cap; a snapshot row has market cap and price and no
+    statement figures. Demanding every column from both would force each to carry placeholder
+    values for the other's fields — which is exactly the merging the two-row design exists to
+    prevent.
+    """
     keys = [c.strip() for c in _COLUMNS.split(",") if c.strip() != "source_id"]
-    return (*(row[k] for k in keys), source_id)
+    return (*(row.get(k) for k in keys), source_id)
 
 
 def store(conn: psycopg.Connection, rows: list[dict], *, fetched_at: datetime, notes: str) -> int:
@@ -210,9 +255,19 @@ def store(conn: psycopg.Connection, rows: list[dict], *, fetched_at: datetime, n
         # NOT DISTINCT. source_id differs per run, so re-running does NOT overwrite — it appends a
         # second observation of the same period. That is correct for a point-in-time store: a
         # restatement is a new fact, not a correction to be applied in place.
+        # UPSERT on the observation key (017): re-running is the SAME observation with a possibly
+        # better mapping, so it updates in place. A genuine restatement carries a new known_at and
+        # therefore lands as a new row, which is the behaviour the append-only design wanted and
+        # the old source_id-keyed constraint failed to deliver.
+        updatable = [
+            c.strip() for c in _COLUMNS.split(",")
+            if c.strip() not in ("security_id", "period_end", "period_type", "known_at")
+        ]
+        set_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in updatable)
         cur.executemany(
             f"INSERT INTO fundamentals_snapshots ({_COLUMNS}) VALUES ({_PLACEHOLDERS}) "
-            f"ON CONFLICT DO NOTHING",
+            f"ON CONFLICT (security_id, period_end, period_type, known_at) "
+            f"DO UPDATE SET {set_clause}, updated_at = now()",
             [_values(r, source_id) for r in rows],
         )
         inserted = cur.rowcount
@@ -237,7 +292,7 @@ def cmd_load(conn: psycopg.Connection, args: argparse.Namespace) -> int:
             skipped_unknown.append(symbol)
             continue
         try:
-            bundle = client.fundamentals_bundle(symbol)
+            bundle = client.fundamentals_bundle(symbol, periods=max(2, args.periods))
         except FmpBudgetExhausted as exc:
             # Stop cleanly rather than half-loading the universe: what was fetched is written,
             # what was not is named. A partial load that looks complete is the failure mode here.
@@ -303,6 +358,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="load_fundamentals")
     p.add_argument("command", choices=tuple(COMMANDS))
     p.add_argument("--symbols", default="", help="comma-separated tickers")
+    p.add_argument("--periods", type=int, default=2,
+                   help="annual periods per symbol (floored at 2 — Piotroski needs a prior year)")
     p.add_argument("--dry-run", action="store_true", help="fetch and map, write nothing")
     p.add_argument("--verbose", action="store_true")
     return p

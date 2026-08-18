@@ -309,11 +309,32 @@ class FmpClient:
         rows = self.get("cash-flow-statement", {"symbol": to_fmp_symbol(symbol), "limit": limit, "period": period})
         return rows if isinstance(rows, list) else []
 
+    def balance_sheet(self, symbol: str, *, limit: int = 1, period: str = "annual") -> list[dict]:
+        rows = self.get("balance-sheet-statement",
+                        {"symbol": to_fmp_symbol(symbol), "limit": limit, "period": period})
+        return rows if isinstance(rows, list) else []
+
+    def key_metrics(self, symbol: str, *, limit: int = 1, period: str = "annual") -> list[dict]:
+        rows = self.get("key-metrics",
+                        {"symbol": to_fmp_symbol(symbol), "limit": limit, "period": period})
+        return rows if isinstance(rows, list) else []
+
+    def price_target(self, symbol: str) -> dict | None:
+        rows = self.get("price-target-consensus", {"symbol": to_fmp_symbol(symbol)})
+        return rows[0] if isinstance(rows, list) and rows else None
+
+    def grades(self, symbol: str) -> dict | None:
+        rows = self.get("grades-consensus", {"symbol": to_fmp_symbol(symbol)})
+        return rows[0] if isinstance(rows, list) and rows else None
+
     def growth(self, symbol: str, *, limit: int = 1, period: str = "annual") -> list[dict]:
         rows = self.get("financial-growth", {"symbol": to_fmp_symbol(symbol), "limit": limit, "period": period})
         return rows if isinstance(rows, list) else []
 
-    CALLS_PER_SYMBOL = 5
+    # profile, ratios, income, cash-flow, growth, balance-sheet, key-metrics, price-target, grades.
+    # Two annual periods of the statements are fetched in one call each (limit=2), which is what
+    # makes the year-over-year Piotroski comparisons possible without doubling the call count.
+    CALLS_PER_SYMBOL = 9
 
     def fundamentals_bundle(self, symbol: str, *, periods: int = 1) -> dict[str, Any]:
         """Every payload needed to build one fundamentals row. 5 calls.
@@ -331,8 +352,14 @@ class FmpClient:
         income = self.income_statement(symbol, limit=periods)
         cash_flow = self.cash_flow(symbol, limit=periods)
         growth = self.growth(symbol, limit=periods)
+        balance = self.balance_sheet(symbol, limit=periods)
+        key_metrics = self.key_metrics(symbol, limit=periods)
         return {
             "profile": self.profile(symbol),
+            "balance": (balance or [None])[0],
+            "key_metrics": (key_metrics or [None])[0],
+            "price_target": self.price_target(symbol),
+            "grades": self.grades(symbol),
             # [0] is the most recent period — what the screen gates on.
             "ratios": (ratios or [None])[0],
             "income": (income or [None])[0],
@@ -346,6 +373,8 @@ class FmpClient:
                 "income": income,
                 "cash_flow": cash_flow,
                 "growth": growth,
+                "balance": balance,
+                "key_metrics": key_metrics,
             },
         }
 

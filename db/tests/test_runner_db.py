@@ -366,6 +366,9 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # not what the table happens to hold today.
         ("014", False, True),
         ("015", False, True),  # down drops requested_notional — the only record of a dollar-sized ask
+        ("016", False, True),  # down drops the wider fundamentals and the Piotroski working
+        ("017", False, True),  # collapses duplicate observations; the down cannot restore them
+        ("018", False, False),  # drops a redundant index; enforces nothing the observation key does not
     ]
 
 
@@ -499,7 +502,7 @@ def test_real_migrations_up_down_up(db_url: str) -> None:
     # 004's trigger functions leave no residue either.
     assert q(db_url, "SELECT count(*) FROM pg_proc WHERE proname LIKE 'enforce\\_%%'")[0][0] == 0
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 15
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 18
 
 
 # ── 004: the evaluation tables ────────────────────────────────────────────────────────────────
@@ -1538,7 +1541,7 @@ def test_prd_backfill_rollback_refuses_to_launder_history(db_url: str) -> None:
     q(db_url, "DELETE FROM portfolio_returns_daily WHERE portfolio_id = %s", (pid,))
     assert main(["down", "--allow-destructive", "--target", "008", "--migrations-dir", md]) == EXIT_OK
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 15
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 18
 
 
 # ── 010: the rh_app role comment states the verified truth (issue #31) ───────────────────────
