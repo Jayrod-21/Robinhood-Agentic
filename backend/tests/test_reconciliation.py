@@ -136,12 +136,16 @@ def test_an_unreadable_slate_is_503_not_an_empty_reconciliation(monkeypatch):
 
 
 def test_the_documented_book_size_is_surfaced(monkeypatch):
-    """The slate assumes a $100 book; the account is $100k. A gap means deposits nobody recorded —
-    or, as here, a broker migration. Either way it is the operator's to explain, not ours to hide."""
+    """A gap between the slate's assumed book and the live account means deposits nobody recorded —
+    or a broker migration. Either way it is the operator's to explain, not ours to hide.
+
+    The slate was restated onto the Alpaca account on 2026-08-18, so the documented book is now
+    $100,000 rather than the $100 Robinhood bootstrap. This reads the REAL docs/SLATE.md, so it goes
+    red if that header is edited without anyone thinking about what reconciliation will report."""
     monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot(cash=1000.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {})
     meta = rec.reconciliation()["meta"]
-    assert meta["documented_book_value"] == 100.0
+    assert meta["documented_book_value"] == 100_000.0
     assert meta["account_value"] == 1000.0
     assert meta["slate_dated"] == "2026-06-03"
 

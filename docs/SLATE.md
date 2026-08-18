@@ -1,24 +1,57 @@
 # Target Slate — current allocation plan
 
-> The live target portfolio for the $100 Agentic account. Output of the 2026-06-03 allocation debate
-> (12-agent workflow; Reframe-Barbell philosophy won 80/82/84). Updated each cycle; executed in
-> bootstrap mode (an owner confirms every order). Theses live in `THESES.md`.
+> The live target portfolio for the $100,000 Agentic account. Output of the 2026-06-03 allocation
+> debate (12-agent workflow; Reframe-Barbell philosophy won 80/82/84). Updated each cycle; executed
+> in bootstrap mode (an owner confirms every order). Theses live in `THESES.md`.
+>
+> **Account of record (since 2026-08-17): Alpaca paper `••••I1PN`, $100,000.** The debate that
+> produced these weights was run against a $100 Robinhood book; the percentages carry over
+> unchanged, because they were always an allocation rather than a dollar plan. The dollar column
+> below is restated on the current book size.
+>
+> **These targets have never been executed.** What the broker holds today is the seeded basket
+> described under *Holdings that are not this slate* — an owner action taken to give the marking job
+> and the performance page something real to value. Reconciliation therefore reports most of this
+> slate as missing and most holdings as unrecorded, and that is the correct reading, not a fault to
+> tune away.
 
 ## Allocation (as of 2026-06-03) — NOT yet executed
 
-| Ticker | % | $ on $100 | Role | Why that size |
+| Ticker | % | $ on $100k | Role | Why that size |
 |--------|---|-----------|------|---------------|
-| **TSM**  | 22 | $22 | Compute anchor | Lowest-variance way to be long all silicon (builds NVDA's chips too); top weight = lowest blowup risk |
-| **VST**  | 15 | $15 | Power leg + floor | FCFy 7.2%, ~18x, Meta 2,600 MW PPAs not in guidance = free option; safest AI-power beta, sized above GEV |
-| **NVDA** | 13 | $13 | Convexity engine | Wins cloud AND edge (RTX Spark), fwd P/E ~22; sized below TSM = most backlash-exposed |
-| **V**    | 12 | $12 | Off-factor diversifier | Payments/stablecoin, own cycle — doesn't ride AI-capex sentiment |
-| **CVX**  | 11 | $11 | Off-factor ballast | Oil + natgas-to-AI-power leg (2.5 GW TX gas 2027); lowest beta to compute |
-| **GEV**  | 9  | $9  | Power high-beta call | $150B backlog — inverse-sized for +235%/yr extension; conviction earns the thesis, not extra weight |
-| **QCOM** | 6  | $6  | Cheap edge satellite | ~14x Snapdragon + AI200/AI250 inference; asymmetric, kept small |
-| **PLTR** | 2  | $2  | Dated-catalyst rental | ~115x prices perfection; rental only, flat between prints |
-| **CASH** | 10 | $10 | Dry powder | Hard floor; only truly uncorrelated asset; reload fund for an air-pocket |
+| **TSM**  | 22 | $22,000 | Compute anchor | Lowest-variance way to be long all silicon (builds NVDA's chips too); top weight = lowest blowup risk |
+| **VST**  | 15 | $15,000 | Power leg + floor | FCFy 7.2%, ~18x, Meta 2,600 MW PPAs not in guidance = free option; safest AI-power beta, sized above GEV |
+| **NVDA** | 13 | $13,000 | Convexity engine | Wins cloud AND edge (RTX Spark), fwd P/E ~22; sized below TSM = most backlash-exposed |
+| **V**    | 12 | $12,000 | Off-factor diversifier | Payments/stablecoin, own cycle — doesn't ride AI-capex sentiment |
+| **CVX**  | 11 | $11,000 | Off-factor ballast | Oil + natgas-to-AI-power leg (2.5 GW TX gas 2027); lowest beta to compute |
+| **GEV**  | 9  | $9,000  | Power high-beta call | $150B backlog — inverse-sized for +235%/yr extension; conviction earns the thesis, not extra weight |
+| **QCOM** | 6  | $6,000  | Cheap edge satellite | ~14x Snapdragon + AI200/AI250 inference; asymmetric, kept small |
+| **PLTR** | 2  | $2,000  | Dated-catalyst rental | ~115x prices perfection; rental only, flat between prints |
+| **CASH** | 10 | $10,000 | Dry powder | Hard floor; only truly uncorrelated asset; reload fund for an air-pocket |
 
 Sum = 100%. Cash 10% (within [10,20]).
+
+## Holdings that are not this slate
+
+On 2026-08-17/18 an owner seeded the paper account with fifteen names at **$500 each** — an
+equal-dollar basket chosen to give the marking job something real to value and the performance page
+something to draw. `bin/seed_paper_book.py` records it, and the script says plainly that these fills
+are not the strategy's track record.
+
+They are written down HERE so that reconciliation's "unrecorded" rows have an explanation on file.
+That is deliberately not the same as promoting them to targets: a position with a dollar amount but
+no thesis is exactly what the sell-discipline rule exists to catch, and blessing fifteen of them by
+editing the table above would switch that alarm off rather than answer it.
+
+    AMD · NVDA · GM · MSFT · QBTS · ISRG · GLD · BRK.B · BE · QCOM · VST · V · CVX · SVRA · TMO
+
+Five of them (NVDA, VST, V, CVX, QCOM) are also slate names, so they reconcile as **drifted** — held
+at ~0.5% of account value against double-digit targets. The other ten reconcile as **unrecorded**.
+Cash sits at ~93% against a 10-20% band, which breaches by design: the slate has not been executed.
+
+TMO was originally written "TMOM", which is not a symbol on any venue this project can reach. It was
+resolved with the owner as Thermo Fisher and seeded 2026-08-18, which is why it arrived a day after
+the other fourteen.
 
 ## Correlation verdict (Wasden risk #3)
 ~60% of the book (TSM+VST+NVDA+GEV+QCOM) is **one bet** — the AI-buildout capex cycle staying intact.
