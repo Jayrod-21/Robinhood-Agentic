@@ -4,7 +4,7 @@ Read-only by design: this endpoint computes current value and unrealized P&L fro
 cost basis and live prices, but exposes no path to place or modify orders.
 
 Holdings come from ``services/broker.py``: a live Alpaca read when credentials are configured,
-otherwise the volume-mounted Robinhood snapshot file refreshed via the host bridge. The payload's
+otherwise the volume-mounted fallback snapshot file, kept current by bin/alpaca_snapshot.py. The payload's
 ``source`` field says which — do not infer it from this docstring, and do not assume the file.
 Prices refresh independently from FMP.
 """
@@ -51,8 +51,11 @@ class AccountView(BaseModel):
     stale_prices: bool  # true if any held symbol could not be priced live
     cash: float
     buying_power: float
-    snapshot_total_value: float
-    snapshot_equity_value: float
+    # There is no separate "snapshot" total any more. Under the Robinhood file these named the
+    # numbers the export claimed, kept apart from the FMP-priced live_* figures so a stale file
+    # could not masquerade as current. The broker is now read live on every request, so both halves
+    # came from the same call and differed only by which vendor's mark was used — two fields that
+    # no page read and that invited the reader to look for a distinction that no longer exists.
     live_equity_value: float
     live_total_value: float
     total_cost_basis: float
@@ -140,8 +143,6 @@ def _build_view() -> AccountView:
         stale_prices=any_unpriced,
         cash=round(cash, 2),
         buying_power=round(snapshot.account.buying_power, 2),
-        snapshot_total_value=round(snapshot.account.total_value, 2),
-        snapshot_equity_value=round(snapshot.account.equity_value, 2),
         live_equity_value=round(live_equity, 2),
         live_total_value=round(live_total, 2),
         total_cost_basis=round(total_cost, 2),

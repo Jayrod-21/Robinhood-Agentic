@@ -61,7 +61,7 @@ export default function PositionDetailPage({ params }: { params: { symbol: strin
                 <Database className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
                 <span className="text-zinc-400">
                   Nothing on record for {symbol}: it is not held, not in the slate, and has no debate
-                  history. If you expected a holding here, refresh the account snapshot first.
+                  history.
                 </span>
               </>
             ) : degraded ? (
@@ -136,7 +136,10 @@ export default function PositionDetailPage({ params }: { params: { symbol: strin
       {meta.snapshot_stale && meta.held && (
         <div className="mb-3 flex items-start gap-2 text-xs text-zinc-500">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-600" />
-          <span>Holding is from a snapshot {ago(meta.snapshot_generated_at)}. Refresh from the broker for current truth.</span>
+          <span>
+            Holding was last read from the broker {ago(meta.snapshot_generated_at)}, which is older
+            than expected for a live read — treat the position size as unconfirmed.
+          </span>
         </div>
       )}
 

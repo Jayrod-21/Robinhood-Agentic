@@ -2,7 +2,7 @@
 
 The snapshot file is how the dashboard reads the real Robinhood account when no Alpaca credentials
 are configured (services/broker.py prefers a live Alpaca read whenever they are): the in-session
-Claude agent (or the host-side refresh daemon) writes it from MCP data; we only read it. The models
+bin/alpaca_snapshot.py writes it from the broker; we only read it. The models
 below also double as the broker-neutral snapshot contract — src/alpaca.py maps Alpaca's answer into
 the same ``AccountSnapshot`` shape.
 Because the file crosses a trust boundary (written by another process), every field is validated
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, NonNegativeFloat
 
 logger = logging.getLogger("agentic.services.snapshot")
 
-# The one snapshot schema this reader understands. The producer (bin/refresh_prompt.md) writes
+# The one snapshot schema this reader understands. The producer (bin/alpaca_snapshot.py) writes
 # ``"schema_version": 1``; load_snapshot compares against this and refuses any other value, so a
 # future producer-side schema bump fails loudly here instead of being silently misread.
 SNAPSHOT_SCHEMA_VERSION = 1

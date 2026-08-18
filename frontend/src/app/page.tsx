@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { RefreshCw, AlertTriangle } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { PageHeader } from "@/components/shell";
-import { Badge, Button, Card, CardBody, CardHeader, CardTitle, Spinner, StatCard } from "@/components/ui";
-import { fetcher, postJSON } from "@/lib/api";
+import { Card, CardBody, CardHeader, CardTitle, Spinner, StatCard } from "@/components/ui";
+import { fetcher } from "@/lib/api";
 import { ago, cn, pct, plColor, usd } from "@/lib/format";
-import type { AccountView, RefreshStatus } from "@/lib/types";
+import type { AccountView } from "@/lib/types";
 
 const DONUT = ["#e0b34d", "#34d399", "#60a5fa", "#f472b6", "#a78bfa", "#fb923c", "#22d3ee", "#facc15", "#94a3b8"];
 
@@ -32,56 +31,6 @@ const sourceLabel = (source: string) => SOURCE_LABELS[source] ?? source;
 
 export default function PortfolioPage() {
   const { data, error, isLoading } = useSWR<AccountView>("/api/account", fetcher, { refreshInterval: 10_000 });
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
-  const baselineTs = useRef<string | null>(null);
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  function clearRefreshTimer() {
-    if (refreshTimer.current) {
-      clearTimeout(refreshTimer.current);
-      refreshTimer.current = null;
-    }
-  }
-
-  // Clear the fallback timer if it's still pending when the component unmounts.
-  useEffect(() => clearRefreshTimer, []);
-
-  // When a refresh is in flight, clear the spinner once the snapshot timestamp advances. Also cancel
-  // the 4-min fallback timer so it can't fire setState after the component has unmounted.
-  useEffect(() => {
-    if (refreshing && data?.generated_at && baselineTs.current && data.generated_at !== baselineTs.current) {
-      clearRefreshTimer();
-      setRefreshing(false);
-      setRefreshMsg("Updated just now");
-    }
-  }, [data?.generated_at, refreshing]);
-
-  async function onRefresh() {
-    try {
-      baselineTs.current = data?.generated_at ?? null;
-      setRefreshMsg(null);
-      setRefreshing(true);
-      const res = await postJSON<{ status: string; detail: string }>("/api/refresh", {});
-      setRefreshMsg(res.detail);
-      if (res.status === "cooldown") {
-        setRefreshing(false);
-        return;
-      }
-      // Stop spinning after 4 min even if the daemon never updated (e.g. not running). Stored in a
-      // ref so the success effect / unmount can cancel it instead of letting it fire blindly.
-      clearRefreshTimer();
-      refreshTimer.current = setTimeout(() => {
-        setRefreshing(false);
-        refreshTimer.current = null;
-      }, 240_000);
-    } catch (e) {
-      clearRefreshTimer();
-      setRefreshing(false);
-      setRefreshMsg(e instanceof Error ? e.message : "Refresh failed");
-    }
-  }
-
   const plClass = plColor(data?.total_unrealized_pl);
   const donutData =
     data?.positions
@@ -93,16 +42,7 @@ export default function PortfolioPage() {
     <div>
       <PageHeader
         title="Portfolio"
-        subtitle={data ? `${data.nickname ?? "Account"} ${data.account_masked} · snapshot ${ago(data.generated_at)}` : "Live Agentic account"}
-        right={
-          <div className="flex items-center gap-3">
-            {refreshMsg && <span className="text-xs text-zinc-500">{refreshMsg}</span>}
-            <Button variant="brass" onClick={onRefresh} disabled={refreshing}>
-              {refreshing ? <Spinner className="border-ink-950/40 border-t-ink-950" /> : <RefreshCw className="h-4 w-4" />}
-              {refreshing ? "Refreshing…" : "Refresh snapshot"}
-            </Button>
-          </div>
-        }
+        subtitle={data ? `${data.nickname ?? "Account"} ${data.account_masked} · read ${ago(data.generated_at)}` : "Live Agentic account"}
       />
 
       {error && (
@@ -211,7 +151,8 @@ export default function PortfolioPage() {
               {data?.source === "robinhood-mcp" && (
                 <>
                   {" "}
-                  Click <Badge tone="neutral">Refresh snapshot</Badge> to re-pull holdings via the MCP bridge.
+                  This is the saved fallback file, not a broker read — Alpaca credentials are absent
+                  or the broker is unreachable.
                 </>
               )}
             </p>
