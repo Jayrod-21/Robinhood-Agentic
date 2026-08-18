@@ -6,7 +6,7 @@
 #   2. Pick two fresh, verified-free random ports (bin/pick_ports.sh).
 #   3. Export ports + backend/.env so docker compose can substitute them.
 #   4. Build + start the backend and frontend containers.
-#   5. Wait for the backend healthcheck, then start the host-side refresh daemon.
+#   5. Wait for the backend healthcheck.
 #   6. Print the dashboard URL.
 
 set -euo pipefail
@@ -89,16 +89,14 @@ if [ "${healthy}" -ne 1 ]; then
   echo " ✗"
   echo "✗ Backend did not become healthy within 80s." >&2
   echo "  Check logs:  ${DOCKER} compose logs backend" >&2
-  echo "  The refresh daemon was NOT started and no dashboard URL is printed." >&2
+  echo "  No dashboard URL is printed." >&2
   exit 1
 fi
 
-# Start the host-side refresh daemon (the Refresh button needs it). Idempotent-ish: kill any prior.
+# No host-side daemon any more. The Refresh button and the Robinhood MCP bridge it drove are gone:
+# the backend reads Alpaca live, and bin/alpaca_sync.sh (cron, every minute) keeps the fallback file
+# current. Kill any daemon left running from a pre-removal standup.
 pkill -f "bin/refresh_daemon.sh" 2>/dev/null || true
-mkdir -p "${PROJECT_DIR}/logs/refresh"
-nohup bash "${SCRIPT_DIR}/refresh_daemon.sh" >"${PROJECT_DIR}/logs/refresh/daemon.out" 2>&1 &
-disown 2>/dev/null || true
-echo "✓ Refresh daemon started (host-side)"
 
 echo
 echo "Dashboard:  http://localhost:${FRONTEND_PORT}"

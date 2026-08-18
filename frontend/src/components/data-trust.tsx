@@ -77,7 +77,7 @@ export function DataTrustStrip() {
   return (
     <Bar>
       <Chip tone={freshTone} icon={Clock}>
-        Snapshot {ago(trust.snapshot_generated_at)}
+        Account read {ago(trust.snapshot_generated_at)}
         {trust.snapshot_stale && <span className="ml-1 text-zinc-500">(stale)</span>}
       </Chip>
 

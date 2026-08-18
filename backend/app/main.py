@@ -27,7 +27,6 @@ from app.routers import (
     pipeline,
     position,
     reconciliation,
-    refresh,
     scan,
 )
 from app.services.auth import auth_enforcement_configured, enforce_authenticated
@@ -157,8 +156,9 @@ async def enforce_same_origin(request: Request) -> None:
 
     Defends against: CSRF. The dashboard sits behind ambient browser credentials (Caddy basic
     auth in the shared deploy), and CORS only blocks *reading* a cross-site response — a form or
-    top-level POST is still *sent*, credentials attached. Today that queues a refresh; once an
-    order path exists the same request shape places a trade. Checks, in order:
+    top-level POST is still *sent*, credentials attached. Today the state-changing routes are the
+    journal writes and the debate/scan/pipeline runs; once an order path exists the same request
+    shape places a trade. Checks, in order:
 
     1. Body content type must be ``application/json`` — an HTML form can only submit the three
        CORS-"simple" form types, so this alone kills the auto-submitting-form vector, and every
@@ -245,8 +245,8 @@ def create_app() -> FastAPI:
         # else — and that must include FastAPI's own bootstrap surface. /openapi.json, /docs,
         # /redoc, and /docs/oauth2-redirect are registered by FastAPI.setup() as plain Starlette
         # Routes, not APIRoutes, so the app-wide `dependencies=[...]` below NEVER runs for them:
-        # with auth configured, the full API schema (refresh endpoint included) was being served
-        # unauthenticated. Disabled outright rather than allow-listed — this is a two-operator
+        # with auth configured, the full API schema was being served unauthenticated.
+        # Disabled outright rather than allow-listed — this is a two-operator
         # private dashboard whose API surface is documented in the code, not a public API.
         # test_auth_routes.py enumerates every reachable route to pin the allow-list closed.
         openapi_url=None,
@@ -263,7 +263,7 @@ def create_app() -> FastAPI:
 
     # Default: allow localhost/127.0.0.1 on any port (the frontend port is random) via regex, plus any
     # explicit origins from CORS_ORIGINS. We never default to "*" — this backend fronts a live
-    # brokerage snapshot, a billable API key, and a refresh endpoint with a real side effect.
+    # brokerage account and a billable API key.
     # allow_credentials stays False, so the permissive localhost regex carries no cookie/auth risk.
     app.add_middleware(
         CORSMiddleware,
@@ -278,7 +278,6 @@ def create_app() -> FastAPI:
     app.include_router(data_trust.router)
     app.include_router(auth.router)
     app.include_router(account.router)
-    app.include_router(refresh.router)
     app.include_router(scan.router)
     app.include_router(debate.router)
     app.include_router(pipeline.router)

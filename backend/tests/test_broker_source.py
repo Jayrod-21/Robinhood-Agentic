@@ -2,13 +2,21 @@
 
 The selection rule is one line of code and the most consequential decision in this change: when
 Alpaca is configured but unreachable, the dashboard REFUSES rather than falling back to the file.
-The file is a Robinhood snapshot from a different broker, months out of date. Serving it silently
-during an Alpaca outage would show holdings the operator does not have, under a heading that says
-nothing is wrong.
+
+That refusal was originally justified by the file being a Robinhood export from a different broker,
+months out of date. It is not that any more — bin/alpaca_snapshot.py rewrites it from Alpaca every
+minute, so the fallback now holds the same broker's positions, typically seconds old.
+
+The refusal STANDS anyway, for the reason that outlives the file's staleness: an outage the operator
+cannot see is worse than one they can. A page that quietly switches to a cached book during a broker
+outage looks identical to a working one, and every number on it is a claim about the present made
+from the past. The fresher fallback lowers the cost of that mistake; it does not make it not a
+mistake.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -59,12 +67,25 @@ def test_broker_is_preferred_when_configured(configured, monkeypatch):
     assert snap.source == "alpaca-paper"
 
 
-def test_file_is_used_when_the_broker_is_not_configured(unconfigured):
-    """The pre-Alpaca posture must keep working — this is not a forced migration."""
-    if not FILE_SNAPSHOT.exists():
-        pytest.skip("no local snapshot file on this host")
-    snap = broker.get_snapshot(FILE_SNAPSHOT)
-    assert snap.source != "alpaca-paper"
+def test_file_is_used_when_the_broker_is_not_configured(unconfigured, tmp_path, monkeypatch):
+    """The pre-Alpaca posture must keep working — this is not a forced migration.
+
+    Proves the FILE was read by giving it a timestamp nothing else could produce. The previous
+    version asserted ``source != "alpaca-paper"``, which conflated "came from the file" with "is not
+    Alpaca data". Those stopped being the same thing the moment bin/alpaca_snapshot.py began writing
+    the fallback FROM Alpaca — so the test failed for the one reason it never should have: the
+    fallback got better. It also read the real data/account_snapshot.json and skipped when absent,
+    which meant it silently tested nothing on any machine without one.
+    """
+    called: list[int] = []
+    monkeypatch.setattr(broker, "_fetch_alpaca", lambda: called.append(1))
+
+    path = tmp_path / "account_snapshot.json"
+    path.write_text(json.dumps({**ALPACA_PAYLOAD, "generated_at": "2001-01-01T00:00:00Z"}))
+
+    snap = broker.get_snapshot(path)
+    assert snap.generated_at == "2001-01-01T00:00:00Z", "the account did not come from the file"
+    assert not called, "the broker was called even though no credentials are configured"
 
 
 def test_half_a_credential_is_not_configured(monkeypatch):

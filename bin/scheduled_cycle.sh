@@ -2,8 +2,10 @@
 # scheduled_cycle.sh <open|close> [extra args passed to the cycle job]
 #
 # What cron runs twice a day. Two steps:
-#   1. Host-side: refresh the account snapshot via the Robinhood MCP (bin/refresh_once.sh) — the MCP
-#      lives on the host, not in the container.
+#   1. Host-side: refresh the FALLBACK account snapshot from Alpaca (bin/alpaca_snapshot.py). This
+#      used to pull from the Robinhood MCP, which lived on the host and shelled out to wt.exe — a
+#      WSL-era path that cannot work on this machine. The broker is Alpaca and the container reads
+#      it live; this only keeps the fallback file current.
 #   2. In-container: run the cycle job (scan + per-position debates + report) which reads the fresh
 #      snapshot from the shared volume.
 #
@@ -28,11 +30,11 @@ exec >>"${LOG_DIR}/$(date -u +%Y%m%d)-${phase}.log" 2>&1
 
 echo "=== scheduled_cycle ${phase} @ $(date -u +%FT%TZ) ==="
 
-# 1. Refresh the snapshot (best-effort).
-if bash "${SCRIPT_DIR}/refresh_once.sh"; then
-  echo "snapshot refreshed"
+# 1. Refresh the fallback snapshot (best-effort — the container reads the broker live regardless).
+if bash "${SCRIPT_DIR}/alpaca_sync.sh"; then
+  echo "fallback snapshot refreshed"
 else
-  echo "WARN: snapshot refresh failed — running cycle on the last good snapshot"
+  echo "WARN: fallback snapshot refresh failed — the live broker read is unaffected"
 fi
 
 # 2. Run the cycle inside the backend container.

@@ -18,6 +18,14 @@ CRON_TZ=America/New_York
 # backfilled as an explicitly historical mark.
 15 17 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/nightly_marks.sh"
 
+# ── Fallback account snapshot, every minute ───────────────────────────────────────────────────
+# The backend reads Alpaca live on every request, so this does NOT make the dashboard fresher. It
+# keeps the FALLBACK file current — what gets served if the broker stops answering. Before this
+# existed the fallback was a July Robinhood export of a book that no longer exists, refreshable
+# only by a button whose host daemon shelled out to wt.exe.
+# Silent on success; cron mails only failures.
+* * * * * /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/alpaca_sync.sh"
+
 # ── Twice-daily cycle ─────────────────────────────────────────────────────────────────────────
 # Each run: refresh the snapshot via the Robinhood MCP (host), then run the in-container cycle
 # (scan + per-position debates + report). Logs go to logs/cron/<date>-<phase>.log.

@@ -26,8 +26,6 @@ export interface AccountView {
   stale_prices: boolean;
   cash: number;
   buying_power: number;
-  snapshot_total_value: number;
-  snapshot_equity_value: number;
   live_equity_value: number;
   live_total_value: number;
   total_cost_basis: number;
