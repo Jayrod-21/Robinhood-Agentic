@@ -39,15 +39,21 @@ class ScanRequest(BaseModel):
     min_cap: float | None = Field(default=None, gt=0)
 
 
-def _screen_one(ticker: str, min_cap: float) -> dict:
+def _screen_one(ticker: str, min_cap: float, gates: dict[str, float] | None = None) -> dict:
     """Blocking fetch + screen for one ticker → a JSON-friendly summary."""
     from src.data import fetch_fundamentals_fmp
-    from src.screen import screen_ticker
+    from src.screen import MAX_PEG, MIN_FCF_YIELD, PIOTROSKI_RATIO, screen_ticker
 
     fundamentals = fetch_fundamentals_fmp(ticker)
     if fundamentals is None:
         return {"ticker": ticker, "ok": False, "passed": False, "reason": "no data (FMP returned nothing for this symbol)"}
-    res = screen_ticker(ticker, fundamentals, min_market_cap=min_cap)
+    g = gates or {}
+    res = screen_ticker(
+        ticker, fundamentals, min_market_cap=min_cap,
+        max_peg=g.get("max_peg", MAX_PEG),
+        min_fcf_yield=g.get("min_fcf_yield", MIN_FCF_YIELD),
+        piotroski_ratio=g.get("piotroski_ratio", PIOTROSKI_RATIO),
+    )
     ss = res.tiers.get("sprinkle_sauce")
     return {
         "ticker": ticker,
@@ -74,10 +80,27 @@ def _screen_one(ticker: str, min_cap: float) -> dict:
 
 
 async def _run_scan(tickers: list[str], min_cap: float):
-    yield {"type": "scan_start", "count": len(tickers), "min_cap": min_cap}
+    # Read the operator's tuned gates ONCE per scan, not per ticker: a scan is a single question
+    # asked of a universe, and thresholds shifting midway would make the survivor list a mix of two
+    # different screens with nothing recording which name got which.
+    from app.services import settings_store
+
+    tunables, gates_source = settings_store.get_all()
+    gates = {
+        "max_peg": tunables["screen_max_peg"],
+        "min_fcf_yield": tunables["screen_min_fcf_yield_pct"],
+        "piotroski_ratio": tunables["screen_piotroski_min"] / 9.0,
+    }
+    yield {
+        "type": "scan_start", "count": len(tickers), "min_cap": min_cap,
+        "gates": gates,
+        # "defaults" means the thresholds are the compiled ones because the database could not be
+        # read — a scan judged against thresholds nobody chose, which the page must be able to say.
+        "gates_source": gates_source,
+    }
     results: list[dict] = []
     for i, ticker in enumerate(tickers):
-        row = await asyncio.to_thread(_screen_one, ticker, min_cap)
+        row = await asyncio.to_thread(_screen_one, ticker, min_cap, gates)
         results.append(row)
         yield {"type": "scan_result", "index": i, "total": len(tickers), "result": row}
     survivors = sorted(

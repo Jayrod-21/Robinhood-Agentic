@@ -33,6 +33,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from app.config import get_settings
+from app.services import settings_store
 from app.services.broker import get_snapshot
 from app.services.marks import get_marks
 from app.services.slate import load_sizing_rules, load_slate
@@ -42,19 +43,22 @@ logger = logging.getLogger("agentic.api.reconciliation")
 
 router = APIRouter(prefix="/api", tags=["reconciliation"])
 
-# Percentage POINTS of drift before a held name counts as drifted rather than matched.
+# THRESHOLDS ARE TUNABLE, AND THIS ROUTE STILL WORKS WITHOUT THE DATABASE.
 #
-# 1.5 is the contract's suggestion and it is kept, but it is not scale-free: on a 22% target that is
-# 7% relative, on a 2% target it is 75%. Both drift_pct and drift_rel_pct are returned so the page
-# can show either, and the threshold is reported in `meta` so the UI states it rather than hardcodes
-# a second copy that can drift from this one.
-DRIFT_TOLERANCE_PCT = 1.5
-
-# Cash band and off-factor floor come from the charter and SLATE.md respectively.
-CASH_BAND = (10.0, 20.0)
+# These four used to be module constants, so moving a guardrail meant editing Python and
+# redeploying — which in practice meant they never moved, and a guardrail nobody can tune is one
+# that gets ignored rather than adjusted. They now live in app_settings (migration 019).
+#
+# But this route had NO database dependency: it reads a broker snapshot and a markdown file. Making
+# it require Postgres would mean a database outage takes down the page that tells you whether your
+# book matches your plan, while both of that page's actual inputs are still perfectly readable. So
+# settings_store falls back to the compiled defaults and REPORTS which it used; `meta.thresholds_source`
+# carries that to the UI. A breach judged against a default the operator did not choose is a
+# guardrail misreporting itself, so it is never silent.
+#
+# Drift is not scale-free: 1.5 points on a 22% target is 7% relative, on a 2% target it is 75%.
+# Both drift_pct and drift_rel_pct are returned so the page can show either.
 OFF_FACTOR_NAMES = ("V", "CVX")
-OFF_FACTOR_FLOOR_PCT = 20.0
-MAX_POSITION_PCT = 25.0
 
 _SLATE_DATED = re.compile(r"Allocation \(as of (?P<date>\d{4}-\d{2}-\d{2})\)")
 # "$100 Agentic account" — what the slate assumed the book was worth when it was written. A gap
@@ -105,6 +109,12 @@ def reconciliation() -> dict[str, Any]:
         slate_text = ""
     slate_dated, documented_book = _slate_meta(slate_text)
 
+    tunables, thresholds_source = settings_store.get_all()
+    drift_tolerance = tunables["drift_tolerance_pct"]
+    cash_band = (tunables["cash_floor_pct"], tunables["cash_ceiling_pct"])
+    max_position = tunables["max_position_pct"]
+    off_factor_floor = tunables["off_factor_floor_pct"]
+
     symbols = [p.symbol for p in snapshot.positions]
     marks = get_marks(symbols, settings.marks_ttl_seconds) if symbols else {}
     account_value = snapshot.account.total_value
@@ -141,7 +151,7 @@ def reconciliation() -> dict[str, Any]:
             # Held but unpriced: the drift is unknown, and calling that "match" would assert
             # agreement nobody measured.
             status = "drifted"
-        elif abs(drift) <= DRIFT_TOLERANCE_PCT:
+        elif abs(drift) <= drift_tolerance:
             status = "match"
         else:
             status = "drifted"
@@ -184,7 +194,10 @@ def reconciliation() -> dict[str, Any]:
         })
 
     live_cash_pct = (cash / account_value * 100.0) if account_value else 0.0
-    checks = _run_checks(rows=rows, live_cash_pct=live_cash_pct, rules=rules)
+    checks = _run_checks(
+        rows=rows, live_cash_pct=live_cash_pct, rules=rules,
+        cash_band=cash_band, max_position=max_position, off_factor_floor=off_factor_floor,
+    )
 
     generated = snapshot.generated_at
     stale = True
@@ -205,9 +218,12 @@ def reconciliation() -> dict[str, Any]:
             # A gap against the live account value is usually unrecorded deposits — which is why the
             # slate's own assumed book size is reported rather than quietly ignored.
             "documented_book_value": documented_book,
-            "target_cash_pct": CASH_BAND[0],
+            "target_cash_pct": cash_band[0],
             "live_cash_pct": round(live_cash_pct, 2),
-            "drift_tolerance_pct": DRIFT_TOLERANCE_PCT,
+            "drift_tolerance_pct": drift_tolerance,
+            # "defaults" means the database could not be read and every threshold above is the
+            # compiled default — NOT that the operator chose them.
+            "thresholds_source": thresholds_source,
             "in_sync": counts["drifted"] == 0 and counts["missing"] == 0 and counts["unexpected"] == 0,
         },
         "positions": rows,
@@ -223,7 +239,10 @@ def reconciliation() -> dict[str, Any]:
     }
 
 
-def _run_checks(*, rows: list[dict[str, Any]], live_cash_pct: float, rules) -> list[dict[str, Any]]:
+def _run_checks(
+    *, rows: list[dict[str, Any]], live_cash_pct: float, rules,
+    cash_band: tuple[float, float], max_position: float, off_factor_floor: float,
+) -> list[dict[str, Any]]:
     """The charter and slate rules, each as a row the page can render.
 
     Every rule reports whether it PASSED as well as whether it failed — the same reasoning as the
@@ -253,17 +272,17 @@ def _run_checks(*, rows: list[dict[str, Any]], live_cash_pct: float, rules) -> l
         ) or "no held name is at or past its stop",
     })
 
-    over = [r for r in rows if r["live_weight_pct"] is not None and r["live_weight_pct"] > MAX_POSITION_PCT]
+    over = [r for r in rows if r["live_weight_pct"] is not None and r["live_weight_pct"] > max_position]
     checks.append({
-        "rule": f"Max ~{MAX_POSITION_PCT:.0f}% per name",
+        "rule": f"Max ~{max_position:.0f}% per name",
         "source": "AGENTIC_ROBINHOOD_v1.md §5",
         "status": "breach" if over else "pass",
         "severity": "alert" if over else "info",
         "detail": "; ".join(f"{r['symbol']} at {r['live_weight_pct']}%" for r in over)
-        or f"no name exceeds {MAX_POSITION_PCT:.0f}% of account value",
+        or f"no name exceeds {max_position:.0f}% of account value",
     })
 
-    lo, hi = CASH_BAND
+    lo, hi = cash_band
     cash_ok = lo <= live_cash_pct <= hi
     checks.append({
         "rule": f"Cash {lo:.0f}-{hi:.0f}% band",
@@ -278,10 +297,10 @@ def _run_checks(*, rows: list[dict[str, Any]], live_cash_pct: float, rules) -> l
         r["live_weight_pct"] or 0.0 for r in rows if r["symbol"] in OFF_FACTOR_NAMES
     )
     checks.append({
-        "rule": f"Off-factor floor {'+'.join(OFF_FACTOR_NAMES)} >= {OFF_FACTOR_FLOOR_PCT:.0f}%",
+        "rule": f"Off-factor floor {'+'.join(OFF_FACTOR_NAMES)} >= {off_factor_floor:.0f}%",
         "source": "SLATE.md §Sizing discipline",
-        "status": "pass" if off_factor >= OFF_FACTOR_FLOOR_PCT else "breach",
-        "severity": "info" if off_factor >= OFF_FACTOR_FLOOR_PCT else "warn",
+        "status": "pass" if off_factor >= off_factor_floor else "breach",
+        "severity": "info" if off_factor >= off_factor_floor else "warn",
         "detail": f"{'+'.join(OFF_FACTOR_NAMES)} total {off_factor:.1f}% of account value",
     })
 

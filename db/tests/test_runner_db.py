@@ -35,6 +35,17 @@ from migrate import EXIT_CONNECTION, EXIT_OK, EXIT_SQL, EXIT_VALIDATION, MIGRATI
 
 REPO_MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 
+
+def migration_count() -> int:
+    """How many migrations the repo ships, counted rather than restated.
+
+    This was a literal (18) in two assertions, so every new migration failed both — for a reason
+    that had nothing to do with the change being made, and in a file the author had no reason to
+    open. Counting the .up.sql files keeps the assertion's real meaning (every migration applied,
+    none skipped) and stops it being a tax on the next person.
+    """
+    return len(list(REPO_MIGRATIONS.glob("*.up.sql")))
+
 # Same major as the live stack (docker-compose.db.yml pins postgres:16-alpine by digest).
 PG_IMAGE = "postgres:16-alpine"
 
@@ -369,6 +380,10 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         ("016", False, True),  # down drops the wider fundamentals and the Piotroski working
         ("017", False, True),  # collapses duplicate observations; the down cannot restore them
         ("018", False, False),  # drops a redundant index; enforces nothing the observation key does not
+        # 019's down discards every tuned guardrail AND the record of who moved it. The thresholds
+        # fall back to the registry defaults so the app keeps running, which is exactly why this
+        # must be declared destructive: the loss is silent from the outside.
+        ("019", False, True),
     ]
 
 
@@ -502,7 +517,7 @@ def test_real_migrations_up_down_up(db_url: str) -> None:
     # 004's trigger functions leave no residue either.
     assert q(db_url, "SELECT count(*) FROM pg_proc WHERE proname LIKE 'enforce\\_%%'")[0][0] == 0
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 18
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == migration_count()
 
 
 # ── 004: the evaluation tables ────────────────────────────────────────────────────────────────
@@ -1541,7 +1556,7 @@ def test_prd_backfill_rollback_refuses_to_launder_history(db_url: str) -> None:
     q(db_url, "DELETE FROM portfolio_returns_daily WHERE portfolio_id = %s", (pid,))
     assert main(["down", "--allow-destructive", "--target", "008", "--migrations-dir", md]) == EXIT_OK
     assert main(["up", "--migrations-dir", md]) == EXIT_OK
-    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == 18
+    assert q(db_url, "SELECT count(*) FROM schema_migrations")[0][0] == migration_count()
 
 
 # ── 010: the rh_app role comment states the verified truth (issue #31) ───────────────────────
