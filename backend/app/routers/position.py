@@ -45,13 +45,7 @@ router = APIRouter(prefix="/api", tags=["position"])
 _HISTORY_DAYS = 130
 
 
-def _docs_dir():
-    # docs/ sits beside backend/ in the repo and is NOT volume-mounted into the container the way
-    # data/ and logs/ are — it ships in the image, so it is resolved from the module path rather
-    # than from settings.
-    from pathlib import Path
 
-    return Path(__file__).resolve().parents[3] / "docs"
 
 
 def _price_history(symbol: str) -> list[dict[str, Any]]:
@@ -61,11 +55,13 @@ def _price_history(symbol: str) -> list[dict[str, Any]]:
     a shape people trust more than text.
     """
     try:
-        from src.fmp import get_shared_client
+        from src.fmp import get_shared_client, to_fmp_symbol
 
         rows = get_shared_client().get(
             "historical-price-eod/full",
-            {"symbol": symbol, "from": _history_start()},
+            # Broker spelling -> vendor spelling. BRK.B vs BRK-B returns an EMPTY series rather
+            # than an error, so without this the chart is silently blank for class shares.
+            {"symbol": to_fmp_symbol(symbol), "from": _history_start()},
         )
     except Exception as exc:  # noqa: BLE001 — a missing chart must not fail the page
         logger.warning("price history unavailable for %s: %s", symbol, exc)
@@ -165,7 +161,7 @@ def position(symbol: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Not a valid ticker symbol.")
 
     settings = get_settings()
-    docs = _docs_dir()
+    docs = settings.docs_dir
     slate = load_slate(docs / "SLATE.md")
     theses = load_theses(docs / "THESES.md")
     rules = load_sizing_rules(docs / "SLATE.md")

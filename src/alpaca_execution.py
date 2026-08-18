@@ -60,8 +60,9 @@ def submit_order(
     client_order_id: str,
     symbol: str,
     side: str,
-    qty: float,
     order_type: str,
+    qty: float | None = None,
+    notional: float | None = None,
     time_in_force: str = "day",
     limit_price: float | None = None,
     allowed_types: list[str],
@@ -91,8 +92,18 @@ def submit_order(
         raise ExecutionRefused("a market order must not carry a limit price")
     if side not in ("buy", "sell"):
         raise ExecutionRefused(f"side must be buy or sell, got {side!r}")
-    if qty <= 0:
+    # Exactly one sizing. Both would let the broker pick which to honour; neither is not an order.
+    if (qty is None) == (notional is None):
+        raise ExecutionRefused("give exactly one of qty (shares) or notional (dollars)")
+    if qty is not None and qty <= 0:
         raise ExecutionRefused(f"quantity must be positive, got {qty!r}")
+    if notional is not None and notional <= 0:
+        raise ExecutionRefused(f"notional must be positive, got {notional!r}")
+    if notional is not None and order_type != "market":
+        # Alpaca fills a dollar amount by computing shares at execution, which only a market order
+        # can do. A "notional limit order" is not a thing the API accepts, and pretending otherwise
+        # would surface as a 422 the caller cannot act on.
+        raise ExecutionRefused("a notional order must be a market order (Alpaca does not price fractions on a limit)")
     if not client_order_id:
         # Generating one here would defeat the entire idempotency design: a retry would arrive with
         # a fresh id and Alpaca would accept it as a new order.
@@ -101,21 +112,25 @@ def submit_order(
     payload: dict[str, Any] = {
         "symbol": symbol,
         "side": side,
-        # Shares, as a string — Alpaca's API is string-typed for numerics, and letting a float format
-        # itself (1e-05, 10.000000000000002) is a class of bug worth not having.
-        "qty": f"{qty:f}".rstrip("0").rstrip("."),
         "type": order_type,
         "time_in_force": time_in_force,
         "client_order_id": client_order_id,
     }
+    # Numerics go as strings: Alpaca's API is string-typed, and letting a float format itself
+    # (1e-05, 10.000000000000002) is a class of bug worth not having.
+    if qty is not None:
+        payload["qty"] = f"{qty:f}".rstrip("0").rstrip(".")
+    else:
+        payload["notional"] = f"{notional:.2f}"
     if limit_price is not None:
         payload["limit_price"] = f"{limit_price:.2f}"
 
     # Logged BEFORE the call: if the process dies mid-request, the log is the only evidence the
     # attempt happened. Never logs credentials — the client redacts, and none are in the payload.
     logger.warning(
-        "SUBMITTING ORDER %s %s %s qty=%s type=%s limit=%s tif=%s env=%s client_order_id=%s",
-        side.upper(), symbol, "→", payload["qty"], order_type,
+        "SUBMITTING ORDER %s %s %s size=%s type=%s limit=%s tif=%s env=%s client_order_id=%s",
+        side.upper(), symbol, "→",
+        payload.get("qty") or f"${payload.get('notional')}", order_type,
         payload.get("limit_price", "—"), time_in_force,
         "paper" if client.is_paper else "LIVE", client_order_id,
     )

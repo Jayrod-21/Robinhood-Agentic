@@ -42,6 +42,11 @@ services:
       # archive survive container restarts and are visible to the host-side refresh daemon.
       - ./data:/app/data
       - ./logs:/app/logs
+      # SLATE.md and THESES.md, read-only. MOUNTED rather than baked into the image: they are the
+      # owner's written record of what the book should be, edited by hand, and a copy frozen at
+      # build time would let the dashboard show a target the document no longer states — with the
+      # dashboard winning silently. Read-only because the app has no business editing them.
+      - ./docs:/app/docs:ro
     # Proton Mail Bridge (the SMTP relay for auth email) listens on the docker host; this maps
     # host.docker.internal to the host-gateway address so SMTP_HOST=host.docker.internal resolves
     # from inside the container. Same pattern as 9b Korean Master's compose files.

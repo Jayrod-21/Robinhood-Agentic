@@ -294,23 +294,23 @@ class FmpClient:
     # break one mapping function with a clear name, not the whole ingest.
 
     def profile(self, symbol: str) -> dict | None:
-        rows = self.get("profile", {"symbol": symbol})
+        rows = self.get("profile", {"symbol": to_fmp_symbol(symbol)})
         return rows[0] if isinstance(rows, list) and rows else None
 
     def ratios(self, symbol: str, *, limit: int = 1, period: str = "annual") -> list[dict]:
-        rows = self.get("ratios", {"symbol": symbol, "limit": limit, "period": period})
+        rows = self.get("ratios", {"symbol": to_fmp_symbol(symbol), "limit": limit, "period": period})
         return rows if isinstance(rows, list) else []
 
     def income_statement(self, symbol: str, *, limit: int = 1, period: str = "annual") -> list[dict]:
-        rows = self.get("income-statement", {"symbol": symbol, "limit": limit, "period": period})
+        rows = self.get("income-statement", {"symbol": to_fmp_symbol(symbol), "limit": limit, "period": period})
         return rows if isinstance(rows, list) else []
 
     def cash_flow(self, symbol: str, *, limit: int = 1, period: str = "annual") -> list[dict]:
-        rows = self.get("cash-flow-statement", {"symbol": symbol, "limit": limit, "period": period})
+        rows = self.get("cash-flow-statement", {"symbol": to_fmp_symbol(symbol), "limit": limit, "period": period})
         return rows if isinstance(rows, list) else []
 
     def growth(self, symbol: str, *, limit: int = 1, period: str = "annual") -> list[dict]:
-        rows = self.get("financial-growth", {"symbol": symbol, "limit": limit, "period": period})
+        rows = self.get("financial-growth", {"symbol": to_fmp_symbol(symbol), "limit": limit, "period": period})
         return rows if isinstance(rows, list) else []
 
     CALLS_PER_SYMBOL = 5
@@ -377,7 +377,17 @@ def reset_shared_client() -> None:
         _shared_client = None
 
 
+# Class-share symbols are spelled differently by the broker and the data vendor: Alpaca says
+# "BRK.B", FMP says "BRK-B". Passing the broker's spelling straight to FMP returns an EMPTY result,
+# not an error — so a held BRK.B would price as None and render as an unpriced position on the
+# dashboard, with no indication that the cause was a punctuation mismatch rather than a market
+# outage. Mapped in ONE place, at the boundary where the symbol crosses from our world into FMP's.
+def to_fmp_symbol(symbol: str) -> str:
+    """Our canonical symbol (Alpaca spelling) -> FMP's spelling."""
+    return symbol.replace(".", "-")
+
+
 def quote(symbol: str) -> dict | None:
     """Latest quote for one symbol via the shared client, or None if FMP has nothing."""
-    rows = get_shared_client().get("quote", {"symbol": symbol})
+    rows = get_shared_client().get("quote", {"symbol": to_fmp_symbol(symbol)})
     return rows[0] if isinstance(rows, list) and rows else None

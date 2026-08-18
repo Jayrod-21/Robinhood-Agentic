@@ -62,10 +62,7 @@ _SLATE_DATED = re.compile(r"Allocation \(as of (?P<date>\d{4}-\d{2}-\d{2})\)")
 _DOCUMENTED_BOOK = re.compile(r"\$(?P<amount>[0-9][0-9,]*(?:\.[0-9]{2})?)\s+Agentic account")
 
 
-def _docs_dir():
-    from pathlib import Path
 
-    return Path(__file__).resolve().parents[3] / "docs"
 
 
 def _slate_meta(text: str) -> tuple[str | None, float | None]:
@@ -83,7 +80,7 @@ def _slate_meta(text: str) -> tuple[str | None, float | None]:
 @router.get("/reconciliation")
 def reconciliation() -> dict[str, Any]:
     settings = get_settings()
-    docs = _docs_dir()
+    docs = settings.docs_dir
     slate_path = docs / "SLATE.md"
     slate = load_slate(slate_path)
     rules = load_sizing_rules(slate_path)

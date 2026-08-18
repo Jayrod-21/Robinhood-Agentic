@@ -160,9 +160,7 @@ def _catalysts(symbols: set[str], slate: dict, held: set[str]) -> list[dict[str,
 @router.get("/market-context")
 def market_context() -> dict[str, Any]:
     settings = get_settings()
-    from pathlib import Path
-
-    docs = Path(__file__).resolve().parents[3] / "docs"
+    docs = settings.docs_dir
     slate = load_slate(docs / "SLATE.md")
 
     held: set[str] = set()

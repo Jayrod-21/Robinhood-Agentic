@@ -33,6 +33,11 @@ services:
     volumes:
       - ../data:/app/data
       - ../logs:/app/logs
+      # SLATE.md and THESES.md, read-only. MOUNTED rather than baked into the image: they are the
+      # owner's written record of what the book should be, edited by hand, and a copy frozen at
+      # build time would let the dashboard show a target the document no longer states — with the
+      # dashboard winning silently. Read-only because the app has no business editing them.
+      - ../docs:/app/docs:ro
     # Run as the host user, for the same reason the dev stack does (docker-compose.yml:15-19).
     # data/ and logs/ are 0700 on the host because they hold the holdings snapshot, cost basis and
     # the refresh trigger. The image's own user is uid 1001, which does not exist on the host, so a
