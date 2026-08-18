@@ -23,8 +23,21 @@ CRON_TZ=America/New_York
 # keeps the FALLBACK file current — what gets served if the broker stops answering. Before this
 # existed the fallback was a July Robinhood export of a book that no longer exists, refreshable
 # only by a button whose host daemon shelled out to wt.exe.
-# Silent on success; cron mails only failures.
+# Failures do NOT go to cron mail — this machine has no MTA, so cron output is discarded. They go
+# through bin/lib_notify.sh: a log under ~/.local/state/agentic plus a desktop notification.
 * * * * * /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/alpaca_sync.sh"
+
+# ── Stack health, every 5 minutes ─────────────────────────────────────────────────────────────
+# On 2026-08-18 the rh-db container stopped existing — killed, not stopped — and every
+# database-backed page served 503 for five minutes with nothing watching. This checks the
+# containers, that Postgres actually answers, that the dashboard responds through Caddy, that the
+# minute job is still writing, and that these cron entries are installed at all.
+#
+# Add --repair to have it recreate rh-db when the container is MISSING (idempotent; the volume is
+# external so data is never touched). It still alerts and still exits non-zero when it does, because
+# a stack that quietly heals a recurring fault teaches you it never happened. Left off until the
+# failure has been seen at least once.
+*/5 * * * * /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/stack_health.sh" --quiet
 
 # ── Twice-daily cycle ─────────────────────────────────────────────────────────────────────────
 # Each run: refresh the snapshot via the Robinhood MCP (host), then run the in-container cycle

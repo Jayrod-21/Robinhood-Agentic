@@ -14,9 +14,9 @@ deploy/.env
 
 # Generated runtime artifacts
 .env.ports
-data/refresh.request
-data/refresh.lock
 data/account_snapshot.json
+# Written by bin/stack_health.sh every 5 minutes: per-machine runtime state, not source.
+data/stack_health.json
 logs/refresh/
 logs/cron/
 
