@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import useSWR from "swr";
-import { Activity, BookOpen, Gavel, LayoutDashboard, LineChart, ListFilter, LogOut, Newspaper, Scale, Target } from "lucide-react";
+import { Activity, BookOpen, Gavel, LayoutDashboard, LineChart, ListFilter, LogOut, Newspaper, NotebookPen, Scale, Target } from "lucide-react";
 import { fetchAuthState, fetchMe, logout } from "@/lib/auth";
 import { cn } from "@/lib/format";
 import { DataTrustStrip } from "@/components/data-trust";
@@ -20,6 +20,7 @@ const NAV = [
   { href: "/performance", label: "Performance", icon: LineChart },
   { href: "/calibration", label: "Calibration", icon: Target },
   { href: "/fundamentals", label: "Fundamentals", icon: BookOpen },
+  { href: "/journal", label: "Journal", icon: NotebookPen },
   { href: "/market", label: "Market", icon: Newspaper },
   { href: "/scan", label: "Scan", icon: ListFilter },
   { href: "/pipeline", label: "Pipeline", icon: Activity },
