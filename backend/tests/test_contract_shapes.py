@@ -214,3 +214,65 @@ def test_the_piotroski_signal_labels_match_the_scorer():
     assert labelled == set(SIGNAL_NAMES), (
         f"page labels {sorted(labelled)} but the scorer emits {sorted(SIGNAL_NAMES)}"
     )
+
+
+# ── journal ───────────────────────────────────────────────────────────────────────────────────
+#
+# The journal page both READS entries and WRITES them, so it is the first page whose TypeScript has
+# to agree with request models as well as a response shape. A field renamed on either side fails a
+# write with a 422 the operator cannot act on.
+
+
+def test_journal_entry_interface_matches_what_the_query_returns():
+    """recent_entries() builds its dicts by hand from a positional SELECT. A column added to one
+    and not the other is invisible until the page renders a blank."""
+    import sys
+    from pathlib import Path as _Path
+
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+    from app.services import outcomes
+
+    src = _Path(outcomes.__file__).read_text(encoding="utf-8")
+    m = re.search(r"def recent_entries\(.*?return \[\s*\{(.*?)\}\s*for r in rows", src, re.S)
+    assert m, "recent_entries' projection could not be located — it was restructured"
+    returned = set(re.findall(r'"([a-z_]+)":', m.group(1)))
+    assert len(returned) > 8, f"parsed only {len(returned)} keys — the regex went blind"
+
+    declared = required_fields("journal.ts", "JournalEntry")
+    missing = declared - returned
+    assert not missing, f"JournalEntry declares fields the query never returns: {sorted(missing)}"
+
+
+def test_the_thesis_form_sends_every_field_the_backend_requires():
+    """A required field the form never sends is a 422 on submit — after the operator has written
+    the whole thesis into a textarea."""
+    from app.routers.history import ThesisRequest
+
+    required = {n for n, f in ThesisRequest.model_fields.items() if f.is_required()}
+    sent = required_fields("journal.ts", "ThesisRequest")
+    assert required <= sent, f"the form omits required thesis fields: {sorted(required - sent)}"
+
+
+def test_the_lesson_form_sends_every_field_the_backend_requires():
+    from app.routers.history import LessonRequest
+
+    required = {n for n, f in LessonRequest.model_fields.items() if f.is_required()}
+    sent = required_fields("journal.ts", "LessonRequest")
+    assert required <= sent, f"the form omits required lesson fields: {sorted(required - sent)}"
+
+
+def test_the_entry_types_the_page_filters_by_are_the_ones_the_api_accepts():
+    """The filter chips drive a query parameter. A type the API rejects would 422 the whole list."""
+    import typing
+
+    from app.routers.history import list_entries
+
+    hints = typing.get_type_hints(list_entries, include_extras=True)
+    literal = typing.get_args(typing.get_args(hints["entry_type"])[0])[0]
+    accepted = set(typing.get_args(literal))
+
+    text = (LIB / "journal.ts").read_text(encoding="utf-8")
+    m = re.search(r"export type EntryType =([^;]+);", text)
+    assert m, "EntryType not found in journal.ts"
+    declared = set(re.findall(r'"([a-z]+)"', m.group(1)))
+    assert declared == accepted, f"page filters by {sorted(declared)}, API accepts {sorted(accepted)}"
