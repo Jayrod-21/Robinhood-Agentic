@@ -36,7 +36,23 @@ from __future__ import annotations
 from typing import Any
 
 VARIANT = "cary"
-SIGNAL_COUNT = 9
+
+# The nine, named. Exported because two other places need to agree with this list and neither can
+# see the dict literal below: the dashboard labels each signal by key, and a contract test pins the
+# two together. A signal renamed here and nowhere else would render as a permanent "inputs missing"
+# row — a real, computed signal reported as unmeasurable.
+SIGNAL_NAMES: tuple[str, ...] = (
+    "net_income_improved",
+    "cfo_improved",
+    "shares_not_diluted",
+    "cfo_exceeds_net_income",
+    "roa_improved",
+    "leverage_fell",
+    "current_ratio_improved",
+    "gross_margin_improved",
+    "asset_turnover_improved",
+)
+SIGNAL_COUNT = len(SIGNAL_NAMES)
 
 
 def _num(v: Any) -> float | None:
@@ -101,6 +117,10 @@ def score(current: dict, prior: dict) -> dict[str, Any]:
             _ratio(c.get("revenue"), c.get("total_assets")),
             _ratio(p.get("revenue"), p.get("total_assets")), greater=True),
     }
+
+    # Cheap invariant, not a comment: SIGNAL_NAMES is what the dashboard and the contract test are
+    # written against, so the two must not be able to drift apart silently.
+    assert tuple(signals) == SIGNAL_NAMES, "the signal dict and SIGNAL_NAMES disagree"
 
     evaluated = sum(1 for v in signals.values() if v is not None)
     total = sum(1 for v in signals.values() if v is True)

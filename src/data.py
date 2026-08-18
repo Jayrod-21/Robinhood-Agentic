@@ -110,7 +110,42 @@ def known_at_from_statement(row: dict) -> str | None:
     for field_name in ("acceptedDate", "filingDate"):
         value = (row or {}).get(field_name)
         if value:
-            return str(value)
+            stamped = _as_utc(str(value))
+            if stamped:
+                return stamped
+    return None
+
+
+# SEC filings are accepted on EASTERN time, and FMP reports acceptedDate that way — naive, no zone.
+# Storing it naive let Postgres read it in the session zone and shift it: SVRA's FY2023 acceptance
+# landed as 2023-12-30 19:00 UTC for a period ending 2023-12-31, tripping the known_at >= period_end
+# CHECK. The constraint caught it, but the real damage was quieter — a timestamp shifted five hours
+# EARLY says a filing was knowable before it was, which is the exact error `known_at` exists to stop.
+_FILING_TZ = "America/New_York"
+
+
+def _as_utc(raw: str) -> str | None:
+    """Interpret a naive filing timestamp as Eastern and return it as explicit UTC."""
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    text = raw.strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            naive = datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        # A date with no clock is the END of that day in Eastern: a filing accepted "on the 31st"
+        # was not knowable at 00:00. Rounding it to midnight would be the same early-by-hours error
+        # in a smaller form.
+        if fmt == "%Y-%m-%d":
+            naive = naive.replace(hour=23, minute=59, second=59)
+        return (
+            naive.replace(tzinfo=ZoneInfo(_FILING_TZ))
+            .astimezone(timezone.utc)
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
+        )
+    logger.warning("unparseable filing timestamp %r — leaving it undated", raw)
     return None
 
 
@@ -190,6 +225,22 @@ def wide_fundamentals_from_fmp(bundle: dict) -> tuple[dict, dict]:
         price_to_tangible_book = price / tbvps
         derived["price_to_tangible_book"] = "profile.price / ratios.tangibleBookValuePerShare"
 
+    # EBITDA / interest expense, computed rather than taken from FMP's interestCoverageRatio.
+    # Two reasons, both the same defect class:
+    #   * FMP's ratio is EBIT-based, so storing it under a column named `ebitda_interest` would put
+    #     one number behind another number's name.
+    #   * FMP returns 0.0 when it has no interest expense to divide by (AAPL FY2025 arrives as
+    #     exactly 0). Rendered as "0.00x" that reads as "cannot cover its interest at all" — the
+    #     precise inversion of the truth for a company whose interest burden is negligible.
+    # A company with no interest expense has UNDEFINED coverage, not zero. That is None here, and
+    # the page shows it as unknown.
+    ebitda = _safe_num(income.get("ebitda"))
+    interest = _safe_num(income.get("interestExpense"))
+    ebitda_interest = None
+    if ebitda is not None and interest:
+        ebitda_interest = ebitda / abs(interest)
+        derived["ebitda_interest"] = "ebitda / abs(interestExpense)"
+
     if lo52 is not None or hi52 is not None:
         derived["week_52_high"] = "split from profile.range"
         derived["week_52_low"] = "split from profile.range"
@@ -205,7 +256,7 @@ def wide_fundamentals_from_fmp(bundle: dict) -> tuple[dict, dict]:
         "week_52_low": lo52,
         "avg_volume_30d": int(v) if (v := _safe_num(profile.get("averageVolume"))) else None,
         "revenue_ttm": revenue,
-        "ebitda_ttm": _safe_num(income.get("ebitda")),
+        "ebitda_ttm": ebitda,
         "capital_expenditure": _safe_num(cash.get("capitalExpenditure")),
         "net_debt": _safe_num(balance.get("netDebt")),
         "shares_outstanding": _safe_num(income.get("weightedAverageShsOut")),
@@ -215,7 +266,7 @@ def wide_fundamentals_from_fmp(bundle: dict) -> tuple[dict, dict]:
         "roe": _safe_num(metrics.get("returnOnEquity")),
         "roc": _safe_num(metrics.get("returnOnInvestedCapital")),
         "debt_to_equity": _safe_num(ratios.get("debtToEquityRatio")),
-        "ebitda_interest": _safe_num(ratios.get("interestCoverageRatio")),
+        "ebitda_interest": ebitda_interest,
         "cash_conversion_cycle": _safe_num(metrics.get("cashConversionCycle")),
         "eps_current": _safe_num(income.get("eps")),
         "analyst_target_price": _safe_num(target.get("targetConsensus")),

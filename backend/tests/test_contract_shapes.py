@@ -162,3 +162,55 @@ def test_the_interfaces_the_other_endpoints_serve_are_parseable(ts_file, interfa
     """A guard on this file's own method: if the regex stops finding interfaces, every assertion
     above would pass vacuously against an empty required-set."""
     assert required_fields(ts_file, interface)
+
+
+# ── fundamentals ──────────────────────────────────────────────────────────────────────────────
+#
+# The page reads every one of these by name across four field groups and a history table. A column
+# renamed in the SELECT list would render the whole grid as em dashes — visually indistinguishable
+# from a company with no data, which is the failure this file exists to catch.
+
+
+def test_the_annual_select_list_covers_the_typescript_interface():
+    from app.routers.fundamentals import _ANNUAL_FIELDS
+
+    missing = required_fields("fundamentals.ts", "AnnualPeriod") - set(_ANNUAL_FIELDS)
+    assert not missing, f"AnnualPeriod declares fields the query never selects: {sorted(missing)}"
+
+
+def test_the_market_select_list_covers_the_typescript_interface():
+    from app.routers.fundamentals import _MARKET_FIELDS
+
+    missing = required_fields("fundamentals.ts", "MarketBlock") - set(_MARKET_FIELDS)
+    assert not missing, f"MarketBlock declares fields the query never selects: {sorted(missing)}"
+
+
+def test_every_field_the_page_renders_is_one_the_backend_selects():
+    """The page drives its grid from ANNUAL_GROUPS / MARKET_FIELDS in fundamentals.ts. A label
+    pointing at a key nothing selects renders an em dash forever and never errors."""
+    text = (LIB / "fundamentals.ts").read_text(encoding="utf-8")
+    from app.routers.fundamentals import _ANNUAL_FIELDS, _MARKET_FIELDS
+
+    keys = set(re.findall(r'\{ key: "([a-z0-9_]+)"', text))
+    assert len(keys) > 25, f"parsed only {len(keys)} field keys — the regex went blind"
+    unknown = keys - set(_ANNUAL_FIELDS) - set(_MARKET_FIELDS)
+    assert not unknown, f"the page renders keys the backend never returns: {sorted(unknown)}"
+
+
+def test_the_piotroski_signal_labels_match_the_scorer():
+    """The page labels nine signals by key. A key the scorer does not emit renders as a permanent
+    'inputs missing' row — a real signal reported as unmeasurable."""
+    text = (LIB / "fundamentals.ts").read_text(encoding="utf-8")
+    m = re.search(r"export const PIOTROSKI_LABELS[^{]*\{(.*?)\n\};", text, re.S)
+    assert m, "PIOTROSKI_LABELS not found"
+    labelled = set(re.findall(r"^\s*([a-z_]+):", m.group(1), re.M))
+
+    import sys
+    from pathlib import Path as _Path
+
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+    from src.piotroski import SIGNAL_NAMES
+
+    assert labelled == set(SIGNAL_NAMES), (
+        f"page labels {sorted(labelled)} but the scorer emits {sorted(SIGNAL_NAMES)}"
+    )

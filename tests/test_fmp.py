@@ -106,12 +106,15 @@ def test_known_at_is_the_acceptance_date_not_the_period_end():
     income = _fixture("income-statement")
     known_at = known_at_from_statement(income)
     assert known_at is not None
-    assert known_at.startswith("2025-10-31"), known_at
+    # 06:01:26 Eastern is 10:01:26 UTC. Stored as explicit UTC so nothing shifts it later.
+    assert known_at == "2025-10-31T10:01:26Z", known_at
     assert not known_at.startswith(income["date"]), "known_at must not be the period end"
 
 
 def test_known_at_falls_back_to_filing_date_then_none():
-    assert known_at_from_statement({"filingDate": "2025-10-31"}) == "2025-10-31"
+    # Eastern -> UTC, and a date with no clock is the END of that day: a filing accepted "on the
+    # 31st" was not knowable at 00:00, and rounding it there would claim knowability hours early.
+    assert known_at_from_statement({"filingDate": "2025-10-31"}) == "2025-11-01T03:59:59Z"
     # No date at all: None, so the row stays out of point-in-time queries rather than guessing.
     assert known_at_from_statement({"date": "2025-09-27"}) is None
     assert known_at_from_statement({}) is None
@@ -190,3 +193,49 @@ def test_api_key_never_appears_in_an_error_message():
     client = FmpClient(api_key=secret, budget=CallBudget(limit=10))
     assert secret not in client._redact(f"connection to host?apikey={secret} failed")
     assert "<FMP_KEY>" in client._redact(f"boom apikey={secret}")
+
+
+# ── point-in-time hazards in the wide field set ───────────────────────────────────────────────
+
+
+def test_interest_coverage_is_unknown_rather_than_zero_when_there_is_no_interest():
+    """FMP returns interestCoverageRatio = 0 when it has no interest expense to divide by (AAPL
+    FY2025 arrives exactly this way). Stored as 0.0 and rendered "0.00x", that reads as "cannot
+    cover its interest at all" — the precise inversion of the truth for a company whose interest
+    burden is negligible. A company with no interest expense has UNDEFINED coverage, not zero."""
+    from src.data import wide_fundamentals_from_fmp
+
+    row, _ = wide_fundamentals_from_fmp(
+        {"income": {"ebitda": 144_427_000_000, "interestExpense": 0, "revenue": 416_161_000_000}}
+    )
+    assert row["ebitda_interest"] is None
+
+
+def test_interest_coverage_is_ebitda_over_interest_not_the_vendor_ratio():
+    """The column is named `ebitda_interest`; FMP's interestCoverageRatio is EBIT-based. Storing
+    the vendor number under this name would put one figure behind another figure's name — the
+    defect class this codebase keeps rediscovering."""
+    from src.data import wide_fundamentals_from_fmp
+
+    row, derived = wide_fundamentals_from_fmp(
+        {
+            "income": {"ebitda": 100.0, "interestExpense": 4.0},
+            # A vendor ratio that must NOT be the one that lands.
+            "ratios": {"interestCoverageRatio": 999.0},
+        }
+    )
+    assert row["ebitda_interest"] == pytest.approx(25.0)
+    assert derived["ebitda_interest"] == "ebitda / abs(interestExpense)"
+
+
+def test_a_naive_filing_stamp_is_read_as_eastern_and_stored_as_utc():
+    """FMP's acceptedDate is a naive US/Eastern timestamp. Stored as if it were already UTC it
+    dated every filing four or five hours EARLY — the one direction that matters on a
+    point-in-time table, because it makes a filing look knowable before the market had it."""
+    assert known_at_from_statement({"acceptedDate": "2025-10-31 06:01:26"}) == "2025-10-31T10:01:26Z"
+    # An April filing is EDT (UTC-4), not EST (UTC-5). A fixed offset would be wrong half the year.
+    assert known_at_from_statement({"acceptedDate": "2026-04-16 06:05:49"}) == "2026-04-16T10:05:49Z"
+
+
+def test_an_unparseable_filing_stamp_is_undated_rather_than_guessed():
+    assert known_at_from_statement({"acceptedDate": "not a date"}) is None

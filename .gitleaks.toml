@@ -32,4 +32,8 @@ regexes = [
   # and generic-api-key fires on the `token, …=…` shape. Pinned to the exact expression so it
   # cannot widen — a literal assigned near the word "token" anywhere else is still caught.
   '''ttl_hours=decision\.ttl_hours''',
+  # A column NAME in the fundamentals field spec, not a value: generic-api-key fires on the
+  # `key: "…"` shape and this identifier's entropy. Pinned to the exact field so it cannot widen —
+  # any other `key: "…"` in that file is still scanned.
+  '''key: "avg_volume_30d"''',
 ]

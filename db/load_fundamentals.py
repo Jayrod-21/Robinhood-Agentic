@@ -36,7 +36,7 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -90,35 +90,114 @@ def resolve_security_id(conn: psycopg.Connection, symbol: str) -> int | None:
     return row[0] if row else None
 
 
-def annual_row(bundle: dict, security_id: int) -> dict | None:
+def _filing_is_plausible(period_end: str, known_at: str) -> bool:
+    """A statement cannot be filed before the period it reports on has ended.
+
+    Enforced here as well as by ck_fundamentals_known_at so a single bad vendor record costs one
+    period rather than aborting the whole load at the INSERT.
+    """
+    try:
+        ends = date.fromisoformat(str(period_end)[:10])
+        filed = date.fromisoformat(str(known_at)[:10])
+    except ValueError:
+        return False
+    return filed >= ends
+
+
+def update_security_profile(conn: psycopg.Connection, security_id: int, bundle: dict) -> bool:
+    """Fill in a security's name, sector and industry from the profile we already fetched.
+
+    `securities` is reference data loaded elsewhere, and resolve_security_id deliberately refuses to
+    CREATE rows here. Enriching an existing row is a different thing: the profile call has already
+    been made and paid for, and leaving 19,745 securities with a NULL name meant every page rendered
+    a company as its ticker and an em dash.
+
+    COALESCE keeps whatever a dedicated reference loader may have set — this fills gaps, it does not
+    overwrite a better source.
+    """
+    profile = bundle.get("profile") or {}
+    name = (profile.get("companyName") or "").strip() or None
+    sector = (profile.get("sector") or "").strip() or None
+    industry = (profile.get("industry") or "").strip() or None
+    exchange = (profile.get("exchange") or "").strip() or None
+    if not any((name, sector, industry, exchange)):
+        return False
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE securities SET name = COALESCE(name, %s), sector = COALESCE(sector, %s),"
+            " industry = COALESCE(industry, %s), exchange = COALESCE(exchange, %s), updated_at = now()"
+            " WHERE id = %s",
+            (name, sector, industry, exchange, security_id),
+        )
+    return True
+
+
+def annual_row(bundle: dict, security_id: int, index: int = 0) -> dict | None:
     """Statement-derived figures for the period the statements cover. Real history.
 
     Returns None when there is no statement to date — a row whose known_at cannot be established
     would be invisible to point-in-time queries anyway (the index excludes NULLs), and writing it
     would inflate the row count with something nothing can read.
     """
-    income = bundle.get("income") or {}
-    ratios = bundle.get("ratios") or {}
-    cash_flow = bundle.get("cash_flow") or {}
-    growth = bundle.get("growth") or {}
+    # index selects WHICH filed period this row describes. 0 is the newest; higher indices walk
+    # back through the years, which is what turns a single snapshot into a history someone can read
+    # a trend from. Falls back to the bundle's top-level (newest) shape when a series is absent.
+    per = bundle.get("periods") or {}
+
+    def _at(key: str, fallback_key: str):
+        series = per.get(key) or []
+        if index < len(series):
+            return series[index] or {}
+        return (bundle.get(fallback_key) or {}) if index == 0 else {}
+
+    income = _at("income", "income")
+    ratios = _at("ratios", "ratios")
+    cash_flow = _at("cash_flow", "cash_flow")
+    growth = _at("growth", "growth")
 
     period_end = income.get("date") or ratios.get("date")
     known_at = known_at_from_statement(income) or known_at_from_statement(cash_flow)
     if not period_end or not known_at:
         return None
+    if not _filing_is_plausible(period_end, known_at):
+        # The vendor sometimes stamps a statement as filed BEFORE the period it reports on closed
+        # (UNH FY2023 arrives as accepted 2023-12-29 for a period ending 2023-12-31). That date
+        # cannot be true, and the honest move is to drop the observation rather than clamp it:
+        # clamping invents a knowability claim, and known_at is the one column a backtest trusts
+        # to decide what was knowable when. Missing a year is recoverable; a wrong known_at
+        # silently leaks the future into every point-in-time query built on it.
+        logger.warning(
+            "%s %s: filing stamp %s precedes the period end — implausible, so this period is "
+            "dropped rather than dated with a guess",
+            income.get("symbol") or f"security {security_id}", period_end, known_at,
+        )
+        return None
 
     wide, derived = wide_fundamentals_from_fmp(bundle)
+    if index > 0:
+        # profile-sourced values describe TODAY. Attaching today's beta or 52-week range to a
+        # period that closed years ago would be a fabricated historical fact — the single most
+        # tempting mistake in a history table.
+        for market_only in ("beta", "week_52_high", "week_52_low", "avg_volume_30d",
+                            "analyst_target_price", "analyst_recommendation",
+                            "price_to_tangible_book"):
+            wide[market_only] = None
+        derived = {k: v for k, v in derived.items()
+                   if k not in ("week_52_high", "week_52_low", "price_to_tangible_book")}
     periods = bundle.get("periods") or {}
     inc, cf, bal = periods.get("income") or [], periods.get("cash_flow") or [], periods.get("balance") or []
 
     # Piotroski needs TWO consecutive annual periods. With only one on record the score is not
     # computed at all rather than computed against nothing — a score built from a single year would
     # be seven unknown signals wearing a number.
+    # Scored against the period immediately prior to THIS one, so an older row carries the score
+    # that was true then rather than today's. The oldest period on record has no predecessor and is
+    # therefore unscored — which is honest: a comparison needs two years.
     pio = None
-    if len(inc) >= 2 and len(cf) >= 2 and len(bal) >= 2:
+    if len(inc) > index + 1 and len(cf) > index + 1 and len(bal) > index + 1:
         pio = piotroski_mod.score(
-            piotroski_inputs(inc[0], cf[0], bal[0]),
-            piotroski_inputs(inc[1], cf[1], bal[1]),
+            piotroski_inputs(inc[index], cf[index], bal[index]),
+            piotroski_inputs(inc[index + 1], cf[index + 1], bal[index + 1]),
         )
 
     row = {
@@ -142,7 +221,7 @@ def annual_row(bundle: dict, security_id: int) -> dict | None:
         "quick_ratio": _num(ratios.get("quickRatio")),
         "revenue_growth_yoy": _num(growth.get("revenueGrowth")),
         **wide,
-        "eps_growth_yoy": eps_growth_yoy(inc),
+        "eps_growth_yoy": eps_growth_yoy(inc[index:]),
         "derived_fields": json.dumps(derived) if derived else None,
         "piotroski_f_score": pio["score"] if pio and pio["complete"] else None,
         # The variant travels WITH the score, always: migration 016 enforces it, because a score
@@ -285,6 +364,7 @@ def cmd_load(conn: psycopg.Connection, args: argparse.Namespace) -> int:
     rows: list[dict] = []
     skipped_unknown: list[str] = []
     failed: list[str] = []
+    enriched: list[str] = []
 
     for symbol in symbols:
         security_id = resolve_security_id(conn, symbol)
@@ -303,18 +383,27 @@ def cmd_load(conn: psycopg.Connection, args: argparse.Namespace) -> int:
             failed.append(symbol)
             continue
 
-        annual = annual_row(bundle, security_id)
+        if update_security_profile(conn, security_id, bundle):
+            enriched.append(symbol)
+
+        periods_available = len((bundle.get("periods") or {}).get("income") or [])
+        annuals = [
+            r for i in range(max(1, periods_available))
+            if (r := annual_row(bundle, security_id, i)) is not None
+        ]
         snapshot = snapshot_row(bundle, security_id, fetched_at)
-        rows.extend(r for r in (annual, snapshot) if r is not None)
-        logger.info(
-            "%s: annual=%s snapshot=%s", symbol, "yes" if annual else "no", "yes" if snapshot else "no"
-        )
+        rows.extend(annuals)
+        if snapshot is not None:
+            rows.append(snapshot)
+        logger.info("%s: %d annual period(s), snapshot=%s",
+                    symbol, len(annuals), "yes" if snapshot else "no")
 
     notes = (
         f"FMP /stable/ per-symbol bundles for {len(symbols)} requested symbol(s). "
         f"annual rows carry known_at = filing acceptedDate (point-in-time safe); snapshot rows "
         f"carry market cap/price/PE/PEG as of the fetch. "
         f"unknown-to-securities: {sorted(skipped_unknown) or 'none'}; failed: {sorted(failed) or 'none'}; "
+        f"securities enriched with name/sector: {len(enriched)}; "
         f"fmp calls spent: {client.budget.spent}; paced {client.rate_gate.waited_total_s:.1f}s"
     )
     if args.dry_run:
