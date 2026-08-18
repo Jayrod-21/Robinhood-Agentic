@@ -74,7 +74,6 @@ check_account_number() {
 # (2026-08-13) and are quoting the retired machine's layout, not using it. SHRINK-ONLY: remove
 # entries as the files are cleaned; never add one. A match in any file NOT listed here fails.
 readonly PERSONAL_PATH_BASELINE=(
-  "bin/refresh_daemon.sh"                         # comment explaining the old hard-coded path was removed
   "docs/SECURITY_FINDINGS_2026-07-27.md"          # quotes the finding it reports
   "docs/fixpass/FIX_REPORT_2026-06-16_dashboard.md"
   "docs/fixpass/REVIEW_debate_engine_2026-06-16.md"

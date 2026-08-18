@@ -13,16 +13,23 @@
 #   every request behind a 5-second cache and never opens this file. The file matters only when the
 #   broker does not answer — which is exactly when nobody can go fix it by hand.
 #
-# QUIET BY DESIGN
-#   Cron mails any output. At once a minute, a chatty success line is 1,440 mails a day, and the
-#   real signal drowns. Success is silent; only failure speaks, and failure leaves the previous
-#   snapshot in place rather than blanking it.
+# WHERE FAILURES GO
+#   NOT to cron mail. This machine has no MTA and /var/mail is empty, so anything cron captures is
+#   discarded — an earlier version of this comment claimed otherwise and was simply wrong. Failures
+#   go through bin/lib_notify.sh: a log file, plus a desktop notification on the transition into
+#   failure and again on recovery. Repeats stay quiet, because a popup every minute during an
+#   outage is how someone learns to ignore popups.
+#
+#   A failure also leaves the previous snapshot in place rather than blanking it.
 
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-cd "${PROJECT_DIR}"
+cd "${PROJECT_DIR}" || exit 1
+
+# shellcheck source=bin/lib_notify.sh
+source "${SCRIPT_DIR}/lib_notify.sh"
 
 BACKEND_ENV="${PROJECT_DIR}/backend/.env"
 [[ -f "${BACKEND_ENV}" ]] || { echo "✗ ${BACKEND_ENV} missing — no broker credentials" >&2; exit 1; }
@@ -42,9 +49,12 @@ LOG="${LOG_DIR}/$(date -u +%Y%m%d)-snapshot.log"
 # container spawn every 60 seconds to write one JSON file would be the most expensive part of it.
 if out="$("${PYTHON}" "${SCRIPT_DIR}/alpaca_snapshot.py" 2>&1)"; then
   echo "$(date -u +%FT%TZ) ${out}" >>"${LOG}"
+  notify_transition "alpaca-sync" "ok" "3b fallback snapshot" "writing normally"
   exit 0
 fi
 rc=$?
 echo "$(date -u +%FT%TZ) FAILED rc=${rc} ${out}" >>"${LOG}"
+notify_transition "alpaca-sync" "fail" "3b fallback snapshot" \
+  "not updating (rc=${rc}) — the fallback is going stale; see ${LOG}"
 echo "alpaca_sync failed (rc=${rc}); see ${LOG}" >&2
 exit "${rc}"

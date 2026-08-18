@@ -31,7 +31,10 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-cd "${PROJECT_DIR}"
+cd "${PROJECT_DIR}" || exit 1
+
+# shellcheck source=bin/lib_notify.sh
+source "${SCRIPT_DIR}/lib_notify.sh"
 
 LOG_DIR="${PROJECT_DIR}/logs/cron"
 mkdir -p "${LOG_DIR}"
@@ -66,6 +69,8 @@ step() {
     return 0
   fi
   echo "✗ ${name} failed (exit ${rc}) — later steps skipped so nothing marks against stale inputs"
+  notify_transition "nightly-marks" "fail" "3b daily marking" \
+    "${name} failed (exit ${rc}) — the equity curve did not advance today"
   exit 1
 }
 
@@ -89,6 +94,9 @@ if [[ ${rc} -ne 0 ]]; then
     exit 0
   fi
   echo "✗ mark failed (exit ${rc})"
+  notify_transition "nightly-marks" "fail" "3b daily marking" \
+    "the mark failed (exit ${rc}) — the equity curve did not advance today"
   exit 1
 fi
+notify_transition "nightly-marks" "ok" "3b daily marking" "the book was marked"
 echo "=== done @ $(date -u +%FT%TZ)"
