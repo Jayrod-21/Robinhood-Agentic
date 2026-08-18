@@ -467,7 +467,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="load_reference_data")
     p.add_argument("command", choices=("calendar", "rates", "report"))
     p.add_argument("--from", dest="date_from", default="2020-01-01")
-    p.add_argument("--to", dest="date_to", default="2026-12-31")
+    # A ROLLING horizon, not a fixed date. This defaulted to "2026-12-31", which was ~2 years out
+    # when it was written and is now weeks away. The marking job refuses any date market_calendar
+    # does not know, so the equity curve would have stopped dead on 1 January with an error naming
+    # the calendar — and nothing would have said so in advance.
+    #
+    # Safe to generate years ahead: the holiday set is computed from NYSE rules (fixed dates with
+    # weekend observance, nth-weekday rules, and a computed Good Friday), not fetched. Unforeseeable
+    # closures — a national day of mourning — arrive through AD_HOC_CLOSURES and are picked up on
+    # the next run, because the upsert updates in place.
+    p.add_argument(
+        "--to", dest="date_to",
+        default=f"{date.today().year + 3}-12-31",
+        help="default: 31 December, three years out (rolling)",
+    )
     p.add_argument("--verbose", action="store_true")
     return p
 
