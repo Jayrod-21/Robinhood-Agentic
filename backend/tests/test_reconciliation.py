@@ -55,7 +55,10 @@ def test_a_holding_at_target_matches(monkeypatch):
     tsm = next(r for r in body["positions"] if r["symbol"] == "TSM")
     assert tsm["live_weight_pct"] == pytest.approx(22.0)
     assert tsm["status"] == "match"
-    assert abs(tsm["drift_pct"]) <= rec.DRIFT_TOLERANCE_PCT
+    # Against the threshold the endpoint REPORTS, not a module constant. The thresholds are
+    # operator-tunable now (migration 019), so meta is the contract — and a test reading a constant
+    # the page never sees would keep passing while the two disagreed.
+    assert abs(tsm["drift_pct"]) <= body["meta"]["drift_tolerance_pct"]
 
 
 def test_a_holding_past_tolerance_is_drifted(monkeypatch):
@@ -229,3 +232,48 @@ def test_the_account_being_unreadable_still_returns_catalysts(monkeypatch):
     body = mc.market_context()
     assert body["catalysts"][0]["in_slate"] is True
     assert body["catalysts"][0]["held"] is False, "unconfirmed holdings report as not held"
+
+
+# ── tunable thresholds ────────────────────────────────────────────────────────────────────────
+
+
+def test_thresholds_come_from_settings_and_say_where_they_came_from(monkeypatch):
+    """Reconciliation reads its guardrails from app_settings now. It must also report WHICH source
+    it used: a breach judged against a compiled default, while the operator believes they set
+    something else, is a guardrail misreporting what it enforced."""
+    from app.services import settings_store
+
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot([("TSM", 24.0, 10.0)], cash=760.0))
+    monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"TSM": 10.0})
+    monkeypatch.setattr(
+        settings_store, "get_all",
+        lambda: ({**settings_store.defaults(), "drift_tolerance_pct": 5.0}, "database"),
+    )
+    body = rec.reconciliation()
+    tsm = next(r for r in body["positions"] if r["symbol"] == "TSM")
+    assert body["meta"]["drift_tolerance_pct"] == 5.0
+    assert body["meta"]["thresholds_source"] == "database"
+    # 24% against a 22% target is 2 points of drift: drifted at the 1.5 default, matched at 5.0.
+    assert tsm["status"] == "match", "the widened tolerance was not applied"
+
+
+def test_a_database_outage_leaves_reconciliation_working_on_defaults(monkeypatch):
+    """This route reads a broker snapshot and a markdown file — neither needs Postgres. Letting a
+    settings lookup take the page down would lose the answer while both its inputs are readable."""
+    from app.db import DbUnavailable
+    from app.services import settings_store
+
+    settings_store.reset_cache()
+
+    def boom():
+        raise DbUnavailable("down", "the database is unavailable")
+
+    monkeypatch.setattr(settings_store, "connection", lambda: boom())
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot(cash=1000.0))
+    monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {})
+
+    body = rec.reconciliation()
+    assert body["meta"]["thresholds_source"] == "defaults", "the fallback must be declared, not silent"
+    assert body["meta"]["drift_tolerance_pct"] == settings_store.defaults()["drift_tolerance_pct"]
+    assert body["positions"], "the page still answers without the database"
+    settings_store.reset_cache()

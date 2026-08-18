@@ -29,6 +29,9 @@ from app.routers import (
     reconciliation,
     scan,
 )
+from app.routers import (
+    settings as settings_router,
+)
 from app.services.auth import auth_enforcement_configured, enforce_authenticated
 from app.services.email import assert_production_transport
 
@@ -279,6 +282,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(account.router)
     app.include_router(scan.router)
+    app.include_router(settings_router.router)
     app.include_router(debate.router)
     app.include_router(pipeline.router)
     app.include_router(history.router)

@@ -121,8 +121,21 @@ def _piotroski_proportional(fundamentals: dict) -> tuple[float | None, dict]:
     }
 
 
-def tier2_sprinkle_sauce(fundamentals: dict) -> TierResult:
-    """Tier 2 — the Sprinkle Sauce fundamental gates: PEG, FCF yield, Piotroski."""
+def tier2_sprinkle_sauce(
+    fundamentals: dict,
+    *,
+    max_peg: float = MAX_PEG,
+    min_fcf_yield: float = MIN_FCF_YIELD,
+    piotroski_ratio: float = PIOTROSKI_RATIO,
+) -> TierResult:
+    """Tier 2 — the Sprinkle Sauce fundamental gates: PEG, FCF yield, Piotroski.
+
+    Thresholds are PARAMETERS defaulting to the module constants, so this module keeps working with
+    no database anywhere in sight — src/ is imported by CLI tools (daily_scan.py) as well as by the
+    backend. The backend passes the operator's tuned values; anything else gets the Wasden defaults.
+    Reading settings in here would hand every command-line consumer a Postgres dependency to satisfy
+    a preference only the dashboard has.
+    """
     reasons: list[str] = []
     metrics: dict = {}
 
@@ -133,26 +146,26 @@ def tier2_sprinkle_sauce(fundamentals: dict) -> TierResult:
         reasons.append("PEG unavailable")
     elif peg <= 0:
         reasons.append(f"PEG {peg:.2f} <= 0 (negative earnings growth)")
-    elif peg >= MAX_PEG:
-        reasons.append(f"PEG {peg:.2f} >= {MAX_PEG}")
+    elif peg >= max_peg:
+        reasons.append(f"PEG {peg:.2f} >= {max_peg}")
 
     # FCF yield (percentage units).
     fcf_yield = fundamentals.get("fcf_yield")
     metrics["fcf_yield"] = fcf_yield
     if fcf_yield is None:
         reasons.append("FCF yield unavailable")
-    elif fcf_yield <= MIN_FCF_YIELD:
-        reasons.append(f"FCF yield {fcf_yield:.2f}% <= {MIN_FCF_YIELD}%")
+    elif fcf_yield <= min_fcf_yield:
+        reasons.append(f"FCF yield {fcf_yield:.2f}% <= {min_fcf_yield}%")
 
     # Piotroski (proportional single-snapshot).
     ratio, detail = _piotroski_proportional(fundamentals)
     metrics["piotroski"] = detail
     if ratio is None:
         reasons.append("Piotroski: no computable signals")
-    elif ratio < PIOTROSKI_RATIO:
+    elif ratio < piotroski_ratio:
         reasons.append(
             f"Piotroski {detail['passed']}/{detail['available']} "
-            f"({ratio:.2f} < {PIOTROSKI_RATIO:.2f})"
+            f"({ratio:.2f} < {piotroski_ratio:.2f})"
         )
 
     return TierResult(passed=not reasons, reasons=reasons, metrics=metrics)
@@ -179,6 +192,10 @@ def screen_ticker(
     ticker: str,
     fundamentals: dict,
     min_market_cap: float = MIN_MARKET_CAP,
+    *,
+    max_peg: float = MAX_PEG,
+    min_fcf_yield: float = MIN_FCF_YIELD,
+    piotroski_ratio: float = PIOTROSKI_RATIO,
 ) -> ScreenResult:
     """Run the full fundamental screen for one ticker.
 
@@ -189,7 +206,12 @@ def screen_ticker(
     if not t1.passed:
         return ScreenResult(ticker, False, "liquidity", tiers, None)
 
-    t2 = tier2_sprinkle_sauce(fundamentals)
+    t2 = tier2_sprinkle_sauce(
+        fundamentals,
+        max_peg=max_peg,
+        min_fcf_yield=min_fcf_yield,
+        piotroski_ratio=piotroski_ratio,
+    )
     tiers["sprinkle_sauce"] = t2
     if not t2.passed:
         return ScreenResult(ticker, False, "sprinkle_sauce", tiers, None)
