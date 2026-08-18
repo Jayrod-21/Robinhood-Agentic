@@ -45,13 +45,7 @@ router = APIRouter(prefix="/api", tags=["position"])
 _HISTORY_DAYS = 130
 
 
-def _docs_dir():
-    # docs/ sits beside backend/ in the repo and is NOT volume-mounted into the container the way
-    # data/ and logs/ are — it ships in the image, so it is resolved from the module path rather
-    # than from settings.
-    from pathlib import Path
 
-    return Path(__file__).resolve().parents[3] / "docs"
 
 
 def _price_history(symbol: str) -> list[dict[str, Any]]:
@@ -167,7 +161,7 @@ def position(symbol: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Not a valid ticker symbol.")
 
     settings = get_settings()
-    docs = _docs_dir()
+    docs = settings.docs_dir
     slate = load_slate(docs / "SLATE.md")
     theses = load_theses(docs / "THESES.md")
     rules = load_sizing_rules(docs / "SLATE.md")

@@ -53,6 +53,15 @@ class Settings(BaseSettings):
 
     # --- Paths (inside the container; the data/ + logs/ dirs are volume-mounted) ------------
     data_dir: Path = Field(default=Path("/app/data"))
+    # SLATE.md and THESES.md. Volume-mounted at /app/docs in both stacks; on a developer host the
+    # repo copy is used instead.
+    #
+    # Resolved by LOOKING rather than by counting directories up from __file__. The container path
+    # (/app/app/routers/x.py) and the host path (backend/app/routers/x.py) sit at different depths
+    # relative to docs/, so any single parents[N] is wrong in one of the two environments — which
+    # is how the first version resolved to "/docs" in prod and 503'd the reconciliation page while
+    # every host test passed.
+    docs_dir_override: Path | None = Field(default=None)
     logs_dir: Path = Field(default=Path("/app/logs"))
 
     # --- Live marks (FMP) -------------------------------------------------------------------
@@ -205,6 +214,16 @@ class Settings(BaseSettings):
     # Max user-supplied tickers per scan request. Each ticker fans out a blocking FMP bundle on
     # the threadpool, so an unbounded list is a cheap DoS — cap it (pydantic 422s anything larger).
     scan_max_tickers: int = Field(default=50, ge=1, le=500)
+
+    @property
+    def docs_dir(self) -> Path:
+        if self.docs_dir_override is not None:
+            return self.docs_dir_override
+        container = Path("/app/docs")
+        if container.is_dir():
+            return container
+        # backend/app/config.py -> backend/app -> backend -> <repo>
+        return Path(__file__).resolve().parents[2] / "docs"
 
     @property
     def snapshot_path(self) -> Path:
