@@ -1,21 +1,37 @@
-# Twice-daily cycle — market open + close, US/Eastern (DST-aware via CRON_TZ).
+# 3b Robinhood Agentic — scheduled jobs.
 # Install with:  crontab -e   (paste, then verify with:  crontab -l)
-# Paths below are M's real checkout; adjust only if the repo moves.
 #
-# Each run: refresh the snapshot via the Robinhood MCP (host), then run the in-container cycle
-# (scan + per-position debates + report). Logs go to logs/cron/<date>-<phase>.log.
+# PATHS ARE DELIBERATELY NOT ABSOLUTE-PERSONAL. `$HOME` is expanded because cron runs each command
+# through /bin/sh; adjust the sub-path if your checkout lives elsewhere. The repo directory name
+# contains a SPACE, so the path is quoted and the job is invoked through bash — cron splits an
+# unquoted command on whitespace and would otherwise treat "Robinhood" as an argument.
 
 CRON_TZ=America/New_York
 
-# Point the cycle at the PROD compose so `docker compose exec` hits the prod backend container.
-AGENTIC_COMPOSE_FILE=/srv/agentic/robinhood-agentic/deploy/docker-compose.prod.yml
+# ── Daily marking: the equity curve ───────────────────────────────────────────────────────────
+# Syncs the broker mirror, loads the day's closes, then marks the book. 17:15 ET is after the
+# 16:00 close with room for the vendor to publish the daily bar. Weekdays only; the job skips
+# market holidays itself via market_calendar.
+#
+# This one is NOT optional if the performance page is meant to mean anything. A missed day is a
+# permanent hole: a live mark is refused once it is more than 3 days old and must then be
+# backfilled as an explicitly historical mark.
+15 17 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/nightly_marks.sh"
 
-# Only needed if the robinhood MCP is PROJECT-scoped (set it to that project dir). If the MCP is
-# added at USER scope (recommended), the cwd doesn't matter — leave this commented out.
-# AGENTIC_MCP_CWD=/srv/agentic
-
+# ── Twice-daily cycle ─────────────────────────────────────────────────────────────────────────
+# Each run: refresh the snapshot via the Robinhood MCP (host), then run the in-container cycle
+# (scan + per-position debates + report). Logs go to logs/cron/<date>-<phase>.log.
+#
+# NOT INSTALLED on M as of 2026-08-18 — it drives a host-side `claude` invocation through the
+# Robinhood MCP, which nobody has run unattended yet. Enable deliberately, not by pasting.
+#
+# If you do enable it, set AGENTIC_COMPOSE_FILE so `docker compose exec` reaches the PROD backend.
+# It cannot be set as a cron environment line: cron assigns those literally and does NOT expand
+# $HOME, so it would be handed the string unexpanded. Export it inside scheduled_cycle.sh, or
+# write your own absolute path into your personal crontab (which is not tracked here).
+#
 # Market OPEN 09:30 ET → run at 09:32 (let the open print settle). Mon–Fri.
-32 9 * * 1-5 "/srv/agentic/robinhood-agentic/bin/scheduled_cycle.sh" open
-
+# 32 9 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" open
+#
 # Market CLOSE 16:00 ET → run at 16:02. Mon–Fri.
-2 16 * * 1-5 "/srv/agentic/robinhood-agentic/bin/scheduled_cycle.sh" close
+# 2 16 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" close

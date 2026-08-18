@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# nightly_marks.sh — what cron runs after the close to grow the equity curve.
+#
+# WHY THIS EXISTS
+#   portfolio_returns_daily had exactly ONE row: nothing was scheduled, so the curve never grew and
+#   the performance page could not compute a Sharpe or a Sortino from a single point. Marking is
+#   not something to do by hand — a missed day is a permanent hole, because a live mark is refused
+#   once it is more than LIVE_MAX_AGE_DAYS old (mark_portfolios.py) and must then be backfilled as
+#   what it is: a historical mark.
+#
+# THE THREE STEPS ARE ORDERED, AND THE ORDER MATTERS
+#   1. SYNC   the broker's holdings into the kind='real' portfolio. A position opened today is
+#             invisible to the valuation until this runs — the mirror is what the marking job reads,
+#             not the broker. Skipping it marks yesterday's book at today's prices.
+#   2. BARS   load the day's closes for held names. The marking job fetches nothing; it values what
+#             is already stored, so a missing bar is a coverage hole rather than a slow mark.
+#   3. MARK   value the book for the latest session.
+#
+#   Each step must succeed before the next runs. Marking against a stale mirror or missing bars
+#   produces a NUMBER rather than an error, and a wrong equity curve is worse than a short one —
+#   it is the input to every performance statistic on the site.
+#
+# RUN IT AFTER THE CLOSE
+#   The daily bar for an unfinished session is a partial print. Cron fires at 15:15 America/Denver
+#   (17:15 ET), which is after the 16:00 ET close with room for the vendor to publish.
+#
+# EXIT CODES
+#   0 ok (or a clean skip on a non-trading day) · 1 a step failed — read the log.
+
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${PROJECT_DIR}"
+
+LOG_DIR="${PROJECT_DIR}/logs/cron"
+mkdir -p "${LOG_DIR}"
+exec >>"${LOG_DIR}/$(date -u +%Y%m%d)-marks.log" 2>&1
+
+echo "=== nightly_marks @ $(date -u +%FT%TZ) ==="
+
+# Alpaca and FMP credentials live here; the DB credentials come from db/.env inside each wrapper.
+BACKEND_ENV="${PROJECT_DIR}/backend/.env"
+if [[ -f "${BACKEND_ENV}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${BACKEND_ENV}"
+  set +a
+else
+  echo "✗ ${BACKEND_ENV} missing — no broker or vendor credentials"
+  exit 1
+fi
+
+step() {
+  local name="$1"; shift
+  echo "--- ${name}"
+  # rc is captured from the STEP, immediately. An earlier version ran `if "$@"; then … fi` and read
+  # $? in the else branch, where it was the status of the preceding `echo` — always 0. So a failed
+  # step logged "exit 0" and, because the function returned 0, the next step ran anyway: the mark
+  # went ahead against an unsynced mirror. The whole point of ordering these steps is that this
+  # cannot happen.
+  local rc=0
+  "$@" || rc=$?
+  if (( rc == 0 )); then
+    echo "--- ${name}: ok"
+    return 0
+  fi
+  echo "✗ ${name} failed (exit ${rc}) — later steps skipped so nothing marks against stale inputs"
+  exit 1
+}
+
+step "sync broker holdings" env LOADER_SCRIPT=/repo/db/sync_real_portfolio.py \
+  bash "${SCRIPT_DIR}/db_corporate_actions.sh"
+
+step "load daily bars" env LOADER_SCRIPT=/repo/db/load_daily_bars_fmp.py \
+  bash "${SCRIPT_DIR}/db_corporate_actions.sh"
+
+# The mark job consults market_calendar and refuses on a non-trading day. That refusal is a normal
+# outcome for a cron that fires every weekday — holidays are not failures — so it is reported and
+# swallowed rather than paged on. Any OTHER validation failure is a real one and propagates.
+set +e
+out="$(bash "${SCRIPT_DIR}/db_mark.sh" live 2>&1)"
+rc=$?
+set -e
+echo "${out}"
+if [[ ${rc} -ne 0 ]]; then
+  if grep -q "is not a trading session\|no trading session on or before" <<<"${out}"; then
+    echo "--- mark: skipped, not a trading session"
+    exit 0
+  fi
+  echo "✗ mark failed (exit ${rc})"
+  exit 1
+fi
+echo "=== done @ $(date -u +%FT%TZ)"
