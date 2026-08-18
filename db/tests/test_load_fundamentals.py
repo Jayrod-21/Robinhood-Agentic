@@ -169,16 +169,48 @@ def test_a_failed_insert_leaves_no_orphan_provenance(db, aapl, bundle):
     assert q(db, "SELECT count(*) FROM fundamentals_snapshots")[0][0] == 0
 
 
-def test_rerunning_appends_an_observation_rather_than_overwriting(db, aapl, bundle):
-    """A restatement is a new fact, not a correction applied in place. Two runs of the same period
-    must leave two rows, or the store cannot answer 'what did we believe, and when'."""
+def test_rerunning_on_an_unchanged_filing_does_not_mint_a_second_observation(db, aapl, bundle):
+    """An observation is a FILING, not a fetch.
+
+    This test used to assert the opposite — that two runs leave two rows — because uniqueness was
+    keyed on source_id, which is minted per run. Under that key, re-reading an unchanged 10-K
+    manufactured a new "belief" every time the loader ran, and nothing about what we believed had
+    changed. In production NVDA ended up with three identical FY2026 rows that way.
+
+    Migration 017 keys an observation on (security, period_end, period_type, known_at) instead, so
+    the same filing read twice is one observation. What we believed and when is still answerable —
+    see the restatement test below, which is where a second row genuinely belongs.
+    """
     fetched = datetime.now(timezone.utc)
     _store(db, [lf.annual_row(bundle, aapl)], fetched)
     _store(db, [lf.annual_row(bundle, aapl)], fetched)
     count = q(db, "SELECT count(*) FROM fundamentals_snapshots WHERE period_type='annual'")[0][0]
-    assert count == 2
-    sources = q(db, "SELECT count(DISTINCT source_id) FROM fundamentals_snapshots")[0][0]
-    assert sources == 2, "each observation carries its own provenance"
+    assert count == 1, "re-reading one filing is not two beliefs"
+
+
+def test_a_restatement_appends_an_observation_rather_than_overwriting(db, aapl, bundle):
+    """The invariant the test above used to stand for, tested through the thing that actually
+    signals it: an amended filing arrives with a LATER acceptance date.
+
+    Two rows, each dated by its own filing, so "what did we believe, and when" stays answerable —
+    and so a backtest asking what was knowable in March gets the March figures, not the amendment
+    published in August."""
+    fetched = datetime.now(timezone.utc)
+    original = lf.annual_row(bundle, aapl)
+    _store(db, [original], fetched)
+
+    amended = dict(original)
+    amended["known_at"] = "2026-08-01T13:00:00Z"
+    amended["revenue_ttm"] = (original["revenue_ttm"] or 0) + 1_000_000
+    _store(db, [amended], fetched)
+
+    rows = q(
+        db,
+        "SELECT known_at, revenue_ttm FROM fundamentals_snapshots"
+        " WHERE period_type='annual' ORDER BY known_at",
+    )
+    assert len(rows) == 2, "an amended filing is a new observation, not an edit to the old one"
+    assert rows[0][1] != rows[1][1], "the original figures must survive the restatement"
 
 
 # ── refusals ──────────────────────────────────────────────────────────────────────────────────

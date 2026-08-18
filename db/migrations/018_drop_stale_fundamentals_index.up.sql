@@ -1,0 +1,13 @@
+-- 018 — drop the index 017 meant to remove and did not.
+--
+-- 017 replaced the per-run uniqueness key with a per-observation one, but removed the old key with
+-- ALTER TABLE ... DROP CONSTRAINT IF EXISTS. 003 had created it as a UNIQUE INDEX, so that matched
+-- nothing and succeeded quietly: both keys have been live since, and the redundant one indexes a
+-- column (source_id) that is provenance rather than identity.
+--
+-- It enforces nothing the new key does not, since any pair of rows distinct under the new key is
+-- also distinct under the old one. So this is dead weight on every write, not a second guard.
+--
+-- The lesson worth keeping: IF EXISTS on the wrong object type is a no-op that reads like a
+-- success. Check pg_indexes as well as pg_constraint before assuming a name is gone.
+DROP INDEX IF EXISTS uq_fundamentals_snapshot;
