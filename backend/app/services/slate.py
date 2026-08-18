@@ -1,0 +1,205 @@
+"""Read the documented target slate and the theses behind it.
+
+WHAT THESE FILES ARE
+    ``docs/SLATE.md`` and ``docs/THESES.md`` are hand-maintained markdown that owners edit. They are
+    the written record of what the book is SUPPOSED to be — the other half of every reconciliation,
+    position and drift question the dashboard asks.
+
+PARSING PROSE IS A LIABILITY, SO IT FAILS LOUDLY
+    A heading gains a dash, a table picks up a column, someone writes "22%" instead of "22", and a
+    naive parser silently produces a target of 0 — which then renders as "you are 22 points
+    overweight" on a page an owner might act on. Wrong is far worse than missing here.
+
+    So: every parse returns None or omits the row rather than guessing, and
+    :func:`slate_health` exists so a caller can assert that the symbols it expected actually
+    resolved. A test pins that every slate symbol has a thesis, which is what turns a formatting
+    change into a red test instead of a wrong number on a page.
+
+NOT A CACHE
+    These files change rarely and are small. They are read per request and parsed fresh, because a
+    cached slate that outlives an owner's edit is a stale target presented as current — the same
+    class of failure as the three-week-old snapshot.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+logger = logging.getLogger("agentic.slate")
+
+# | **TSM**  | 22 | $22 | Compute anchor | Lowest-variance way ... |
+# Ticker is bolded in the source; the bold markers are part of the format, not decoration, so they
+# are matched explicitly rather than stripped afterwards with a guess.
+_SLATE_ROW = re.compile(
+    r"^\|\s*\*\*(?P<ticker>[A-Z]{1,5})\*\*\s*\|\s*(?P<pct>[0-9]+(?:\.[0-9]+)?)\s*\|"
+    r"[^|]*\|\s*(?P<role>[^|]*?)\s*\|\s*(?P<why>[^|]*?)\s*\|\s*$"
+)
+
+# ## TSM — Taiwan Semiconductor · $439.86 · **conviction HIGH**
+_THESIS_HEADING = re.compile(r"^##\s+(?P<ticker>[A-Z]{1,5})\s+[—-]\s+(?P<rest>.+)$")
+_CONVICTION = re.compile(r"conviction\s+(?P<level>[A-Z]+)", re.IGNORECASE)
+# **Core thesis (6-18mo):** A structural AI-compute monopoly ...
+_CORE_THESIS = re.compile(r"^\*\*Core thesis[^:]*:\*\*\s*(?P<text>.+)$", re.MULTILINE)
+
+# Sizing discipline, from SLATE.md §Sizing. Read from the file rather than hardcoded so an owner
+# editing the document changes the dashboard, which is the entire point of the document.
+_STOP_PCT = re.compile(r"stop\s*[−-]\s*(?P<pct>[0-9]+(?:\.[0-9]+)?)\s*%", re.IGNORECASE)
+_TRIM_MULT = re.compile(r"past\s*~?\s*(?P<mult>[0-9]+(?:\.[0-9]+)?)\s*[x×]\s*target", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class SlateEntry:
+    ticker: str
+    target_weight_pct: float
+    role: str
+    size_rationale: str
+
+
+@dataclass(frozen=True)
+class Thesis:
+    ticker: str
+    headline: str
+    conviction: str | None
+    body: str
+    core: str | None = None
+    """The ``**Core thesis (...):**`` sentence — the actual case, which is what a page should show.
+
+    The heading is a title with markdown in it ("Qualcomm · **conviction MED** (asymmetric value)");
+    rendering that as the thesis would put formatting characters on screen and say nothing about
+    why the position exists. None when the file has no core line for this ticker, which the caller
+    must surface rather than paper over with the heading.
+    """
+
+
+@dataclass(frozen=True)
+class SizingRules:
+    """Defaults match the charter, but the FILE wins when it says otherwise.
+
+    Hardcoding these would mean an owner editing SLATE.md and the dashboard disagreeing about the
+    stop — with the dashboard winning silently, which is the wrong way round.
+    """
+
+    hard_stop_pct: float = -20.0
+    trim_multiple: float = 1.3
+
+
+def _read(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        # Named, not swallowed: a missing slate means every target on the site is absent, and that
+        # should be traceable to a file rather than look like "no positions are documented".
+        logger.error("cannot read %s: %s", path.name, exc)
+        return None
+
+
+def load_slate(path: Path) -> dict[str, SlateEntry]:
+    """Target weights by ticker. CASH is excluded — it is reported in meta, never as a position."""
+    text = _read(path)
+    if text is None:
+        return {}
+    entries: dict[str, SlateEntry] = {}
+    for line in text.splitlines():
+        m = _SLATE_ROW.match(line.strip())
+        if not m:
+            continue
+        ticker = m.group("ticker")
+        if ticker == "CASH":
+            continue
+        entries[ticker] = SlateEntry(
+            ticker=ticker,
+            target_weight_pct=float(m.group("pct")),
+            role=m.group("role").strip(),
+            size_rationale=m.group("why").strip(),
+        )
+    if not entries:
+        logger.error(
+            "%s parsed to ZERO slate rows — the table format probably changed. Every target on the "
+            "site is now absent; this is a parser failure, not an empty slate.", path.name,
+        )
+    return entries
+
+
+def load_theses(path: Path) -> dict[str, Thesis]:
+    """Theses by ticker, from the ``## TICKER — ...`` headings.
+
+    The body is everything up to the next heading of the same level. Returns nothing for a ticker
+    whose heading does not parse, rather than attaching the wrong company's case to a symbol.
+    """
+    text = _read(path)
+    if text is None:
+        return {}
+    out: dict[str, Thesis] = {}
+    current: str | None = None
+    headline = ""
+    buf: list[str] = []
+
+    def flush() -> None:
+        if current:
+            body = "\n".join(buf).strip()
+            conviction = None
+            m = _CONVICTION.search(headline)
+            if m:
+                conviction = m.group("level").upper()
+            core = None
+            m_core = _CORE_THESIS.search(body)
+            if m_core:
+                # Strip emphasis markers only — the words are the thesis and must survive intact.
+                core = m_core.group("text").replace("**", "").replace("*", "").strip()
+            out[current] = Thesis(
+                ticker=current, headline=headline.strip(), conviction=conviction,
+                body=body, core=core,
+            )
+
+    for line in text.splitlines():
+        m = _THESIS_HEADING.match(line.strip())
+        if m:
+            flush()
+            current = m.group("ticker")
+            headline = m.group("rest")
+            buf = []
+            continue
+        if line.startswith("## ") and current:
+            # A different ## heading ends the current thesis: sections like "Top-down (theme view)"
+            # are not a ticker's case and must not be swept into the previous one.
+            flush()
+            current = None
+            buf = []
+            continue
+        if current:
+            buf.append(line)
+    flush()
+    return out
+
+
+def load_sizing_rules(path: Path) -> SizingRules:
+    """Stop and trim rules, from SLATE.md's sizing section. Falls back to the charter's numbers."""
+    text = _read(path)
+    if text is None:
+        return SizingRules()
+    stop = SizingRules.hard_stop_pct
+    trim = SizingRules.trim_multiple
+    m = _STOP_PCT.search(text)
+    if m:
+        stop = -abs(float(m.group("pct")))
+    else:
+        logger.warning("no hard stop found in %s; using the charter default %s%%",
+                       path.name, SizingRules.hard_stop_pct)
+    m = _TRIM_MULT.search(text)
+    if m:
+        trim = float(m.group("mult"))
+    return SizingRules(hard_stop_pct=stop, trim_multiple=trim)
+
+
+def slate_health(slate: dict[str, SlateEntry], theses: dict[str, Thesis]) -> dict[str, object]:
+    """What parsed, and what did not — so a formatting change is visible rather than silent."""
+    missing = sorted(set(slate) - set(theses))
+    return {
+        "slate_symbols": sorted(slate),
+        "thesis_symbols": sorted(theses),
+        "slate_without_thesis": missing,
+        "parsed_ok": bool(slate),
+    }
