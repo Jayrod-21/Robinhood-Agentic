@@ -58,6 +58,16 @@ for arg in "$@"; do
   esac
 done
 
+# db/.env carries the Postgres role/database names the calendar query needs. Absent is not fatal —
+# the query falls back to the compose defaults and the check reports honestly if it cannot read.
+DB_ENV="${PROJECT_DIR}/db/.env"
+if [[ -f "${DB_ENV}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${DB_ENV}"
+  set +a
+fi
+
 DASH_PORT="${AGENTIC_DASH_PORT:-1855}"
 SNAPSHOT_MAX_AGE_S="${AGENTIC_SNAPSHOT_MAX_AGE_S:-300}"   # alpaca_sync runs every minute
 STATUS_JSON="${PROJECT_DIR}/data/stack_health.json"
@@ -152,6 +162,25 @@ fi
 # ── the schedule itself is installed ──────────────────────────────────────────────────────────
 # A job that was never installed and a job that is failing look identical from the outside: no
 # fresh output either way. This distinguishes them.
+# ── the trading calendar has not run out ──────────────────────────────────────────────────────
+# market_calendar is generated, not fetched, and the marking job REFUSES any date it does not know.
+# The generator's --to defaulted to a hardcoded 2026-12-31, so the equity curve was weeks away from
+# stopping dead on 1 January with an error naming the calendar — and nothing would have said so in
+# advance. The default now rolls; this makes running out visible months ahead either way.
+CALENDAR_MIN_DAYS="${AGENTIC_CALENDAR_MIN_DAYS:-90}"
+cal_last="$(docker exec rh-db psql -qtAX -U "${POSTGRES_USER:-rh}" -d "${POSTGRES_DB:-rh}" \
+  -c "SELECT max(trade_date) FROM market_calendar" 2>/dev/null | tr -d '[:space:]')"
+if [[ -n "${cal_last}" ]]; then
+  cal_days=$(( ( $(date -d "${cal_last}" +%s) - $(date +%s) ) / 86400 ))
+  if (( cal_days >= CALENDAR_MIN_DAYS )); then
+    pass "calendar:horizon (${cal_days}d, through ${cal_last})"
+  else
+    fail "calendar:horizon" "only ${cal_days}d left (through ${cal_last}) — marking stops when it runs out; re-run db/load_reference_data.py calendar"
+  fi
+else
+  fail "calendar:horizon" "could not read market_calendar"
+fi
+
 if ${NOTIFY_OK}; then
   pass "notify:available"
 else

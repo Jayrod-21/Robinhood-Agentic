@@ -12,7 +12,7 @@ import csv
 import gzip
 import sys
 import zlib
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -33,6 +33,34 @@ def test_nyse_holidays_known_years() -> None:
     assert date(2025, 1, 9) in lrd.nyse_holidays(2025)
     # 2020: July 4 falls Saturday → observed Friday 2020-07-03.
     assert date(2020, 7, 3) in lrd.nyse_holidays(2020)
+
+
+def test_the_calendar_horizon_rolls_rather_than_expiring() -> None:
+    """--to must be a date computed from today, not a literal.
+
+    It was "2026-12-31" — comfortably far off when written, and weeks away by August 2026. The
+    marking job refuses any date market_calendar does not know, so the equity curve was going to
+    stop dead on 1 January with an error naming the calendar, and nothing would have said so in
+    advance. A hardcoded horizon does not fail when it is set; it fails silently, later, to whoever
+    is on shift.
+    """
+    horizon = date.fromisoformat(lrd.build_parser().parse_args(["calendar"]).date_to)
+    assert horizon > date.today() + timedelta(days=365), (
+        f"the default calendar horizon is {horizon}, under a year out — it is drifting toward "
+        "expiry again"
+    )
+
+
+def test_holiday_rules_still_hold_years_ahead() -> None:
+    """The horizon above is only safe because the holiday set is COMPUTED, not fetched. These are
+    years no one has hand-checked, so the rules are pinned rather than assumed: weekend observance,
+    a computed Good Friday, and an nth-weekday rule."""
+    # Christmas 2027 is a Saturday, so the NYSE observes it on Friday the 24th.
+    assert date(2027, 12, 24) in lrd.nyse_holidays(2027)
+    # Easter 2028 is 16 April, putting Good Friday on the 14th.
+    assert date(2028, 4, 14) in lrd.nyse_holidays(2028)
+    # Thanksgiving is the fourth Thursday of November.
+    assert date(2029, 11, 22) in lrd.nyse_holidays(2029)
 
 
 def test_new_years_saturday_non_observance() -> None:
