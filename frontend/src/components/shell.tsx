@@ -8,6 +8,7 @@ import { Activity, BookOpen, FlaskConical, Gavel, LayoutDashboard, LineChart, Li
 import { fetchAuthState, fetchMe, logout } from "@/lib/auth";
 import { cn } from "@/lib/format";
 import { DataTrustStrip } from "@/components/data-trust";
+import { ChatDrawer } from "@/components/chat-drawer";
 
 /** Pages that must render for a signed-out visitor. Redirecting away from these
  *  would loop: /login is where the redirect SENDS people, and /verify-email is
@@ -111,6 +112,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
         {!PUBLIC_PATHS.has(pathname) && <DataTrustStrip />}
         {children}
       </main>
+      {/* Ask-Claude drawer: reachable from every page, hidden on the signed-out public pages. */}
+      {!PUBLIC_PATHS.has(pathname) && <ChatDrawer />}
     </div>
   );
 }
