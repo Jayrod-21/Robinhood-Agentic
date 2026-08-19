@@ -14,7 +14,9 @@
 #             not the broker. Skipping it marks yesterday's book at today's prices.
 #   2. BARS   load the day's closes for held names. The marking job fetches nothing; it values what
 #             is already stored, so a missing bar is a coverage hole rather than a slow mark.
-#   3. MARK   value the book for the latest session.
+#   3. SCORE  grade any debate judgment whose 5-session window has elapsed. Needs history, not
+#             today's bars, so it runs before the mark and independently of it.
+#   4. MARK   value the book for the latest session.
 #
 #   Each step must succeed before the next runs. Marking against a stale mirror or missing bars
 #   produces a NUMBER rather than an error, and a wrong equity curve is worse than a short one —
@@ -80,6 +82,23 @@ step "sync broker holdings" env LOADER_SCRIPT=/repo/db/sync_real_portfolio.py \
 step "load daily bars" env LOADER_SCRIPT=/repo/db/load_daily_bars_fmp.py \
   bash "${SCRIPT_DIR}/db_corporate_actions.sh"
 
+# 3. Score judgments whose horizon has elapsed.
+#
+# Before the mark, and outside the all-or-nothing chain, on purpose. It grades calls made at least
+# five sessions ago, so it needs history rather than today's bars — which means it can succeed on
+# exactly the days the mark cannot, such as a run before the close. Chaining it behind the mark
+# would have thrown away a day of calibration data every time a bar was late.
+#
+# A failure here costs calibration coverage, never the equity curve, so it does not stop the run.
+if out="$(LOADER_SCRIPT=/repo/db/score_judgments.py bash "${SCRIPT_DIR}/db_corporate_actions.sh" 2>&1)"; then
+  echo "--- score judgments: ok"
+  echo "${out}" | tail -2
+else
+  echo "✗ scoring failed — the equity curve is unaffected; calibration will catch up tomorrow"
+  echo "${out}" | tail -5
+fi
+
+# 4. Mark the book. Last, because it is the step with the strictest inputs.
 # The mark job consults market_calendar and refuses on a non-trading day. That refusal is a normal
 # outcome for a cron that fires every weekday — holidays are not failures — so it is reported and
 # swallowed rather than paged on. Any OTHER validation failure is a real one and propagates.

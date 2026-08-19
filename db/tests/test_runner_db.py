@@ -384,6 +384,10 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # fall back to the registry defaults so the app keeps running, which is exactly why this
         # must be declared destructive: the loss is silent from the outside.
         ("019", False, True),
+        # 020's down drops every scored outcome. They are derived from prices and can be recomputed
+        # — but with TODAY's rule, so if the rule has changed since, the restored table will not
+        # match what calibration reported before. Recomputable is not the same as recoverable.
+        ("020", False, True),
     ]
 
 

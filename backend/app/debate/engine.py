@@ -176,6 +176,12 @@ async def run_debate(ticker: str, question: str | None = None):
     try:
         record.usage = dict(usage)
         await asyncio.to_thread(persist_record, record)
+        # And into the relational model, so it can be scored. Best-effort by design: the debate is
+        # already paid for and its file record is already written, so a database hiccup must not
+        # discard completed work. persist_debate never raises.
+        from app.services.debate_store import persist_debate
+
+        await asyncio.to_thread(persist_debate, record.model_dump())
     except Exception as exc:  # noqa: BLE001 — persistence failure shouldn't break the response
         logger.warning("failed to persist debate %s: %s", debate_id, exc)
     yield {"type": "debate_complete", "record": record.model_dump()}

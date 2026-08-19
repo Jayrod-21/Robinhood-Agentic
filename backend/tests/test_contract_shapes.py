@@ -118,11 +118,24 @@ def test_calibration_payload_matches_the_interface(monkeypatch):
     from app.routers import performance as mod
 
     class _Conn:
-        def execute(self, *a, **k):
+        """Answers the shapes calibration actually asks for.
+
+        The double used to expose only fetchone(), which was enough while the endpoint was a stub
+        that counted rows. Now that it reads scored judgments it also calls fetchall(), so the
+        double has to model both — a test double that has drifted from its subject fails for its own
+        reasons rather than the code's.
+        """
+
+        def execute(self, sql, params=None):
             class R:
                 def fetchone(self_inner):
                     return (0,)
+
+                def fetchall(self_inner):
+                    return []          # nothing scored: the empty-state branch
+
             return R()
+
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
