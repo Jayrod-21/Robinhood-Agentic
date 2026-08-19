@@ -24,6 +24,9 @@ if [[ "${phase}" != "open" && "${phase}" != "close" ]]; then
 fi
 shift || true
 
+# shellcheck source=bin/lib_notify.sh
+source "${SCRIPT_DIR}/lib_notify.sh"
+
 LOG_DIR="${PROJECT_DIR}/logs/cron"
 mkdir -p "${LOG_DIR}"
 exec >>"${LOG_DIR}/$(date -u +%Y%m%d)-${phase}.log" 2>&1
@@ -38,12 +41,28 @@ else
 fi
 
 # 2. Run the cycle inside the backend container.
-DOCKER="docker"
-command -v docker >/dev/null 2>&1 || DOCKER="docker.exe"
-COMPOSE_FILE="${AGENTIC_COMPOSE_FILE:-${PROJECT_DIR}/docker-compose.yml}"
+#
+# Defaults to the PROD compose file. This used to default to docker-compose.yml — the DEV stack —
+# so a cron run would either hit a container that is not the deployed one or fail outright, and the
+# override could not be set from a crontab because cron does not expand $HOME in its environment
+# lines. Prod is what runs on a schedule; a dev run sets AGENTIC_COMPOSE_FILE explicitly.
+COMPOSE_FILE="${AGENTIC_COMPOSE_FILE:-${PROJECT_DIR}/deploy/docker-compose.prod.yml}"
 set -a; [ -f "${PROJECT_DIR}/.env.ports" ] && source "${PROJECT_DIR}/.env.ports"; set +a
 
 cd "${PROJECT_DIR}" || exit 1
-"${DOCKER}" compose -f "${COMPOSE_FILE}" exec -T backend python -m app.jobs.cycle "${phase}" "$@"
 
+# The `docker.exe` fallback that used to be here was for WSL, where this project no longer runs.
+rc=0
+docker compose -f "${COMPOSE_FILE}" exec -T backend python -m app.jobs.cycle "${phase}" "$@" || rc=$?
+
+if [[ ${rc} -ne 0 ]]; then
+  # The exit code used to be swallowed by the trailing echo, so a cycle that never ran looked
+  # exactly like one that did — and on this machine cron discards output, so nothing said otherwise.
+  notify_transition "cycle-${phase}" "fail" "3b ${phase} cycle" \
+    "the cycle did not complete (exit ${rc}); see ${LOG_DIR}"
+  echo "✗ cycle ${phase} failed (exit ${rc})"
+  exit "${rc}"
+fi
+
+notify_transition "cycle-${phase}" "ok" "3b ${phase} cycle" "completed"
 echo "=== done @ $(date -u +%FT%TZ) ==="

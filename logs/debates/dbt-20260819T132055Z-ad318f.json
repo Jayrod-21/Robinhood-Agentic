@@ -1,0 +1,106 @@
+{
+  "id": "dbt-20260819T132055Z-ad318f",
+  "ticker": "BE",
+  "created_at": "2026-08-19T13:20:55Z",
+  "question": "Should the Agentic account hold BE?",
+  "price": null,
+  "fundamentals": null,
+  "bull_bear": {
+    "bull_case": "I need to be straight with you: with no live price and no fundamentals available, I cannot make an honest, grounded buy case for Bloom Energy (BE) that meets this team's standard. Fabricating a valuation argument or recycling stale narratives about solid-oxide fuel cells and data-center power demand without current revenue trajectory, gross margin trends, free cash flow burn rate, or balance sheet leverage would be exactly the kind of hand-waving that gets this account hurt. The \"fundamentals-first\" mandate exists precisely to prevent that. My honest recommendation is to pull the most recent 10-Q, trailing FCF, and a live quote before this name gets any further analyst time. If you can provide those inputs, I'll build the sharpest honest bull case I can.",
+    "bear_case": "**AVOID / SELL BE (Bloom Energy)**\n\nBloom Energy has never demonstrated it can be a durable cash machine — the company has burned cash for most of its public life, carries substantial debt, and its \"earnings\" have historically depended on non-cash adjustments and tax credit accounting rather than genuine free cash flow generation. The core business model is structurally challenged: Bloom sells solid-oxide fuel cells at premium prices into a market where grid electricity and utility-scale renewables continue to get cheaper, meaning its value proposition erodes as the energy transition it claims to benefit from actually accelerates. Customer concentration and long-term service agreements that embed fixed costs expose the company to brutal margin pressure if fuel prices move adversely or if a large contract is renegotiated or lost. The hydrogen narrative that periodically re-rates the stock is not yet a commercial reality at scale — Bloom's electrolyzer ambitions face competition from better-capitalized players (Nel, ITM, Chart Industries) and from the same cost-deflation dynamics that have historically commoditized clean energy hardware. With no fundamentals available to anchor a valuation here, there is no way to assess whether the current price offers any margin of safety — and for a cash account with a fundamentals-first mandate, **unknown price against unproven cash generation is disqualifying on its own**. The falsifiable thesis is this: if Bloom reports three consecutive quarters of positive unlevered free cash flow with declining customer concentration, the bear case structurally weakens; until then, the burden of proof sits entirely on the bulls."
+  },
+  "jury": {
+    "votes": [
+      {
+        "agent_id": 1,
+        "focus_area": "valuation",
+        "vote": "SELL",
+        "confidence": 0.8,
+        "reasoning": "Without live price or fundamental data, I cannot compute P/E, PEG, or intrinsic value—the three pillars of valuation analysis. For a fundamentals-first cash account, valuation opacity on an unproven cash-generation story is a disqualifying red flag; the absence of data itself is bearish signal."
+      },
+      {
+        "agent_id": 2,
+        "focus_area": "cash_flow",
+        "vote": "SELL",
+        "confidence": 0.85,
+        "reasoning": "Bloom Energy has a demonstrable history of cash burn rather than cash generation, with earnings propped up by non-cash adjustments instead of real free cash flow; without current FCF data, leverage metrics, or a live price to assess margin of safety, there is no basis to treat this as a durable cash machine for a fundamentals-first account."
+      },
+      {
+        "agent_id": 3,
+        "focus_area": "growth",
+        "vote": "SELL",
+        "confidence": 0.75,
+        "reasoning": "Without current fundamentals, I cannot verify whether BE is actually compounding revenue and expanding margins—the core test of a growth asset. The bear case's historical pattern of cash burn and reliance on accounting adjustments rather than genuine free cash flow directly contradicts the durability required of a growth compounder, and without live price and recent financials, there is no basis for a concentration-worthy position in a small aggressive account."
+      },
+      {
+        "agent_id": 4,
+        "focus_area": "macro_rates",
+        "vote": "SELL",
+        "confidence": 0.72,
+        "reasoning": "From a Fed & rates lens, BE is structurally vulnerable: higher discount rates crush the NPV of long-dated fixed-price service contracts and deferred hydrogen monetization, while tighter financial conditions make it harder to refinance the debt burden that's already a structural weakness. In a higher-rate regime, durable cash machines compound value—BE is the opposite, and rate risk amplifies that vulnerability."
+      },
+      {
+        "agent_id": 5,
+        "focus_area": "sector",
+        "vote": "SELL",
+        "confidence": 0.72,
+        "reasoning": "Capital is rotating toward proven, margin-accretive renewables and grid-scale storage plays; specialty hardware with deteriorating unit economics (fuel cells undercut by commodity grid power) represents the leaving side of the rotation. Bloom's structural inability to generate durable FCF means it cannot compete for capital in a normalized-rate environment where investors reward cash generation, not speculative hydrogen narratives."
+      },
+      {
+        "agent_id": 6,
+        "focus_area": "tail_risk",
+        "vote": "SELL",
+        "confidence": 0.75,
+        "reasoning": "The tail risk is asymmetric and severe: a company with a chronic cash-burn history, structural margin vulnerability to commodity deflation in its core market, and unproven hydrogen-scale economics faces a realistically catastrophic downside if even one major contract is lost or renegotiated, while the upside is structurally capped by the secular cost-decline in the energy transition it claims to ride. Unknown price against a no-margin-of-safety balance sheet is not a bet, it's a speculation — and for this account, that's where tail risk lives."
+      },
+      {
+        "agent_id": 7,
+        "focus_area": "risk_reward",
+        "vote": "SELL",
+        "confidence": 0.75,
+        "reasoning": "Without live price or current fundamentals, the asymmetry is inverted: downside from a structurally challenged cash-burner is knowable and steep (dilution, covenant risk, margin compression), while upside requires speculative hydrogen optionality that hasn't proven commercially viable at scale. This is a heads-I-lose, tails-I-don't-win scenario for a fundamentals-first account."
+      },
+      {
+        "agent_id": 8,
+        "focus_area": "technical",
+        "vote": "SELL",
+        "confidence": 0.7,
+        "reasoning": "Without live price data, I cannot read the chart's supply/demand structure or identify a valid entry point or exit signal—the technical lens requires price action to speak. Combined with the bear case's structural thesis (cash burn, weak FCF, customer concentration), absence of both price and fundamentals makes this a disqualifying setup for a concentration-driven, cash-first account; the prudent technical call is to avoid until price, volume, and trend context can be properly assessed."
+      },
+      {
+        "agent_id": 9,
+        "focus_area": "sentiment",
+        "vote": "SELL",
+        "confidence": 0.72,
+        "reasoning": "The bear case reveals a structurally challenged business that has never reliably generated free cash flow, with customer concentration and margin pressure embedded in the model—a painful fundamental story that typically correlates with negative sentiment reversals once optimism cracks. Without live price or positioning data, I'm handicapped on sentiment depth, but the absence of fundamentals to defend the narrative (hydrogen upside remains speculative, electrolyzer competition is stiff) suggests this is a crowded, narrative-driven hold vulnerable to repricing downward; prudent to avoid or fade."
+      },
+      {
+        "agent_id": 10,
+        "focus_area": "wasden_framework",
+        "vote": "SELL",
+        "confidence": 0.85,
+        "reasoning": "BE fails the fundamentals-first framework on every bucket: no durable cash generation (chronic FCF burn), unknown valuation (no live price or current financials), no credible near-term catalyst beyond narrative speculation, and no clear exit point. For a small, concentrated cash account, unknown price on an unproven cash machine is disqualifying—pass until the burden of proof flips from bull speculation to documented positive unlevered FCF."
+      }
+    ],
+    "counts": {
+      "BUY": 0,
+      "SELL": 10,
+      "HOLD": 0
+    },
+    "decision": "SELL",
+    "escalated_to_human": false,
+    "reason": "10/10 jurors voted SELL — decisive majority."
+  },
+  "final_decision": "SELL",
+  "position_size_note": "Lean exit — trim or close per the name's stop; don't average down. Read-only.",
+  "models": {
+    "jury": "claude-haiku-4-5",
+    "synth": "claude-sonnet-4-6"
+  },
+  "usage": {
+    "calls": 12,
+    "input_tokens": 15081,
+    "output_tokens": 2111
+  },
+  "source": "engine"
+}

@@ -40,19 +40,23 @@ CRON_TZ=America/New_York
 */5 * * * * /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/stack_health.sh" --quiet
 
 # ── Twice-daily cycle ─────────────────────────────────────────────────────────────────────────
-# Each run: refresh the snapshot via the Robinhood MCP (host), then run the in-container cycle
-# (scan + per-position debates + report). Logs go to logs/cron/<date>-<phase>.log.
+# Refresh the fallback snapshot, then run the cycle in the backend container: scan the universe,
+# debate every held position, write logs/reports/<date>-<phase>.md.
 #
-# NOT INSTALLED on M as of 2026-08-18 — it drives a host-side `claude` invocation through the
-# Robinhood MCP, which nobody has run unattended yet. Enable deliberately, not by pasting.
+# Twice a day is the point — news breaks intraday, so a position worth holding at the open is not
+# automatically worth holding at the close.
 #
-# If you do enable it, set AGENTIC_COMPOSE_FILE so `docker compose exec` reaches the PROD backend.
-# It cannot be set as a cron environment line: cron assigns those literally and does NOT expand
-# $HOME, so it would be handed the string unexpanded. Export it inside scheduled_cycle.sh, or
-# write your own absolute path into your personal crontab (which is not tracked here).
+# COST. Each debate fans out a jury: measured at ~12 API calls and ~19k tokens per position. At
+# fifteen positions that is ~180 calls per cycle, twice a day. The `cycle_max_debates` parameter
+# (Parameters page) caps how many positions get debated without a redeploy — 0 means all of them —
+# and every debate record now carries its own token usage, so the spend is auditable rather than
+# estimated.
 #
+# Failures go to bin/lib_notify.sh (log + desktop notification), not to cron mail, which this
+# machine discards.
+
 # Market OPEN 09:30 ET → run at 09:32 (let the open print settle). Mon–Fri.
-# 32 9 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" open
-#
+32 9 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" open
+
 # Market CLOSE 16:00 ET → run at 16:02. Mon–Fri.
-# 2 16 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" close
+2 16 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" close

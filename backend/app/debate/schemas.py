@@ -55,4 +55,8 @@ class DebateRecord(BaseModel):
     final_decision: Decision | None = None
     position_size_note: str | None = None
     models: dict[str, str] = Field(default_factory=dict)  # {"jury": ..., "synth": ...}
+    # {"calls", "input_tokens", "output_tokens"} — what this debate actually spent. Absent on
+    # records written before token accounting existed, and on archive-parsed ones, which is why it
+    # is optional rather than defaulted to zeros: a zero would read as "this was free".
+    usage: dict[str, int] | None = None
     source: str = "engine"  # "engine" (live) or "archive" (parsed from a markdown log)

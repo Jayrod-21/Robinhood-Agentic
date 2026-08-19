@@ -93,6 +93,9 @@ def _position_size_note(decision: Decision, jury: JuryResult) -> str:
 async def run_debate(ticker: str, question: str | None = None):
     """Async generator of debate events. Yields dicts with a 'type' field."""
     settings = get_settings()
+    # Everything this debate spends is counted here and attached to the record. Per-task, so the
+    # cycle job's concurrent debates each get their own tally.
+    usage = ac.begin_usage()
     debate_id = f"dbt-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:6]}"
     question = question or f"Should the Agentic account hold {ticker}?"
     record = DebateRecord(
@@ -171,6 +174,7 @@ async def run_debate(ticker: str, question: str | None = None):
 
     # 5) Persist + done.
     try:
+        record.usage = dict(usage)
         await asyncio.to_thread(persist_record, record)
     except Exception as exc:  # noqa: BLE001 — persistence failure shouldn't break the response
         logger.warning("failed to persist debate %s: %s", debate_id, exc)

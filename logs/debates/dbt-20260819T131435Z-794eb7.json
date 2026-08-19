@@ -1,0 +1,117 @@
+{
+  "id": "dbt-20260819T131435Z-794eb7",
+  "ticker": "AMD",
+  "created_at": "2026-08-19T13:14:35Z",
+  "question": "Should the Agentic account hold AMD?",
+  "price": 484.39,
+  "fundamentals": {
+    "ticker": "AMD",
+    "market_cap": 789846334000.0,
+    "peg": 0.48991448941834753,
+    "fcf_yield": 0.8526975071077559,
+    "free_cash_flow": 6735000000.0,
+    "net_income": 4335000000.0,
+    "operating_cash_flow": 7709000000.0,
+    "gross_margin": 0.4951644100580271,
+    "revenue_growth": 0.34337793290672874,
+    "name": "Advanced Micro Devices, Inc.",
+    "sector": "Technology",
+    "industry": "Semiconductors",
+    "trailing_pe": 80.52059925093633,
+    "forward_pe": 0.48991448941834753,
+    "price": 484.39
+  },
+  "bull_bear": {
+    "bull_case": "**AMD — BUY CASE**\n\nAMD is compounding revenue at 34% year-over-year with a PEG of ~0.49, meaning the market is pricing in roughly half the growth you're actually getting — a classic mispricing of a durable grower. The MI300X GPU accelerator is the concrete mechanism: hyperscalers and enterprise AI shops are diversifying away from NVIDIA's monopoly pricing, and AMD is the only credible alternative with competitive silicon, a maturing ROCm software stack, and existing customer relationships from the CPU business. Gross margins holding near 50% on a product mix that is still early in its AI GPU ramp signals that the high-margin data center segment will drive operating leverage sharply higher as MI300X volumes scale — this is not a cost-cut story, it's a mix-shift story. Forward P/E of approximately 24-25x (the PEG data appears to reflect a forward earnings estimate, not a raw multiple, but normalized consensus puts forward earnings in that range) is reasonable for a company that could double data center revenue within two years if design wins convert to volume. The falsifiable thesis is specific: AMD must sustain or grow MI300X data center GPU revenue quarter-over-quarter through 2025, and ROCm software adoption must meaningfully reduce customer friction versus CUDA — if those two metrics stall, the bull case is broken. What would prove me wrong fast is NVIDIA cutting prices aggressively enough to retain hyperscaler wallet share, or AMD missing its own MI300X shipment guidance for two consecutive quarters. The exit trigger is clear: a deceleration in data center revenue growth below 20% YoY alongside margin compression, which would signal the AI GPU opportunity is not materializing at the scale priced in.",
+    "bear_case": "**The Bear Case on AMD**\n\nThe FCF yield of just 0.85% at current prices is the core problem: you are paying nearly 118x free cash flow for a business that still converts revenue to cash poorly, meaning the entire thesis rests on a future earnings ramp that hasn't materialized in the P&L yet. The trailing P/E of 80x is not supported by current earnings power — it's a bet on a story, and this team doesn't pay 80x for stories. Revenue growth at 34% sounds impressive until you recognize AMD is fighting for AI accelerator share against NVIDIA's CUDA moat, which is an ecosystem lock-in problem that won't crack in one or two product cycles regardless of MI300X benchmarks. The forward P/E figure in the data (0.49) appears to be a data error conflated with the PEG, which means the market's true forward earnings expectations are likely being obscured — any analysis built on that number is unreliable, and uncertainty in the input is itself a reason to stand aside. Gross margins at 49.5% trail NVIDIA's 70%+ substantially, revealing AMD's structural pricing disadvantage even in its strongest competitive moments. The falsifiable thesis: if AMD's MI300X/MI350 series captures meaningful hyperscaler AI training spend and FCF yield expands above 3% within four quarters, the bear case breaks — watch Meta, Google, and Microsoft capex disclosures for AMD-specific GPU allocation. Until then, this is a crowded momentum name with thin cash returns dressed in a growth narrative, and the exit is murky."
+  },
+  "jury": {
+    "votes": [
+      {
+        "agent_id": 1,
+        "focus_area": "valuation",
+        "vote": "HOLD",
+        "confidence": 0.72,
+        "reasoning": "AMD's PEG of 0.49 suggests the market is underpricing growth relative to earnings, but the trailing P/E of 80x and FCF yield of 0.85% reveal the valuation is entirely forward-looking and highly sensitive to execution risk; the data integrity issue with the forward P/E conflated with PEG creates enough analytical fog that I cannot confidently price in the MI300X ramp, making this a \"show me\" story rather than a clear valuation edge."
+      },
+      {
+        "agent_id": 2,
+        "focus_area": "cash_flow",
+        "vote": "SELL",
+        "confidence": 0.72,
+        "reasoning": "AMD's FCF yield of 0.85% at a $790B market cap is unacceptable for a cash-flow-first thesis — you're paying 118x free cash flow for a story, not a machine. Until FCF conversion and yield materially improve (north of 3%), this fails the durability test regardless of MI300X upside."
+      },
+      {
+        "agent_id": 3,
+        "focus_area": "growth",
+        "vote": "HOLD",
+        "confidence": 0.72,
+        "reasoning": "AMD is compounding revenue at 34% with a PEG of 0.49—genuine growth at an apparently attractive multiple—but the 80x trailing P/E and 0.85% FCF yield reveal the market has priced in a dramatic earnings inflection that hasn't yet landed in the cash line; the thesis is falsifiable and concrete (MI300X ramp + ROCm adoption), but paying this multiple for a business still converting poorly to cash, with structural margin disadvantages against NVIDIA, violates the \"fair price\" discipline even with real catalysts ahead."
+      },
+      {
+        "agent_id": 4,
+        "focus_area": "macro_rates",
+        "vote": "HOLD",
+        "confidence": 0.72,
+        "reasoning": "Through a Fed & rates lens, AMD is caught in a precarious spot: the 80x trailing P/E and 0.85% FCF yield assume a low-rate regime that extended AI capex cycles indefinitely, but if the Fed pauses cuts or re-tightens, hyperscaler ROI hurdle rates on GPU spend rise sharply, potentially collapsing demand visibility just as AMD needs MI300X volume to justify current valuations. The risk/reward is unfavorable until either rates stabilize materially lower OR AMD's FCF yield expands above 2.5%, proving the cash machine thesis is real—not theoretical."
+      },
+      {
+        "agent_id": 5,
+        "focus_area": "sector",
+        "vote": "BUY",
+        "confidence": 0.72,
+        "reasoning": "Capital is decisively rotating away from NVIDIA's monopoly toward AMD as the credible alternative in AI accelerators—driven by hyperscaler pricing pressure and design-win velocity across Meta, Google, and Microsoft. At 0.49 PEG on 34% revenue growth with a near-complete MI300X ramp ahead, AMD captures the sector's structural shift from concentration risk to competition, making it the natural recipient of AI capex rotation in 2025."
+      },
+      {
+        "agent_id": 6,
+        "focus_area": "tail_risk",
+        "vote": "SELL",
+        "confidence": 0.72,
+        "reasoning": "The tail risk is severe: paying 80x trailing P/E and 0.85% FCF yield on a story-dependent narrative where the exit is \"murky\" and AMD's CUDA disadvantage could persist across multiple cycles, leaving structural margin compression and valuation downside of 40-60% if hyperscaler adoption stalls. The data corruption on forward P/E removes visibility precisely when valuation certainty matters most for downside protection."
+      },
+      {
+        "agent_id": 7,
+        "focus_area": "risk_reward",
+        "vote": "HOLD",
+        "confidence": 0.72,
+        "reasoning": "AMD's risk-reward is inverted at $484.39: trailing P/E of 80x and FCF yield of 0.85% price in an aggressive earnings ramp that has no margin of safety if MI300X adoption disappoints, while the upside (data center scaling) is already heavily baked into current valuation. The bear's point about CUDA's ecosystem moat and AMD's inferior gross margins (50% vs NVIDIA's 70%+) means downside risk from multiple compression and execution miss outweighs upside from here — better entry needed on a consolidation or concrete guidance miss."
+      },
+      {
+        "agent_id": 8,
+        "focus_area": "technical",
+        "vote": "HOLD",
+        "confidence": 0.72,
+        "reasoning": "AMD at $484 is caught between competing technical narratives: strong earnings momentum and AI GPU tailwinds argue for accumulation, but the 80x trailing P/E and 0.85% FCF yield create dangerous overhead resistance where supply from profit-taking and hedge unwinding historically clusters. Price action is extending into euphoric territory without a clear pullback or accumulation base—the chart is saying \"demand is here, but timing and entry matter more than direction.\""
+      },
+      {
+        "agent_id": 9,
+        "focus_area": "sentiment",
+        "vote": "HOLD",
+        "confidence": 0.72,
+        "reasoning": "AMD is crowded and overbought on momentum—the 80x trailing P/E and 0.85% FCF yield scream stretched positioning with little margin of safety—but the bull thesis on MI300X penetration and margin expansion is concrete enough to keep a seat at the table rather than capitulate. The real risk is that positioning has gotten ahead of the actual delivery metrics (data center revenue acceleration, ROCm friction reduction), and a miss on either metric will trigger violent repricing in what is clearly an overowned consensus trade."
+      },
+      {
+        "agent_id": 10,
+        "focus_area": "wasden_framework",
+        "vote": "HOLD",
+        "confidence": 0.72,
+        "reasoning": "AMD fits the cash-machine bucket and has a concrete catalyst (MI300X ramp), but the valuation contradicts the framework: 0.85% FCF yield and 80x trailing P/E reveal we're paying for a story, not buying a durable business at a fair price. The forward multiple is muddied by data confusion, the exit trigger (data center deceleration below 20% YoY) is too distant to act on today, and NVIDIA's CUDA moat remains a genuine structural risk—stand aside until FCF conversion visibly improves or the multiple compresses materially."
+      }
+    ],
+    "counts": {
+      "BUY": 1,
+      "SELL": 2,
+      "HOLD": 7
+    },
+    "decision": "HOLD",
+    "escalated_to_human": false,
+    "reason": "7/10 jurors voted HOLD — decisive majority."
+  },
+  "final_decision": "HOLD",
+  "position_size_note": "No conviction — HOLD. Don't force a trade. Read-only.",
+  "models": {
+    "jury": "claude-haiku-4-5",
+    "synth": "claude-sonnet-4-6"
+  },
+  "source": "engine"
+}
