@@ -89,6 +89,11 @@ REGISTRY: tuple[Param, ...] = (
           "Minimum seconds between debate or pipeline runs. Each run spends tokens, so this is the "
           "brake on an accidental double-click costing real money.",
           "Debate & Pipeline — run button"),
+    Param("marks_ttl_seconds", "Price refresh", "Runs", "s", 120.0, 15.0, 600.0,
+          "How long a live price is reused before the provider is asked again. Every position "
+          "costs one call per refresh — this plan has no batch quote — so halving this doubles "
+          "the call rate.",
+          "Portfolio, Reconcile, Position"),
     Param("cycle_max_debates", "Cycle debate cap", "Runs", "count", 0.0, 0.0, 50.0,
           "How many held positions the twice-daily cycle debates. 0 means all of them. Each debate "
           "fans out a jury, so this is the dial between thorough and expensive.",

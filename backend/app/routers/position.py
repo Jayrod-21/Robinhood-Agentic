@@ -31,7 +31,7 @@ from fastapi import APIRouter, HTTPException
 from app.config import get_settings
 from app.debate.records import get_record, list_records
 from app.services.broker import get_snapshot
-from app.services.marks import MARKS_PROVIDER, get_marks
+from app.services.marks import MARKS_PROVIDER, get_marks, resolve_ttl_seconds
 from app.services.slate import load_sizing_rules, load_slate, load_theses
 from app.services.snapshot import SnapshotError
 from app.validation import normalize_ticker
@@ -187,7 +187,7 @@ def position(symbol: str) -> dict[str, Any]:
     unrealized_pct: float | None = None
 
     if holding is not None:
-        price = get_marks([ticker], settings.marks_ttl_seconds).get(ticker)
+        price = get_marks([ticker], resolve_ttl_seconds(settings.marks_ttl_seconds)).get(ticker)
         cost_basis = holding.quantity * holding.average_buy_price
         market_value = holding.quantity * price if price is not None else None
         unrealized = (market_value - cost_basis) if market_value is not None else None

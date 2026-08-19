@@ -35,7 +35,7 @@ from fastapi import APIRouter, HTTPException
 from app.config import get_settings
 from app.services import settings_store
 from app.services.broker import get_snapshot
-from app.services.marks import get_marks
+from app.services.marks import get_marks, resolve_ttl_seconds
 from app.services.slate import load_sizing_rules, load_slate
 from app.services.snapshot import SnapshotError
 
@@ -116,7 +116,7 @@ def reconciliation() -> dict[str, Any]:
     off_factor_floor = tunables["off_factor_floor_pct"]
 
     symbols = [p.symbol for p in snapshot.positions]
-    marks = get_marks(symbols, settings.marks_ttl_seconds) if symbols else {}
+    marks = get_marks(symbols, resolve_ttl_seconds(settings.marks_ttl_seconds)) if symbols else {}
     account_value = snapshot.account.total_value
     cash = snapshot.account.cash
 

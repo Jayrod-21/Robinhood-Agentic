@@ -244,9 +244,9 @@ def build_preview(
     price = limit_price
     price_is_estimate = False
     if price is None:
-        from app.services.marks import get_marks
+        from app.services.marks import get_marks, resolve_ttl_seconds
 
-        price = get_marks([symbol], settings.marks_ttl_seconds).get(symbol)
+        price = get_marks([symbol], resolve_ttl_seconds(settings.marks_ttl_seconds)).get(symbol)
         price_is_estimate = True
         if price is None:
             raise ValueError(f"cannot price {symbol}: no live mark available to estimate notional")

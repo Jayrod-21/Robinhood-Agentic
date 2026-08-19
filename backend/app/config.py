@@ -65,7 +65,14 @@ class Settings(BaseSettings):
     logs_dir: Path = Field(default=Path("/app/logs"))
 
     # --- Live marks (FMP) -------------------------------------------------------------------
-    marks_ttl_seconds: int = Field(default=45, ge=5, le=600)
+    # 120s = the 2-minute position refresh the operator chose. Sized against measurement rather
+    # than taste: a quote is ~455 bytes, so fifteen positions refreshed every two minutes for a
+    # whole trading day is ~3,600 calls and 1.6 MB — 0.03 GB over 30 sessions, against a 20 GB
+    # allowance. Bandwidth is nowhere near the binding constraint; call pacing is.
+    #
+    # This is the FALLBACK. The live value comes from settings (marks_ttl_seconds) so the cadence
+    # can be tuned without a redeploy.
+    marks_ttl_seconds: int = Field(default=120, ge=5, le=600)
 
     # How old the ACCOUNT data may be before the Data-Trust strip calls it stale.
     #

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from app.routers import data_trust as dt
+from app.services.marks import Mark
 from app.services.snapshot import AccountSnapshot, SnapshotError
 
 
@@ -42,7 +43,7 @@ def _iso(dt_: datetime) -> str:
 @pytest.fixture()
 def fresh(monkeypatch):
     monkeypatch.setattr(dt, "get_snapshot", lambda _p: _snapshot(_iso(datetime.now(timezone.utc))))
-    monkeypatch.setattr(dt, "get_marks", lambda syms, ttl: {s: 100.0 for s in syms})
+    monkeypatch.setattr(dt, "get_marks_detailed", lambda syms, ttl: {s: Mark(100.0, False, 0.0) for s in syms})
 
 
 def test_fresh_broker_read_is_not_stale(fresh):
@@ -57,7 +58,7 @@ def test_an_old_snapshot_is_reported_stale(monkeypatch):
     """THE case this endpoint was built for: 27 July rendering as current."""
     old = datetime.now(timezone.utc) - timedelta(days=21)
     monkeypatch.setattr(dt, "get_snapshot", lambda _p: _snapshot(_iso(old), source="robinhood-mcp"))
-    monkeypatch.setattr(dt, "get_marks", lambda syms, ttl: {s: 100.0 for s in syms})
+    monkeypatch.setattr(dt, "get_marks_detailed", lambda syms, ttl: {s: Mark(100.0, False, 0.0) for s in syms})
     body = dt.data_trust()
     assert body["snapshot_stale"] is True, "a three-week-old snapshot must not read as fresh"
     assert body["source"] == "robinhood-mcp"
@@ -67,7 +68,7 @@ def test_an_unparseable_timestamp_is_stale_not_fresh(monkeypatch):
     """Freshness must be PROVEN. Defaulting an unreadable stamp to fresh is how the July snapshot
     went unremarked for three weeks."""
     monkeypatch.setattr(dt, "get_snapshot", lambda _p: _snapshot("not-a-timestamp"))
-    monkeypatch.setattr(dt, "get_marks", lambda syms, ttl: {s: 100.0 for s in syms})
+    monkeypatch.setattr(dt, "get_marks_detailed", lambda syms, ttl: {s: Mark(100.0, False, 0.0) for s in syms})
     assert dt.data_trust()["snapshot_stale"] is True
 
 
@@ -75,7 +76,8 @@ def test_partially_priced_positions_are_reported_degraded(monkeypatch):
     """Eight held, six priced means two are showing something other than a live mark. Today nothing
     tells the operator which — this is the count that surfaces it."""
     monkeypatch.setattr(dt, "get_snapshot", lambda _p: _snapshot(_iso(datetime.now(timezone.utc))))
-    monkeypatch.setattr(dt, "get_marks", lambda syms, ttl: {"AAPL": 100.0, "NVDA": None})
+    monkeypatch.setattr(dt, "get_marks_detailed",
+                        lambda syms, ttl: {"AAPL": Mark(100.0, False, 0.0), "NVDA": Mark(None, False, None)})
     body = dt.data_trust()
     assert body["positions_total"] == 2
     assert body["positions_priced"] == 1
@@ -118,7 +120,7 @@ def test_empty_portfolio_prices_nothing_and_is_not_degraded(monkeypatch):
         called["n"] += 1
         return {}
 
-    monkeypatch.setattr(dt, "get_marks", marks)
+    monkeypatch.setattr(dt, "get_marks_detailed", marks)
     body = dt.data_trust()
     assert body["positions_total"] == 0
     assert body["prices_degraded"] is False, "no positions is not the same as unpriced positions"

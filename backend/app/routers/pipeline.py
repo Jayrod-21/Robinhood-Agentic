@@ -26,7 +26,7 @@ from app.config import get_settings
 from app.debate.engine import run_debate
 from app.debate.records import PipelineRunRecord, list_pipeline_runs, persist_pipeline_run
 from app.ratelimit import debate_limiter
-from app.services.marks import get_marks
+from app.services.marks import get_marks, resolve_ttl_seconds
 from app.sse import sse_response
 from app.validation import validate_ticker
 
@@ -140,7 +140,7 @@ def _build_history() -> list[dict]:
     settings = get_settings()
     runs = list_pipeline_runs(limit=HISTORY_LIMIT)
     symbols = sorted({r["ticker"] for r in runs if r.get("ticker")})
-    marks = get_marks(symbols, settings.marks_ttl_seconds) if symbols else {}
+    marks = get_marks(symbols, resolve_ttl_seconds(settings.marks_ttl_seconds)) if symbols else {}
 
     out: list[dict] = []
     for run in runs:

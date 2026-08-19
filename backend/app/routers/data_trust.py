@@ -34,7 +34,7 @@ from fastapi import APIRouter
 
 from app.config import get_settings
 from app.services.broker import get_snapshot
-from app.services.marks import MARKS_PROVIDER, get_marks
+from app.services.marks import MARKS_PROVIDER, get_marks_detailed, resolve_ttl_seconds
 from app.services.snapshot import SnapshotError
 
 logger = logging.getLogger("agentic.api.data_trust")
@@ -55,6 +55,30 @@ def _parse_iso(value: str | None) -> datetime | None:
     except ValueError:
         logger.warning("snapshot generated_at is not ISO-8601: %r", value)
         return None
+
+
+def _budget_status() -> dict[str, Any]:
+    """How much of the daily provider allowance this process has spent.
+
+    Process-local and approximate by construction (src/fmp.py::CallBudget) — the key's responses
+    carry no rate-limit headers. Approximate and visible beats exact and absent: the previous
+    budget was sized for a backfill, the dashboard quietly outspent it every ten minutes, and
+    nothing anywhere reported that until positions started disappearing.
+    """
+    try:
+        from src.fmp import get_shared_client
+
+        budget = get_shared_client().budget
+        limit = int(budget.limit)
+        spent = int(budget.spent)
+    except Exception:  # noqa: BLE001 — a reporting failure must not fail the page
+        return {"spent": None, "limit": None, "exhausted": None}
+    return {
+        "spent": spent,
+        # 0 means no daily cap is configured, which is not the same as a cap of zero.
+        "limit": limit or None,
+        "exhausted": bool(limit and spent >= limit),
+    }
 
 
 @router.get("/data-trust")
@@ -99,8 +123,14 @@ def data_trust() -> dict[str, Any]:
         stale = age > settings.snapshot_max_age_seconds
 
     symbols = snapshot.symbols
-    marks = get_marks(symbols, settings.marks_ttl_seconds) if symbols else {}
-    priced = sum(1 for s in symbols if marks.get(s) is not None)
+    ttl = resolve_ttl_seconds(settings.marks_ttl_seconds)
+    detailed = get_marks_detailed(symbols, ttl) if symbols else {}
+    priced = sum(1 for s in symbols if detailed.get(s) and detailed[s].price is not None)
+    # Named, not just counted. "9/10 priced" leaves the operator hunting for the missing one, and a
+    # stale-but-served price is a different state from an absent one — both were invisible during
+    # the 2026-08-19 outage, when every position silently went unpriced at once.
+    unpriced = sorted(s for s in symbols if not (detailed.get(s) and detailed[s].price is not None))
+    stale_served = sorted(s for s in symbols if detailed.get(s) and detailed[s].stale)
 
     return {
         "snapshot_generated_at": snapshot.generated_at,
@@ -112,5 +142,13 @@ def data_trust() -> dict[str, Any]:
         "prices_degraded": priced < len(symbols),
         "positions_total": len(symbols),
         "positions_priced": priced,
+        "unpriced_symbols": unpriced,
+        # Priced, but from a cache the provider would not refresh. Real numbers, older than the
+        # refresh interval, and the page must be able to say so rather than showing them as live.
+        "stale_priced_symbols": stale_served,
+        "price_refresh_seconds": ttl,
+        # The quota that took the dashboard down. Surfaced so exhaustion is visible while there is
+        # still headroom, instead of arriving as a blank table.
+        "provider_budget": _budget_status(),
         **posture,
     }
