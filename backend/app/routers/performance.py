@@ -181,55 +181,157 @@ def _metrics(run) -> dict[str, Any] | None:
 _BINS = [(round(i / 10, 1), round((i + 1) / 10, 1)) for i in range(10)]
 MIN_N_FOR_CALIBRATION = 30
 
+# Must match db/score_judgments.py's default: the horizon the outcomes were actually scored at.
+OUTCOME_HORIZON_DAYS = 5
+
+
+# Rows a call must be graded on. A judgment with no stated confidence cannot be calibrated — there
+# is no claim to compare the outcome against — and one whose horizon has not elapsed has no outcome
+# row at all. Both are EXCLUDED rather than counted as misses, which the contract is explicit about:
+# scoring an unknown as a failure would make every recent call look like a bad one.
+_SCORED_SQL = """
+SELECT a.agent_key, a.display_name, j.decision, j.confidence, o.is_correct,
+       o.forward_return, o.outcome_date, s.symbol
+  FROM judgments j
+  JOIN judgment_outcomes o ON o.judgment_id = j.id
+  JOIN agents a ON a.id = j.judge_agent_id
+  JOIN debates d ON d.id = j.debate_id
+  JOIN securities s ON s.id = d.security_id
+ WHERE j.confidence IS NOT NULL
+   AND a.kind = %s
+ ORDER BY o.outcome_date DESC, a.agent_key
+"""
+
+
+def _bin_index(confidence: float) -> int:
+    """Which reliability bucket a confidence falls in. 1.0 belongs to the top bucket, not a
+    non-existent eleventh one."""
+    return min(int(confidence * 10), len(_BINS) - 1)
+
+
+def _summarise(rows: list[tuple]) -> dict[str, Any]:
+    """Reliability statistics over (confidence, is_correct) pairs.
+
+    ECE is the weighted mean gap between stated confidence and realised hit rate — how far the
+    claims are from the truth. Brier is the mean squared error of the individual claims. They answer
+    different questions: a forecaster can be perfectly calibrated in aggregate and still useless at
+    ranking, which is why both are reported rather than one standing in for the other.
+    """
+    n = len(rows)
+    if n == 0:
+        return {
+            "n_decisions": 0, "min_n_for_calibration": MIN_N_FOR_CALIBRATION,
+            "is_calibratable": False, "ece": None, "brier": None,
+            "base_rate": None, "mean_confidence": None,
+            "bins": [{"lo": lo, "hi": hi, "predicted": None, "n": 0, "hit_rate": None}
+                     for lo, hi in _BINS],
+        }
+
+    buckets: list[list[tuple[float, bool]]] = [[] for _ in _BINS]
+    for confidence, correct in rows:
+        buckets[_bin_index(confidence)].append((confidence, correct))
+
+    bins, ece = [], 0.0
+    for (lo, hi), members in zip(_BINS, buckets, strict=True):
+        if not members:
+            bins.append({"lo": lo, "hi": hi, "predicted": None, "n": 0, "hit_rate": None})
+            continue
+        mean_conf = sum(c for c, _ in members) / len(members)
+        hit_rate = sum(1 for _, ok in members if ok) / len(members)
+        ece += (len(members) / n) * abs(mean_conf - hit_rate)
+        bins.append({
+            "lo": lo, "hi": hi,
+            "predicted": round(mean_conf, 4),
+            "n": len(members),
+            "hit_rate": round(hit_rate, 4),
+        })
+
+    brier = sum((c - (1.0 if ok else 0.0)) ** 2 for c, ok in rows) / n
+    return {
+        "n_decisions": n,
+        "min_n_for_calibration": MIN_N_FOR_CALIBRATION,
+        # Below the floor the numbers are computed and REPORTED, but flagged as not yet meaningful.
+        # Hiding them would be worse: an operator cannot judge whether the sample is growing.
+        "is_calibratable": n >= MIN_N_FOR_CALIBRATION,
+        "ece": round(ece, 4),
+        "brier": round(brier, 4),
+        "base_rate": round(sum(1 for _, ok in rows if ok) / n, 4),
+        "mean_confidence": round(sum(c for c, _ in rows) / n, 4),
+        "bins": bins,
+    }
+
 
 @router.get("/calibration")
 def calibration(scope: str = Query("jury", pattern="^(jury|personas)$")) -> dict[str, Any]:
     """Stated confidence versus realised outcome.
 
-    Empty until debates are judged AND their outcomes scored. Both halves are required: a confident
-    call with no known outcome cannot be graded, and the contract is explicit that such rows are
-    EXCLUDED from the bins rather than counted as misses — scoring an unknown as a failure would
-    make every un-resolved call look like a bad one.
+    Both halves are required: a confident call with no known outcome cannot be graded, and such rows
+    are EXCLUDED from the bins rather than counted as misses.
     """
+    kind = "judge" if scope == "jury" else "persona"
     try:
         with connection() as conn:
+            rows = conn.execute(_SCORED_SQL, (kind,)).fetchall()
             judged = conn.execute("SELECT count(*) FROM judgments").fetchone()[0]
             debates = conn.execute("SELECT count(*) FROM debates").fetchone()[0]
+            priced_through = conn.execute(
+                "SELECT max(outcome_date)::text FROM judgment_outcomes"
+            ).fetchone()[0]
     except DbUnavailable as exc:
         raise _unavailable(exc) from None
 
-    note = (
-        f"No scored decisions yet ({debates} debate(s), {judged} judgment(s)). Calibration needs a "
-        f"judged call AND a realised outcome; neither side exists yet."
-    ) if not judged else (
-        f"{judged} judgment(s) on record, but outcome scoring is not wired yet, so nothing is "
-        f"gradeable."
-    )
+    overall = _summarise([(float(r[3]), bool(r[4])) for r in rows])
+
+    by_agent = []
+    for key in sorted({r[0] for r in rows}):
+        mine = [r for r in rows if r[0] == key]
+        stats = _summarise([(float(r[3]), bool(r[4])) for r in mine])
+        by_agent.append({
+            "agent_key": key,
+            "display_name": mine[0][1] or key,
+            "n_decisions": stats["n_decisions"],
+            "ece": stats["ece"],
+            "brier": stats["brier"],
+            "hit_rate": stats["base_rate"],
+            "mean_confidence": stats["mean_confidence"],
+            "is_calibratable": stats["is_calibratable"],
+        })
+
+    coverage = (len(rows) / judged) if judged else None
+    if not judged:
+        note = (f"No judgments on record yet ({debates} debate(s)). Run a debate, then score it "
+                f"with db/score_judgments.py.")
+    elif not rows:
+        note = (f"{judged} judgment(s) on record, none scored yet. A call is gradeable only once "
+                f"its {OUTCOME_HORIZON_DAYS}-session window has elapsed and both price bars exist.")
+    else:
+        note = (f"{len(rows)} of {judged} judgment(s) scored. The rest are either inside their "
+                f"{OUTCOME_HORIZON_DAYS}-session window, missing a price bar, or carry no stated "
+                f"confidence to grade.")
 
     return {
         "meta": {
             "scope": scope,
-            # Stated, never implied: this choice drives the whole chart.
             "outcome_definition": "counterfactual return positive over 5 trading days",
-            "outcome_horizon_days": 5,
+            "outcome_horizon_days": OUTCOME_HORIZON_DAYS,
             "benchmark_relative": False,
             "returns_basis": "price_only",
-            "priced_through": None,
-            "coverage": None,
+            "priced_through": priced_through,
+            "coverage": round(coverage, 4) if coverage is not None else None,
             "coverage_note": note,
         },
-        "overall": {
-            "n_decisions": 0,
-            "min_n_for_calibration": MIN_N_FOR_CALIBRATION,
-            "is_calibratable": False,
-            "ece": None,
-            "brier": None,
-            "base_rate": None,
-            "mean_confidence": None,
-            # Every bucket present with n=0, so the diagram draws its grid rather than collapsing.
-            "bins": [{"lo": lo, "hi": hi, "predicted": None, "n": 0, "hit_rate": None}
-                     for lo, hi in _BINS],
-        },
-        "by_agent": [],
-        "decisions": [],
+        "overall": overall,
+        "by_agent": by_agent,
+        "decisions": [
+            {
+                "agent_key": r[0],
+                "symbol": r[7],
+                "decision": r[2],
+                "confidence": float(r[3]),
+                "is_correct": bool(r[4]),
+                "forward_return": float(r[5]),
+                "outcome_date": r[6].isoformat(),
+            }
+            for r in rows[:200]
+        ],
     }
