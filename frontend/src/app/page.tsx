@@ -6,6 +6,8 @@ import { AlertTriangle } from "lucide-react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { PageHeader } from "@/components/shell";
 import { Card, CardBody, CardHeader, CardTitle, Spinner, StatCard } from "@/components/ui";
+import { AccountSwitcher } from "@/components/account-switcher";
+import { useAccount, withAccount } from "@/components/account-context";
 import { fetcher } from "@/lib/api";
 import { ago, cn, pct, plColor, usd } from "@/lib/format";
 import type { AccountView } from "@/lib/types";
@@ -30,7 +32,10 @@ const SOURCE_LABELS: Record<string, string> = {
 const sourceLabel = (source: string) => SOURCE_LABELS[source] ?? source;
 
 export default function PortfolioPage() {
-  const { data, error, isLoading } = useSWR<AccountView>("/api/account", fetcher, { refreshInterval: 10_000 });
+  const { selectedId } = useAccount();
+  // Account-scoped: the fetch re-keys when the operator switches accounts, so SWR fetches the newly
+  // selected account and the page swaps to it. Falls back to the backend default when none is selected.
+  const { data, error, isLoading } = useSWR<AccountView>(withAccount("/api/account", selectedId), fetcher, { refreshInterval: 10_000 });
   const plClass = plColor(data?.total_unrealized_pl);
   const donutData =
     data?.positions
@@ -43,6 +48,7 @@ export default function PortfolioPage() {
       <PageHeader
         title="Portfolio"
         subtitle={data ? `${data.nickname ?? "Account"} ${data.account_masked} · read ${ago(data.generated_at)}` : "Live Agentic account"}
+        right={<AccountSwitcher />}
       />
 
       {error && (

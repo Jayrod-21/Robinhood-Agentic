@@ -45,6 +45,7 @@ export const ANY_MOCK =
   process.env.NEXT_PUBLIC_POSITION_MOCK === "1" ||
   process.env.NEXT_PUBLIC_MARKET_MOCK === "1" ||
   process.env.NEXT_PUBLIC_TESTLAB_MOCK === "1" ||
+  process.env.NEXT_PUBLIC_ACCOUNTS_MOCK === "1" ||
   process.env.NEXT_PUBLIC_TRUST_MOCK === "1";
 
 // ── Dev fixture ────────────────────────────────────────────────────────────────────────────────
