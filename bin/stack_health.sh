@@ -188,7 +188,7 @@ else
 fi
 
 crontab_text="$(crontab -l 2>/dev/null)"
-for job in alpaca_sync.sh nightly_marks.sh; do
+for job in alpaca_sync.sh nightly_marks.sh scheduled_cycle.sh; do
   if grep -q "${job}" <<<"${crontab_text}"; then
     pass "cron:${job}"
   else

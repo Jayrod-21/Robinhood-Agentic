@@ -89,6 +89,10 @@ REGISTRY: tuple[Param, ...] = (
           "Minimum seconds between debate or pipeline runs. Each run spends tokens, so this is the "
           "brake on an accidental double-click costing real money.",
           "Debate & Pipeline — run button"),
+    Param("cycle_max_debates", "Cycle debate cap", "Runs", "count", 0.0, 0.0, 50.0,
+          "How many held positions the twice-daily cycle debates. 0 means all of them. Each debate "
+          "fans out a jury, so this is the dial between thorough and expensive.",
+          "Twice-daily cycle"),
     Param("debate_juror_count", "Jurors", "Runs", "count", 10.0, 1.0, 20.0,
           "How many independent jurors weigh in per debate. More jurors is a steadier verdict and a "
           "proportionally larger bill.",

@@ -2,10 +2,17 @@
 
 Run inside the backend container (it has the engine, the API key, src/, and the mounted volumes):
     python -m app.jobs.cycle open      # or: close
-The host refreshes the Robinhood snapshot file FIRST (bin/scheduled_cycle.sh → bin/refresh_once.sh),
-because the Robinhood MCP lives host-side; this job then reads the account through the broker service
-(services/broker.py) — a live Alpaca read when credentials are configured, otherwise that
-freshly-written fallback file from the shared volume.
+
+The account comes through services/broker.py: a live Alpaca read when credentials are configured,
+otherwise the fallback file that bin/alpaca_sync.sh keeps current. The host step used to be a
+Robinhood MCP pull via bin/refresh_once.sh — that bridge is gone, and with Alpaca configured this
+job does not depend on the file at all.
+
+WHAT A RUN COSTS
+    One debate per held position, and each debate fans out a jury. At fifteen positions that is
+    ~195 API calls per cycle, twice a day. `cycle_max_debates` (Parameters page) caps it without a
+    redeploy, and every debate record now carries its own token usage so the spend is auditable
+    rather than a guess.
 
 Each per-position debate runs the real engine directly (no HTTP, no rate limit) and persists itself to
 logs/debates + logs/events.jsonl. This job adds a consolidated logs/reports/<date>-<phase>.md and a
@@ -36,7 +43,8 @@ async def _run_one_debate(ticker: str, sem: asyncio.Semaphore) -> dict:
     """Consume a full debate for one ticker; return its decision summary. Never raises."""
     from app.debate.engine import run_debate
 
-    out = {"ticker": ticker, "decision": None, "escalated": False, "reason": None, "error": None}
+    out = {"ticker": ticker, "decision": None, "escalated": False, "reason": None, "error": None,
+           "usage": None}
     async with sem:
         try:
             async for ev in run_debate(ticker):
@@ -46,6 +54,9 @@ async def _run_one_debate(ticker: str, sem: asyncio.Semaphore) -> dict:
                 elif kind == "decision":
                     out["decision"] = ev["final_decision"]
                     out["reason"] = ev.get("reason")
+                elif kind == "debate_complete":
+                    # The record carries what this debate actually spent.
+                    out["usage"] = (ev.get("record") or {}).get("usage")
                 elif kind == "error":
                     out["error"] = ev["message"]
         except Exception as exc:  # noqa: BLE001 — one bad debate must not sink the cycle
@@ -101,6 +112,13 @@ def _format_report(phase: str, now: datetime, account, survivors, scanned, debat
     lines.append("")
 
     lines += ["## Position debates"]
+    spend = [d["usage"] for d in debates if d.get("usage")]
+    if spend:
+        lines.append(
+            f"- Spend: {sum(u['calls'] for u in spend)} API calls, "
+            f"{sum(u['input_tokens'] for u in spend):,} in / "
+            f"{sum(u['output_tokens'] for u in spend):,} out tokens"
+        )
     if not debates:
         lines.append("- (skipped — no API key or no positions)")
     else:
@@ -132,6 +150,17 @@ async def run_cycle(phase: str, max_debates: int = 0) -> str:
         logger.info("no account data — skipping position debates")
     else:
         symbols = [p.symbol for p in account.positions]
+        # The cap is a tunable, so cost can be pulled back without a redeploy. An explicit
+        # --max-debates still wins: a command-line run is someone testing, and a stored setting
+        # should not silently override what they typed.
+        if max_debates <= 0:
+            try:
+                from app.services import settings_store
+
+                max_debates = int(settings_store.get("cycle_max_debates"))
+            except Exception as exc:  # noqa: BLE001 — a settings failure must not skip the cycle
+                logger.warning("could not read cycle_max_debates, debating all positions: %s", exc)
+                max_debates = 0
         if max_debates > 0:
             symbols = symbols[:max_debates]
         # Count only, no tickers: this line lands in logs/cron/ twice a day, and the symbol list
