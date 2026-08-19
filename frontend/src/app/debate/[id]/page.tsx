@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/shell";
 import { Badge, Card, CardBody, CardHeader, CardTitle, Spinner, decisionTone } from "@/components/ui";
 import { FundamentalsGrid } from "@/components/fundamentals";
 import { Markdown } from "@/components/markdown";
+import { DebateExport } from "@/components/debate-export";
 import { fetcher } from "@/lib/api";
 import { ago, cn } from "@/lib/format";
 import type { DebateDetail, JurorVote, Vote } from "@/lib/types";
@@ -63,6 +64,7 @@ export default function DebateDetailPage({ params }: { params: { id: string } })
             {data.final_decision && <Badge tone={decisionTone(data.final_decision)}>{data.final_decision}</Badge>}
             <Badge tone="neutral">{data.source}</Badge>
             {data.created_at && <span className="text-xs text-zinc-500">{ago(data.created_at)}</span>}
+            <DebateExport data={data} />
           </div>
         }
       />
