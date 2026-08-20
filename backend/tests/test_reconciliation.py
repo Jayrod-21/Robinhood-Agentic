@@ -37,7 +37,7 @@ def _snapshot(positions=(), cash=500.0, total=1000.0):
 def test_an_empty_account_reports_every_slate_name_missing(monkeypatch):
     """The live case today: a fresh paper account against a slate written for another broker.
     Reporting 'in sync' here would be the single most misleading answer this endpoint could give."""
-    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot(cash=1000.0))
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p, _acct=None: _snapshot(cash=1000.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {})
     body = rec.reconciliation()
     assert body["meta"]["in_sync"] is False
@@ -48,7 +48,7 @@ def test_an_empty_account_reports_every_slate_name_missing(monkeypatch):
 
 def test_a_holding_at_target_matches(monkeypatch):
     monkeypatch.setattr(
-        rec, "get_snapshot", lambda _p: _snapshot([("TSM", 22.0, 10.0)], cash=780.0)
+        rec, "get_snapshot", lambda _p, _acct=None: _snapshot([("TSM", 22.0, 10.0)], cash=780.0)
     )
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"TSM": 10.0})
     body = rec.reconciliation()
@@ -63,7 +63,7 @@ def test_a_holding_at_target_matches(monkeypatch):
 
 def test_a_holding_past_tolerance_is_drifted(monkeypatch):
     monkeypatch.setattr(
-        rec, "get_snapshot", lambda _p: _snapshot([("TSM", 30.0, 10.0)], cash=700.0)
+        rec, "get_snapshot", lambda _p, _acct=None: _snapshot([("TSM", 30.0, 10.0)], cash=700.0)
     )
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"TSM": 10.0})
     body = rec.reconciliation()
@@ -77,7 +77,7 @@ def test_a_holding_past_tolerance_is_drifted(monkeypatch):
 
 def test_a_held_name_not_in_the_slate_is_unexpected_not_an_error(monkeypatch):
     """Some of the most useful rows this endpoint produces are positions nobody wrote down."""
-    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot([("MU", 10.0, 10.0)], cash=900.0))
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p, _acct=None: _snapshot([("MU", 10.0, 10.0)], cash=900.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"MU": 10.0})
     body = rec.reconciliation()
     mu = next(r for r in body["positions"] if r["symbol"] == "MU")
@@ -89,7 +89,7 @@ def test_a_held_name_not_in_the_slate_is_unexpected_not_an_error(monkeypatch):
 
 def test_an_unpriced_holding_is_never_reported_as_matching(monkeypatch):
     """Calling an unmeasurable position 'match' asserts agreement nobody checked."""
-    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot([("TSM", 22.0, 10.0)], cash=780.0))
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p, _acct=None: _snapshot([("TSM", 22.0, 10.0)], cash=780.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"TSM": None})
     body = rec.reconciliation()
     tsm = next(r for r in body["positions"] if r["symbol"] == "TSM")
@@ -100,7 +100,7 @@ def test_an_unpriced_holding_is_never_reported_as_matching(monkeypatch):
 
 def test_checks_report_passes_as_well_as_breaches(monkeypatch):
     """A rule that only appears when broken leaves 'was this even checked?' unanswerable."""
-    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot(cash=1000.0))
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p, _acct=None: _snapshot(cash=1000.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {})
     body = rec.reconciliation()
     keys = {c["rule"] for c in body["checks"]}
@@ -111,7 +111,7 @@ def test_checks_report_passes_as_well_as_breaches(monkeypatch):
 
 def test_the_cash_band_breach_is_reported(monkeypatch):
     """100% cash is outside the 10-20% band, and that is a finding rather than a comfortable state."""
-    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot(cash=1000.0))
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p, _acct=None: _snapshot(cash=1000.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {})
     body = rec.reconciliation()
     cash_check = next(c for c in body["checks"] if "Cash" in c["rule"])
@@ -120,7 +120,7 @@ def test_the_cash_band_breach_is_reported(monkeypatch):
 
 
 def test_a_breached_stop_is_an_alert(monkeypatch):
-    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot([("TSM", 10.0, 10.0)], cash=900.0))
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p, _acct=None: _snapshot([("TSM", 10.0, 10.0)], cash=900.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"TSM": 7.0})  # -30%
     body = rec.reconciliation()
     stop_check = next(c for c in body["checks"] if "Hard stop" in c["rule"])
@@ -132,7 +132,7 @@ def test_a_breached_stop_is_an_alert(monkeypatch):
 def test_an_unreadable_slate_is_503_not_an_empty_reconciliation(monkeypatch):
     """'The slate did not parse' and 'the broker holds nothing documented' are opposite conclusions.
     Rendering the first as the second reports a parser failure as a portfolio finding."""
-    monkeypatch.setattr(rec, "load_slate", lambda _p: {})
+    monkeypatch.setattr(rec, "load_slate", lambda _p, _acct=None: {})
     with pytest.raises(HTTPException) as exc:
         rec.reconciliation()
     assert exc.value.status_code == 503
@@ -145,7 +145,7 @@ def test_the_documented_book_size_is_surfaced(monkeypatch):
     The slate was restated onto the Alpaca account on 2026-08-18, so the documented book is now
     $100,000 rather than the $100 Robinhood bootstrap. This reads the REAL docs/SLATE.md, so it goes
     red if that header is edited without anyone thinking about what reconciliation will report."""
-    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot(cash=1000.0))
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p, _acct=None: _snapshot(cash=1000.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {})
     meta = rec.reconciliation()["meta"]
     assert meta["documented_book_value"] == 100_000.0
@@ -161,7 +161,7 @@ def test_no_brief_is_distinguishable_from_a_quiet_day(monkeypatch):
     go looking."""
     monkeypatch.setattr(mc, "_load_brief", lambda: None)
     monkeypatch.setattr(mc, "_catalysts", lambda *a, **k: [])
-    monkeypatch.setattr(mc, "get_snapshot", lambda _p: _snapshot())
+    monkeypatch.setattr(mc, "get_snapshot", lambda _p, _acct=None: _snapshot())
     body = mc.market_context()
     assert body["meta"]["brief_present"] is False
     assert body["meta"]["brief_generated_at"] is None
@@ -172,7 +172,7 @@ def test_no_brief_is_distinguishable_from_a_quiet_day(monkeypatch):
 def test_headline_tickers_are_filtered_to_names_the_book_cares_about(monkeypatch):
     """The relevance chips drive attention. A headline tagged with a name nobody holds or documents
     would put a chip on screen that means nothing here."""
-    monkeypatch.setattr(mc, "get_snapshot", lambda _p: _snapshot([("TSM", 1.0, 10.0)]))
+    monkeypatch.setattr(mc, "get_snapshot", lambda _p, _acct=None: _snapshot([("TSM", 1.0, 10.0)]))
     monkeypatch.setattr(mc, "_catalysts", lambda *a, **k: [])
     monkeypatch.setattr(
         mc, "_load_brief",
@@ -196,7 +196,7 @@ def test_a_malformed_brief_is_absent_not_fatal(monkeypatch, tmp_path, caplog):
     bad.write_text("{not json")
     monkeypatch.setattr(mc, "_brief_path", lambda: bad)
     monkeypatch.setattr(mc, "_catalysts", lambda *a, **k: [])
-    monkeypatch.setattr(mc, "get_snapshot", lambda _p: _snapshot())
+    monkeypatch.setattr(mc, "get_snapshot", lambda _p, _acct=None: _snapshot())
     with caplog.at_level("ERROR"):
         body = mc.market_context()
     assert body["headlines"] == []
@@ -221,7 +221,7 @@ def test_the_account_being_unreadable_still_returns_catalysts(monkeypatch):
     """Slate-only relevance is a degraded answer, not a blank page."""
     from app.services.snapshot import SnapshotError
 
-    def boom(_p):
+    def boom(_p, _acct=None):
         raise SnapshotError("broker down")
 
     monkeypatch.setattr(mc, "get_snapshot", boom)
@@ -243,7 +243,7 @@ def test_thresholds_come_from_settings_and_say_where_they_came_from(monkeypatch)
     something else, is a guardrail misreporting what it enforced."""
     from app.services import settings_store
 
-    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot([("TSM", 24.0, 10.0)], cash=760.0))
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p, _acct=None: _snapshot([("TSM", 24.0, 10.0)], cash=760.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"TSM": 10.0})
     monkeypatch.setattr(
         settings_store, "get_all",
@@ -269,7 +269,7 @@ def test_a_database_outage_leaves_reconciliation_working_on_defaults(monkeypatch
         raise DbUnavailable("down", "the database is unavailable")
 
     monkeypatch.setattr(settings_store, "connection", lambda: boom())
-    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot(cash=1000.0))
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p, _acct=None: _snapshot(cash=1000.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {})
 
     body = rec.reconciliation()
@@ -289,7 +289,7 @@ def test_an_unpriced_off_factor_name_makes_the_floor_unknown_not_breached(monkey
     """
     monkeypatch.setattr(
         rec, "get_snapshot",
-        lambda _p: _snapshot([("V", 30.0, 10.0), ("CVX", 30.0, 10.0)], cash=400.0),
+        lambda _p, _acct=None: _snapshot([("V", 30.0, 10.0), ("CVX", 30.0, 10.0)], cash=400.0),
     )
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"V": None, "CVX": 10.0})
 
@@ -302,7 +302,7 @@ def test_an_unpriced_off_factor_name_makes_the_floor_unknown_not_breached(monkey
 def test_the_off_factor_floor_still_breaches_when_it_is_genuinely_short(monkeypatch):
     """Guards the test above: if 'unknown' swallowed every case, a real breach would go unreported."""
     monkeypatch.setattr(
-        rec, "get_snapshot", lambda _p: _snapshot([("V", 1.0, 10.0), ("CVX", 1.0, 10.0)], cash=980.0)
+        rec, "get_snapshot", lambda _p, _acct=None: _snapshot([("V", 1.0, 10.0), ("CVX", 1.0, 10.0)], cash=980.0)
     )
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"V": 10.0, "CVX": 10.0})
 
@@ -314,7 +314,7 @@ def test_check_statuses_are_a_known_set(monkeypatch):
     """'unknown' joins pass and breach as a legitimate verdict. A check that cannot be evaluated is
     a third state, and collapsing it into either of the other two loses the distinction that
     matters most: whether the rule was actually applied."""
-    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot(cash=1000.0))
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p, _acct=None: _snapshot(cash=1000.0))
     monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {})
     statuses = {c["status"] for c in rec.reconciliation()["checks"]}
     assert statuses <= {"pass", "breach", "unknown"}

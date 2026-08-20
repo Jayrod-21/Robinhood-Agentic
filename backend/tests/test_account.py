@@ -21,7 +21,7 @@ def _snapshot():
 
 
 def test_pl_and_weights(monkeypatch):
-    monkeypatch.setattr(account_mod, "get_snapshot", lambda _p: _snapshot())
+    monkeypatch.setattr(account_mod, "get_snapshot", lambda _p, _acct=None: _snapshot())
     monkeypatch.setattr(account_mod, "get_marks", lambda syms, ttl: {"AAA": 110.0, "BBB": 12.0})
 
     view = account_mod._build_view()
@@ -44,7 +44,7 @@ def test_weight_bases_equity_vs_account(monkeypatch):
     by equity only. The fixture holds cash as a large share of the book (50 of 184, ~27%) so the
     two bases differ materially — if either denominator is swapped the assertions below go red.
     """
-    monkeypatch.setattr(account_mod, "get_snapshot", lambda _p: _snapshot())
+    monkeypatch.setattr(account_mod, "get_snapshot", lambda _p, _acct=None: _snapshot())
     monkeypatch.setattr(account_mod, "get_marks", lambda syms, ttl: {"AAA": 110.0, "BBB": 12.0})
 
     view = account_mod._build_view()
@@ -70,7 +70,7 @@ def test_weight_bases_equity_vs_account(monkeypatch):
 
 
 def test_unpriced_position_is_soft(monkeypatch):
-    monkeypatch.setattr(account_mod, "get_snapshot", lambda _p: _snapshot())
+    monkeypatch.setattr(account_mod, "get_snapshot", lambda _p, _acct=None: _snapshot())
     monkeypatch.setattr(account_mod, "get_marks", lambda syms, ttl: {"AAA": 110.0, "BBB": None})
 
     view = account_mod._build_view()

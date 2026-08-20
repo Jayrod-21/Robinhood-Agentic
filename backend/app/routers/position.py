@@ -24,9 +24,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.config import get_settings
 from app.debate.records import get_record, list_records
@@ -38,6 +38,11 @@ from app.services.snapshot import SnapshotError
 from app.validation import normalize_ticker
 
 logger = logging.getLogger("agentic.api.position")
+
+AccountId = Annotated[
+    int | None,
+    Query(ge=1, le=9, description="which configured account to read; omitted means the default"),
+]
 
 router = APIRouter(prefix="/api", tags=["position"])
 
@@ -156,7 +161,7 @@ def _thesis_status(
 
 
 @router.get("/position/{symbol}")
-def position(symbol: str) -> dict[str, Any]:
+def position(symbol: str, account_id: AccountId = None) -> dict[str, Any]:
     ticker = normalize_ticker(symbol)
     if ticker is None:
         raise HTTPException(status_code=400, detail="Not a valid ticker symbol.")
@@ -168,7 +173,7 @@ def position(symbol: str) -> dict[str, Any]:
     rules = load_sizing_rules(docs / "SLATE.md")
 
     try:
-        snapshot = get_snapshot(settings.snapshot_path)
+        snapshot = get_snapshot(settings.snapshot_path, account_id)
     except SnapshotError as exc:
         # 503, not an empty page: "we cannot read the account" and "you do not hold this" are
         # different answers and must not look the same.

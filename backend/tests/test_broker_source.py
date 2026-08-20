@@ -62,7 +62,8 @@ def unconfigured(monkeypatch):
 
 
 def test_broker_is_preferred_when_configured(configured, monkeypatch):
-    monkeypatch.setattr(broker, "_fetch_alpaca", lambda: broker.AccountSnapshot.model_validate(ALPACA_PAYLOAD))
+    monkeypatch.setattr(broker, "_fetch_alpaca",
+                        lambda _profile: broker.AccountSnapshot.model_validate(ALPACA_PAYLOAD))
     snap = broker.get_snapshot(FILE_SNAPSHOT)
     assert snap.source == "alpaca-paper"
 
@@ -78,7 +79,7 @@ def test_file_is_used_when_the_broker_is_not_configured(unconfigured, tmp_path, 
     which meant it silently tested nothing on any machine without one.
     """
     called: list[int] = []
-    monkeypatch.setattr(broker, "_fetch_alpaca", lambda: called.append(1))
+    monkeypatch.setattr(broker, "_fetch_alpaca", lambda _profile=None: called.append(1))
 
     path = tmp_path / "account_snapshot.json"
     path.write_text(json.dumps({**ALPACA_PAYLOAD, "generated_at": "2001-01-01T00:00:00Z"}))
@@ -143,7 +144,7 @@ def test_cache_prevents_a_fetch_per_poll(configured, monkeypatch):
     """/api/account is polled every 10s per tab per operator, and each miss is two Alpaca calls."""
     calls = {"n": 0}
 
-    def counted():
+    def counted(_profile):
         calls["n"] += 1
         return broker.AccountSnapshot.model_validate(ALPACA_PAYLOAD)
 
@@ -151,3 +152,57 @@ def test_cache_prevents_a_fetch_per_poll(configured, monkeypatch):
     for _ in range(5):
         broker.get_snapshot(FILE_SNAPSHOT)
     assert calls["n"] == 1, "five polls inside the TTL must cost one fetch"
+
+
+# ── multiple accounts ─────────────────────────────────────────────────────────────────────────
+
+
+def test_each_account_gets_its_own_cache_entry(monkeypatch, configured):
+    """THE defect this feature had to avoid. The cache was one module-level tuple with no account
+    dimension, so with two accounts configured it would serve whichever was fetched most recently
+    under whatever name the page asked for — every number real, and belonging to someone else."""
+    from app.services import accounts
+
+    broker.reset_cache()
+    monkeypatch.setenv("ALPACA_ACCOUNT_2_KEY_ID", "PKTWO")
+    monkeypatch.setenv("ALPACA_ACCOUNT_2_SECRET_KEY", "secret-two")
+    monkeypatch.setenv("ALPACA_ACCOUNT_2_NAME", "Second book")
+
+    def by_account(profile: accounts.AccountProfile):
+        payload = {**ALPACA_PAYLOAD, "account": {**ALPACA_PAYLOAD["account"],
+                                                 "nickname": f"acct-{profile.id}"}}
+        return broker.AccountSnapshot.model_validate(payload)
+
+    monkeypatch.setattr(broker, "_fetch_alpaca", by_account)
+
+    assert broker.get_snapshot(FILE_SNAPSHOT, 1).account.nickname == "acct-1"
+    assert broker.get_snapshot(FILE_SNAPSHOT, 2).account.nickname == "acct-2"
+    # And again from cache — the entries must not have overwritten each other.
+    assert broker.get_snapshot(FILE_SNAPSHOT, 1).account.nickname == "acct-1"
+    broker.reset_cache()
+
+
+def test_an_unconfigured_account_refuses_rather_than_serving_the_default(monkeypatch, configured):
+    """The file fallback holds ONE account's holdings, written by bin/alpaca_sync.sh. Serving it for
+    account 3 would answer with account 1's positions under account 3's name — the substitution this
+    whole feature exists to prevent."""
+    from app.services.snapshot import SnapshotError
+
+    broker.reset_cache()
+    with pytest.raises(SnapshotError, match="not configured"):
+        broker.get_snapshot(FILE_SNAPSHOT, 5)
+    broker.reset_cache()
+
+
+def test_the_accounts_list_never_carries_credential_material(monkeypatch, configured):
+    """A key id is half a credential, and a dashboard that displays it teaches an operator that
+    pasting it somewhere is fine."""
+    from app.services import accounts
+
+    monkeypatch.setenv("ALPACA_ACCOUNT_1_KEY_ID", "PKSECRETKEYID")
+    monkeypatch.setenv("ALPACA_ACCOUNT_1_SECRET_KEY", "supersecret")
+    described = [p.describe() for p in accounts.profiles()]
+    blob = repr(described)
+    assert "PKSECRETKEYID" not in blob
+    assert "supersecret" not in blob
+    assert set(described[0]) == {"id", "name", "is_paper"}

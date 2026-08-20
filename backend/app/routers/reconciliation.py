@@ -27,9 +27,9 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.config import get_settings
 from app.services import settings_store
@@ -41,6 +41,11 @@ from app.services.snapshot import SnapshotError
 from app.services.valuation import account_totals, value_position, weight_pct
 
 logger = logging.getLogger("agentic.api.reconciliation")
+
+AccountId = Annotated[
+    int | None,
+    Query(ge=1, le=9, description="which configured account to read; omitted means the default"),
+]
 
 router = APIRouter(prefix="/api", tags=["reconciliation"])
 
@@ -83,7 +88,7 @@ def _slate_meta(text: str) -> tuple[str | None, float | None]:
 
 
 @router.get("/reconciliation")
-def reconciliation() -> dict[str, Any]:
+def reconciliation(account_id: AccountId = None) -> dict[str, Any]:
     settings = get_settings()
     docs = settings.docs_dir
     slate_path = docs / "SLATE.md"
@@ -100,7 +105,7 @@ def reconciliation() -> dict[str, Any]:
         )
 
     try:
-        snapshot = get_snapshot(settings.snapshot_path)
+        snapshot = get_snapshot(settings.snapshot_path, account_id)
     except SnapshotError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
 

@@ -42,7 +42,7 @@ def _iso(dt_: datetime) -> str:
 
 @pytest.fixture()
 def fresh(monkeypatch):
-    monkeypatch.setattr(dt, "get_snapshot", lambda _p: _snapshot(_iso(datetime.now(timezone.utc))))
+    monkeypatch.setattr(dt, "get_snapshot", lambda _p, _acct=None: _snapshot(_iso(datetime.now(timezone.utc))))
     monkeypatch.setattr(dt, "get_marks_detailed", lambda syms, ttl: {s: Mark(100.0, False, 0.0) for s in syms})
 
 
@@ -57,7 +57,7 @@ def test_fresh_broker_read_is_not_stale(fresh):
 def test_an_old_snapshot_is_reported_stale(monkeypatch):
     """THE case this endpoint was built for: 27 July rendering as current."""
     old = datetime.now(timezone.utc) - timedelta(days=21)
-    monkeypatch.setattr(dt, "get_snapshot", lambda _p: _snapshot(_iso(old), source="robinhood-mcp"))
+    monkeypatch.setattr(dt, "get_snapshot", lambda _p, _acct=None: _snapshot(_iso(old), source="robinhood-mcp"))
     monkeypatch.setattr(dt, "get_marks_detailed", lambda syms, ttl: {s: Mark(100.0, False, 0.0) for s in syms})
     body = dt.data_trust()
     assert body["snapshot_stale"] is True, "a three-week-old snapshot must not read as fresh"
@@ -67,7 +67,7 @@ def test_an_old_snapshot_is_reported_stale(monkeypatch):
 def test_an_unparseable_timestamp_is_stale_not_fresh(monkeypatch):
     """Freshness must be PROVEN. Defaulting an unreadable stamp to fresh is how the July snapshot
     went unremarked for three weeks."""
-    monkeypatch.setattr(dt, "get_snapshot", lambda _p: _snapshot("not-a-timestamp"))
+    monkeypatch.setattr(dt, "get_snapshot", lambda _p, _acct=None: _snapshot("not-a-timestamp"))
     monkeypatch.setattr(dt, "get_marks_detailed", lambda syms, ttl: {s: Mark(100.0, False, 0.0) for s in syms})
     assert dt.data_trust()["snapshot_stale"] is True
 
@@ -75,7 +75,7 @@ def test_an_unparseable_timestamp_is_stale_not_fresh(monkeypatch):
 def test_partially_priced_positions_are_reported_degraded(monkeypatch):
     """Eight held, six priced means two are showing something other than a live mark. Today nothing
     tells the operator which — this is the count that surfaces it."""
-    monkeypatch.setattr(dt, "get_snapshot", lambda _p: _snapshot(_iso(datetime.now(timezone.utc))))
+    monkeypatch.setattr(dt, "get_snapshot", lambda _p, _acct=None: _snapshot(_iso(datetime.now(timezone.utc))))
     monkeypatch.setattr(dt, "get_marks_detailed",
                         lambda syms, ttl: {"AAPL": Mark(100.0, False, 0.0), "NVDA": Mark(None, False, None)})
     body = dt.data_trust()
@@ -88,7 +88,7 @@ def test_no_account_data_returns_200_with_an_honest_empty_state(monkeypatch):
     """'We have no fresh data' is a fact the strip must render. It is a DIFFERENT state from the
     endpoint being unreachable, and collapsing them leaves the operator unable to tell a broker
     outage from a dead site."""
-    def boom(_p):
+    def boom(_p, _acct=None):
         raise SnapshotError("broker unreachable")
 
     monkeypatch.setattr(dt, "get_snapshot", boom)
@@ -112,7 +112,7 @@ def test_price_source_comes_from_the_module_that_fetches(fresh):
 def test_empty_portfolio_prices_nothing_and_is_not_degraded(monkeypatch):
     """A funded-but-unspent account (the current Alpaca paper state) is honest, not broken."""
     monkeypatch.setattr(
-        dt, "get_snapshot", lambda _p: _snapshot(_iso(datetime.now(timezone.utc)), positions=())
+        dt, "get_snapshot", lambda _p, _acct=None: _snapshot(_iso(datetime.now(timezone.utc)), positions=())
     )
     called = {"n": 0}
 
