@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.services.broker import get_snapshot
-from app.services.marks import get_marks
+from app.services.marks import get_marks, resolve_ttl_seconds
 from app.services.snapshot import SnapshotError
 
 router = APIRouter(prefix="/api", tags=["account"])
@@ -67,7 +67,7 @@ class AccountView(BaseModel):
 def _build_view() -> AccountView:
     settings = get_settings()
     snapshot = get_snapshot(settings.snapshot_path)
-    marks = get_marks(snapshot.symbols, settings.marks_ttl_seconds)
+    marks = get_marks(snapshot.symbols, resolve_ttl_seconds(settings.marks_ttl_seconds))
 
     # First pass: cost basis, market value, P&L per position.
     rows: list[PositionView] = []
