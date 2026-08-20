@@ -30,10 +30,10 @@ FRESHNESS
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 
+from app.services import accounts
 from app.services.snapshot import AccountSnapshot, SnapshotError, load_snapshot
 
 logger = logging.getLogger("agentic.services.broker")
@@ -43,28 +43,33 @@ logger = logging.getLogger("agentic.services.broker")
 # point is freshness; it exists to stop N tabs multiplying into N x 2 calls every ten seconds.
 _CACHE_TTL_SECONDS = 5.0
 
-_cache: tuple[AccountSnapshot, float] | None = None
+# KEYED BY ACCOUNT. This was a single module-level tuple with no account dimension — the biggest
+# single-account assumption in the codebase. With more than one account configured, an unkeyed
+# cache serves whichever account was fetched most recently under whatever name the page asked for:
+# every number real, every number belonging to someone else. That is the worst failure this
+# dashboard could have, because nothing about it looks wrong.
+_cache: dict[int, tuple[AccountSnapshot, float]] = {}
 _lock = threading.Lock()
 
 
-def alpaca_configured() -> bool:
-    """True when both halves of the Alpaca credential are present.
+def alpaca_configured(account_id: int | None = None) -> bool:
+    """True when the requested account has both halves of its credential.
 
     Checked as a pair on purpose: half a credential is a misconfiguration, not a source. Answering
     'configured' on the key alone would send the request and fail at 401, which reads as 'Alpaca is
     broken' rather than 'the secret is missing from backend/.env'.
     """
-    return bool(
-        (os.environ.get("ALPACA_API_KEY_ID") or "").strip()
-        and (os.environ.get("ALPACA_API_SECRET_KEY") or "").strip()
-    )
+    return accounts.get_profile(account_id) is not None
 
 
-def _fetch_alpaca() -> AccountSnapshot:
-    from src.alpaca import AlpacaError, fetch_snapshot
+def _fetch_alpaca(profile: accounts.AccountProfile) -> AccountSnapshot:
+    from src.alpaca import AlpacaClient, AlpacaError, fetch_snapshot
 
     try:
-        payload = fetch_snapshot()
+        client = AlpacaClient(
+            key_id=profile.key_id, secret=profile.secret_key, base_url=profile.base_url
+        )
+        payload = fetch_snapshot(client)
     except AlpacaError as exc:
         # str(exc) is safe to surface: src/alpaca.py redacts the credential from every message it
         # raises, and the text names the likely cause (wrong environment, missing key).
@@ -76,25 +81,37 @@ def _fetch_alpaca() -> AccountSnapshot:
     return AccountSnapshot.model_validate(payload)
 
 
-def get_snapshot(snapshot_path) -> AccountSnapshot:
-    """The account, from the broker when configured, otherwise from the file."""
-    if not alpaca_configured():
+def get_snapshot(snapshot_path, account_id: int | None = None) -> AccountSnapshot:
+    """The account, from the broker when configured, otherwise from the file.
+
+    ``account_id`` selects among the configured profiles; omitted means the default account, which
+    is what every existing caller gets. The FILE fallback is only ever the default account's — it is
+    written by bin/alpaca_sync.sh from one account, so serving it for account 3 would answer with
+    account 1's holdings under account 3's name.
+    """
+    profile = accounts.get_profile(account_id)
+    if profile is None:
+        if account_id not in (None, accounts.DEFAULT_ACCOUNT_ID):
+            # Falling back to the file here would be that exact substitution, so refuse instead.
+            raise SnapshotError(
+                f"Account {account_id} is not configured on this deployment."
+            )
         return load_snapshot(snapshot_path)
 
-    global _cache
     now = time.monotonic()
     with _lock:
-        if _cache is not None and (now - _cache[1]) < _CACHE_TTL_SECONDS:
-            return _cache[0]
+        cached = _cache.get(profile.id)
+        if cached is not None and (now - cached[1]) < _CACHE_TTL_SECONDS:
+            return cached[0]
 
-    snapshot = _fetch_alpaca()
+    snapshot = _fetch_alpaca(profile)
     with _lock:
-        _cache = (snapshot, time.monotonic())
+        _cache[profile.id] = (snapshot, time.monotonic())
     return snapshot
 
 
 def reset_cache() -> None:
-    """Drop the cached snapshot. TEST SUPPORT ONLY — nothing in the app calls this.
+    """Drop every cached snapshot. TEST SUPPORT ONLY — nothing in the app calls this.
 
     The docstring used to claim "and the refresh path", which was never true even while that path
     existed: it rewrote the fallback FILE rather than anything this cache holds. The bridge is gone
@@ -104,6 +121,5 @@ def reset_cache() -> None:
     Nothing needs it, either — the TTL is five seconds, so a stale entry outlives its usefulness
     before anyone could act on it.
     """
-    global _cache
     with _lock:
-        _cache = None
+        _cache.clear()

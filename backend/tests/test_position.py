@@ -140,7 +140,7 @@ def _snapshot(positions=()):
 
 @pytest.fixture()
 def no_holdings(monkeypatch):
-    monkeypatch.setattr(pos, "get_snapshot", lambda _p: _snapshot())
+    monkeypatch.setattr(pos, "get_snapshot", lambda _p, _acct=None: _snapshot())
     monkeypatch.setattr(pos, "get_marks", lambda syms, ttl: {})
     monkeypatch.setattr(pos, "_price_history", lambda s: [])
     monkeypatch.setattr(pos, "_last_debate", lambda s: None)
@@ -172,7 +172,7 @@ def test_an_invalid_symbol_is_rejected_before_any_lookup(no_holdings):
 def test_a_held_name_with_no_thesis_is_reported_broken(monkeypatch):
     """A held position nobody has written a reason for is broken by definition, whatever the P&L
     says. That is the charter's sell-discipline rule, and the page is built to shout about it."""
-    monkeypatch.setattr(pos, "get_snapshot", lambda _p: _snapshot([("MU", 10.0, 100.0)]))
+    monkeypatch.setattr(pos, "get_snapshot", lambda _p, _acct=None: _snapshot([("MU", 10.0, 100.0)]))
     monkeypatch.setattr(pos, "get_marks", lambda syms, ttl: {"MU": 105.0})
     monkeypatch.setattr(pos, "_price_history", lambda s: [])
     monkeypatch.setattr(pos, "_last_debate", lambda s: None)
@@ -184,7 +184,7 @@ def test_a_held_name_with_no_thesis_is_reported_broken(monkeypatch):
 
 
 def test_a_breached_stop_is_reported_broken(monkeypatch):
-    monkeypatch.setattr(pos, "get_snapshot", lambda _p: _snapshot([("TSM", 1.0, 100.0)]))
+    monkeypatch.setattr(pos, "get_snapshot", lambda _p, _acct=None: _snapshot([("TSM", 1.0, 100.0)]))
     monkeypatch.setattr(pos, "get_marks", lambda syms, ttl: {"TSM": 70.0})  # -30%
     monkeypatch.setattr(pos, "_price_history", lambda s: [])
     monkeypatch.setattr(pos, "_last_debate", lambda s: None)
@@ -198,7 +198,7 @@ def test_a_breached_stop_is_reported_broken(monkeypatch):
 def test_an_unpriced_holding_says_so(monkeypatch):
     """Every number derived from a price is unknown when the mark is missing. Reporting priced=false
     is what stops a blank market value reading as a zero one."""
-    monkeypatch.setattr(pos, "get_snapshot", lambda _p: _snapshot([("TSM", 1.0, 100.0)]))
+    monkeypatch.setattr(pos, "get_snapshot", lambda _p, _acct=None: _snapshot([("TSM", 1.0, 100.0)]))
     monkeypatch.setattr(pos, "get_marks", lambda syms, ttl: {"TSM": None})
     monkeypatch.setattr(pos, "_price_history", lambda s: [])
     monkeypatch.setattr(pos, "_last_debate", lambda s: None)
@@ -212,7 +212,7 @@ def test_an_unpriced_holding_says_so(monkeypatch):
 def test_price_history_failure_leaves_an_empty_series_not_a_fabricated_one(monkeypatch):
     """A chart invented to avoid an empty state is a lie told in a shape people trust more than
     text."""
-    monkeypatch.setattr(pos, "get_snapshot", lambda _p: _snapshot())
+    monkeypatch.setattr(pos, "get_snapshot", lambda _p, _acct=None: _snapshot())
     monkeypatch.setattr(pos, "get_marks", lambda syms, ttl: {})
     monkeypatch.setattr(pos, "_last_debate", lambda s: None)
 
@@ -230,7 +230,7 @@ def test_an_unreadable_account_is_503_not_an_empty_page(monkeypatch):
     """'We cannot read the account' and 'you do not hold this' are different answers."""
     from app.services.snapshot import SnapshotError
 
-    def boom(_p):
+    def boom(_p, _acct=None):
         raise SnapshotError("broker unreachable")
 
     monkeypatch.setattr(pos, "get_snapshot", boom)

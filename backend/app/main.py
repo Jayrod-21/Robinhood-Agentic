@@ -30,6 +30,9 @@ from app.routers import (
     scan,
 )
 from app.routers import (
+    accounts as accounts_router,
+)
+from app.routers import (
     settings as settings_router,
 )
 from app.services.auth import auth_enforcement_configured, enforce_authenticated
@@ -281,6 +284,7 @@ def create_app() -> FastAPI:
     app.include_router(data_trust.router)
     app.include_router(auth.router)
     app.include_router(account.router)
+    app.include_router(accounts_router.router)
     app.include_router(scan.router)
     app.include_router(settings_router.router)
     app.include_router(debate.router)

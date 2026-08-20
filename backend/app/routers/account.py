@@ -12,8 +12,9 @@ Prices refresh independently from FMP.
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -21,6 +22,11 @@ from app.services.broker import get_snapshot
 from app.services.marks import get_marks, resolve_ttl_seconds
 from app.services.snapshot import SnapshotError
 from app.services.valuation import account_totals, value_position, weight_pct
+
+AccountId = Annotated[
+    int | None,
+    Query(ge=1, le=9, description="which configured account to read; omitted means the default"),
+]
 
 router = APIRouter(prefix="/api", tags=["account"])
 
@@ -70,9 +76,9 @@ def _round(value: float | None, dp: int = 2) -> float | None:
     return None if value is None else round(value, dp)
 
 
-def _build_view() -> AccountView:
+def _build_view(account_id: int | None = None) -> AccountView:
     settings = get_settings()
-    snapshot = get_snapshot(settings.snapshot_path)
+    snapshot = get_snapshot(settings.snapshot_path, account_id)
     marks = get_marks(snapshot.symbols, resolve_ttl_seconds(settings.marks_ttl_seconds))
 
     # First pass: cost basis, market value, P&L per position.
@@ -138,9 +144,9 @@ def _build_view() -> AccountView:
 
 
 @router.get("/account", response_model=AccountView)
-async def get_account() -> AccountView:
+async def get_account(account_id: AccountId = None) -> AccountView:
     try:
         # FMP I/O is blocking; keep it off the event loop.
-        return await asyncio.to_thread(_build_view)
+        return await asyncio.to_thread(_build_view, account_id)
     except SnapshotError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -31,9 +31,9 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.config import get_settings
 from app.services.broker import get_snapshot
@@ -42,6 +42,11 @@ from app.services.slate import load_slate
 from app.services.snapshot import SnapshotError
 
 logger = logging.getLogger("agentic.api.market_context")
+
+AccountId = Annotated[
+    int | None,
+    Query(ge=1, le=9, description="which configured account to read; omitted means the default"),
+]
 
 router = APIRouter(prefix="/api", tags=["market-context"])
 
@@ -159,14 +164,14 @@ def _catalysts(symbols: set[str], slate: dict, held: set[str]) -> list[dict[str,
 
 
 @router.get("/market-context")
-def market_context() -> dict[str, Any]:
+def market_context(account_id: AccountId = None) -> dict[str, Any]:
     settings = get_settings()
     docs = settings.docs_dir
     slate = load_slate(docs / "SLATE.md")
 
     held: set[str] = set()
     try:
-        snapshot = get_snapshot(settings.snapshot_path)
+        snapshot = get_snapshot(settings.snapshot_path, account_id)
         held = {p.symbol for p in snapshot.positions}
     except SnapshotError as exc:
         # Catalysts are still useful without the account: the page degrades to slate-only relevance

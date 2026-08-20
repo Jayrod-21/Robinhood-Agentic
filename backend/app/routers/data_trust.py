@@ -27,9 +27,9 @@ NOT A HEALTH CHECK
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.config import get_settings
 from app.services.broker import get_snapshot
@@ -38,6 +38,11 @@ from app.services.marks import MARKS_PROVIDER, get_marks_detailed, resolve_ttl_s
 from app.services.snapshot import SnapshotError
 
 logger = logging.getLogger("agentic.api.data_trust")
+
+AccountId = Annotated[
+    int | None,
+    Query(ge=1, le=9, description="which configured account to read; omitted means the default"),
+]
 
 router = APIRouter(prefix="/api", tags=["data-trust"])
 
@@ -71,7 +76,7 @@ def _budget_status() -> dict[str, Any]:
 
 
 @router.get("/data-trust")
-def data_trust() -> dict[str, Any]:
+def data_trust(account_id: AccountId = None) -> dict[str, Any]:
     """Freshness, pricing coverage, and posture — the whole strip in one small payload."""
     settings = get_settings()
     # Imported here rather than at module scope so the strip reports auth posture through the same
@@ -85,7 +90,7 @@ def data_trust() -> dict[str, Any]:
     }
 
     try:
-        snapshot = get_snapshot(settings.snapshot_path)
+        snapshot = get_snapshot(settings.snapshot_path, account_id)
     except SnapshotError as exc:
         # 200 with an honest empty state, NOT an error. "We have no fresh data" is a fact the strip
         # must be able to render; it is a different thing from the endpoint being unreachable, and
