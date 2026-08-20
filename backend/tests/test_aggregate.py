@@ -76,3 +76,53 @@ def test_odd_jury_cannot_directionally_deadlock():
     res = aggregate(votes, jury_size=9)
     assert res.decision == Decision.HOLD
     assert res.escalated_to_human is False
+
+
+# ── benchmark coverage ────────────────────────────────────────────────────────────────────────
+
+
+def test_coverage_is_the_measured_ratio_not_a_yes_or_no():
+    """It was `1.0 if bench_by_date else None` — a binary "does at least one SPY bar exist",
+    reported as the ratio the contract promises. A benchmark with holes produced a line that
+    stopped mid-chart under a banner claiming 100%, and the page's `coverage < 1` warning could
+    never fire because the value was never between 0 and 1."""
+    from app.routers.performance import _coverage
+
+    curve = [
+        {"trade_date": "2026-08-17", "benchmark_cumulative_return": 0.01},
+        {"trade_date": "2026-08-18", "benchmark_cumulative_return": None},
+        {"trade_date": "2026-08-19", "benchmark_cumulative_return": 0.02},
+        {"trade_date": "2026-08-20", "benchmark_cumulative_return": None},
+    ]
+    out = _coverage(curve)
+    assert out["coverage"] == 0.5, "half the sessions have a benchmark point"
+    assert "2026-08-18" in out["coverage_note"] and "2026-08-20" in out["coverage_note"], (
+        "the note must name the missing span — a bare 0.5 says something is wrong, not where"
+    )
+
+
+def test_full_coverage_reports_one_with_no_warning():
+    from app.routers.performance import _coverage
+
+    out = _coverage([{"trade_date": "2026-08-19", "benchmark_cumulative_return": 0.01}])
+    assert out["coverage"] == 1.0
+    assert out["coverage_note"] is None
+
+
+def test_no_benchmark_at_all_is_zero_coverage_not_missing_data():
+    """Distinct from an empty curve: the portfolio has sessions, the benchmark has none."""
+    from app.routers.performance import _coverage
+
+    out = _coverage([
+        {"trade_date": "2026-08-19", "benchmark_cumulative_return": None},
+        {"trade_date": "2026-08-20", "benchmark_cumulative_return": None},
+    ])
+    assert out["coverage"] == 0.0
+    assert "absent" in out["coverage_note"]
+
+
+def test_an_empty_curve_has_no_coverage_to_report():
+    from app.routers.performance import _coverage
+
+    out = _coverage([])
+    assert out["coverage"] is None, "no marks is unknown coverage, not zero coverage"

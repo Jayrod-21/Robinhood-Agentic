@@ -50,6 +50,38 @@ def _f(v):
     return float(v) if v is not None else None
 
 
+def _coverage(equity_curve: list[dict[str, Any]]) -> dict[str, Any]:
+    """What share of the equity curve actually has a benchmark point beside it.
+
+    Returns the `coverage` and `coverage_note` pair. The note names the missing span rather than
+    just the count, because "0.87" tells an operator something is wrong and not where to look.
+    """
+    if not equity_curve:
+        return {"coverage": None, "coverage_note": "No portfolio marks yet."}
+
+    missing = [p["trade_date"] for p in equity_curve if p["benchmark_cumulative_return"] is None]
+    covered = len(equity_curve) - len(missing)
+    coverage = covered / len(equity_curve)
+
+    if not missing:
+        return {"coverage": 1.0, "coverage_note": None}
+    if covered == 0:
+        return {
+            "coverage": 0.0,
+            "coverage_note": (
+                f"No {BENCHMARK_SYMBOL} bars since inception, so the benchmark line is absent."
+            ),
+        }
+    span = missing[0] if len(missing) == 1 else f"{missing[0]} to {missing[-1]}"
+    return {
+        "coverage": round(coverage, 4),
+        "coverage_note": (
+            f"{len(missing)} of {len(equity_curve)} session(s) have no {BENCHMARK_SYMBOL} bar "
+            f"({span}), so the benchmark line is broken there."
+        ),
+    }
+
+
 @router.get("/performance")
 def performance() -> dict[str, Any]:
     try:
@@ -120,10 +152,12 @@ def performance() -> dict[str, Any]:
             "benchmark_symbol": BENCHMARK_SYMBOL,
             "priced_through": equity_curve[-1]["trade_date"],
             "returns_basis": "price_only",
-            "coverage": 1.0 if bench_by_date else None,
-            "coverage_note": None if bench_by_date else (
-                f"No {BENCHMARK_SYMBOL} bars since inception, so the benchmark line is absent."
-            ),
+            # MEASURED, not asserted. This was `1.0 if bench_by_date else None` — a binary "does
+            # at least one SPY bar exist", reported as if it were the ratio the contract promises.
+            # A benchmark with holes, or one whose bars lag the portfolio marks, produced a line
+            # that quietly stopped mid-chart under a banner claiming 100% coverage, and the page's
+            # `coverage < 1` warning could never fire because the value was never between 0 and 1.
+            **_coverage(equity_curve),
         },
         "equity_curve": equity_curve,
         # Null rather than zeros. A Sharpe with no evaluation run is unavailable, not flat, and the
@@ -171,7 +205,10 @@ def _metrics(run) -> dict[str, Any] | None:
         "annualized_return": _f(ann),
         "information_ratio": _f(info),
         "walk_forward": split,
-        "risk_free_annual": _f(rf) or 0.0,
+        # None, not 0.0. `_f(rf) or 0.0` turned an unknown risk-free rate into a stated 0% — a
+        # number the Sharpe was NOT computed against, presented as the one it was. It also collapsed
+        # a genuine 0.0 and "we don't know" into the same value.
+        "risk_free_annual": _f(rf),
     }
 
 
