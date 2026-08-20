@@ -73,8 +73,8 @@ def load_snapshot(path: Path) -> AccountSnapshot:
     if not path.exists():
         logger.error("no account snapshot at %s", path)
         raise SnapshotError(
-            "No account snapshot available. Click Refresh in the dashboard (or run the manual "
-            "sync in bin/sync_snapshot.md) to generate one from the Robinhood MCP."
+            "No account snapshot available. It is written by bin/alpaca_sync.sh, which runs every "
+            "minute from cron; check that job, or run bin/alpaca_snapshot.py once by hand."
         )
     try:
         raw = json.loads(path.read_text())

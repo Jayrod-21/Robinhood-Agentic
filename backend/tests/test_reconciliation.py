@@ -277,3 +277,44 @@ def test_a_database_outage_leaves_reconciliation_working_on_defaults(monkeypatch
     assert body["meta"]["drift_tolerance_pct"] == settings_store.defaults()["drift_tolerance_pct"]
     assert body["positions"], "the page still answers without the database"
     settings_store.reset_cache()
+
+
+def test_an_unpriced_off_factor_name_makes_the_floor_unknown_not_breached(monkeypatch):
+    """A guardrail must not fire on a data outage and point at the portfolio.
+
+    `sum(r["live_weight_pct"] or 0.0)` turned an unknown weight into zero, so a transient pricing
+    gap on V or CVX flipped "V+CVX >= 20%" to breach while both were held at full weight. Everywhere
+    else this route treats unknown as unknown — an unpriced holding is "drifted", never "match" —
+    and this one check resolved unknown to the worst case instead.
+    """
+    monkeypatch.setattr(
+        rec, "get_snapshot",
+        lambda _p: _snapshot([("V", 30.0, 10.0), ("CVX", 30.0, 10.0)], cash=400.0),
+    )
+    monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"V": None, "CVX": 10.0})
+
+    check = next(c for c in rec.reconciliation()["checks"] if "Off-factor" in c["rule"])
+    assert check["status"] == "unknown", "an unmeasurable floor is not a breached one"
+    assert "V" in check["detail"], "the detail must name what could not be priced"
+    assert "unpriced" in check["detail"]
+
+
+def test_the_off_factor_floor_still_breaches_when_it_is_genuinely_short(monkeypatch):
+    """Guards the test above: if 'unknown' swallowed every case, a real breach would go unreported."""
+    monkeypatch.setattr(
+        rec, "get_snapshot", lambda _p: _snapshot([("V", 1.0, 10.0), ("CVX", 1.0, 10.0)], cash=980.0)
+    )
+    monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {"V": 10.0, "CVX": 10.0})
+
+    check = next(c for c in rec.reconciliation()["checks"] if "Off-factor" in c["rule"])
+    assert check["status"] == "breach"
+
+
+def test_check_statuses_are_a_known_set(monkeypatch):
+    """'unknown' joins pass and breach as a legitimate verdict. A check that cannot be evaluated is
+    a third state, and collapsing it into either of the other two loses the distinction that
+    matters most: whether the rule was actually applied."""
+    monkeypatch.setattr(rec, "get_snapshot", lambda _p: _snapshot(cash=1000.0))
+    monkeypatch.setattr(rec, "get_marks", lambda syms, ttl: {})
+    statuses = {c["status"] for c in rec.reconciliation()["checks"]}
+    assert statuses <= {"pass", "breach", "unknown"}

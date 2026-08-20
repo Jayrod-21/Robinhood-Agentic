@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.services.broker import get_snapshot
 from app.services.marks import get_marks, resolve_ttl_seconds
 from app.services.snapshot import SnapshotError
+from app.services.valuation import account_totals, value_position, weight_pct
 
 router = APIRouter(prefix="/api", tags=["account"])
 
@@ -64,6 +65,11 @@ class AccountView(BaseModel):
     positions: list[PositionView]
 
 
+def _round(value: float | None, dp: int = 2) -> float | None:
+    """Round, preserving None. An unknown weight must not become 0.0 on the way to the page."""
+    return None if value is None else round(value, dp)
+
+
 def _build_view() -> AccountView:
     settings = get_settings()
     snapshot = get_snapshot(settings.snapshot_path)
@@ -76,64 +82,43 @@ def _build_view() -> AccountView:
     total_pl = 0.0
     any_unpriced = False
 
-    for pos in snapshot.positions:
-        price = marks.get(pos.symbol)
-        cost_basis = pos.quantity * pos.average_buy_price
-        total_cost += cost_basis
-
-        if price is None:
-            any_unpriced = True
-            rows.append(
-                PositionView(
-                    symbol=pos.symbol,
-                    quantity=pos.quantity,
-                    average_buy_price=pos.average_buy_price,
-                    current_price=None,
-                    cost_basis=round(cost_basis, 2),
-                    market_value=None,
-                    unrealized_pl=None,
-                    unrealized_pl_pct=None,
-                    weight_pct=None,
-                    weight_account_pct=None,
-                    priced=False,
-                )
-            )
-            continue
-
-        market_value = pos.quantity * price
-        pl = market_value - cost_basis
-        pl_pct = (pl / cost_basis * 100.0) if cost_basis > 0 else None
-        live_equity += market_value
-        total_pl += pl
-        rows.append(
-            PositionView(
-                symbol=pos.symbol,
-                quantity=pos.quantity,
-                average_buy_price=pos.average_buy_price,
-                current_price=round(price, 4),
-                cost_basis=round(cost_basis, 2),
-                market_value=round(market_value, 2),
-                unrealized_pl=round(pl, 2),
-                unrealized_pl_pct=round(pl_pct, 2) if pl_pct is not None else None,
-                weight_pct=None,  # both weights filled in second pass once totals are known
-                weight_account_pct=None,
-                priced=True,
-            )
-        )
-
-    # Second pass: position weights on both bases. Equity basis (excludes cash) describes the
-    # allocation mix; account basis (equity + cash) is what the charter's ~25%/name cap is
-    # written against, so it is the number the cap can be checked with (issue #21).
+    values = [
+        value_position(pos.quantity, pos.average_buy_price, marks.get(pos.symbol))
+        for pos in snapshot.positions
+    ]
     cash = snapshot.account.cash
-    live_total = live_equity + cash
-    for row in rows:
-        if row.priced and row.market_value is not None:
-            if live_equity > 0:
-                row.weight_pct = round(row.market_value / live_equity * 100.0, 2)
-            if live_total > 0:
-                row.weight_account_pct = round(row.market_value / live_total * 100.0, 2)
+    totals = account_totals(values, cash)
 
-    total_pl_pct = (total_pl / total_cost * 100.0) if total_cost > 0 else None
+    rows = [
+        PositionView(
+            symbol=pos.symbol,
+            quantity=pos.quantity,
+            average_buy_price=pos.average_buy_price,
+            current_price=round(marks[pos.symbol], 4) if v.priced else None,
+            cost_basis=round(v.cost_basis, 2),
+            market_value=round(v.market_value, 2) if v.market_value is not None else None,
+            unrealized_pl=round(v.unrealized_pl, 2) if v.unrealized_pl is not None else None,
+            unrealized_pl_pct=round(v.unrealized_pl_pct, 2) if v.unrealized_pl_pct is not None else None,
+            # Two bases, both stated. Equity basis (excludes cash) describes the allocation mix;
+            # account basis (equity + cash) is what the charter's ~25%/name cap is written against.
+            weight_pct=_round(weight_pct(v.market_value, totals.equity_value)),
+            weight_account_pct=_round(weight_pct(v.market_value, totals.total_value)),
+            priced=v.priced,
+        )
+        for pos, v in zip(snapshot.positions, values, strict=True)
+    ]
+
+    live_equity = totals.equity_value
+    total_cost = totals.total_cost_basis
+    total_pl = totals.unrealized_pl
+    any_unpriced = totals.any_unpriced
+    live_total = totals.total_value
+
+    # Over PRICED cost, not total cost. The old form added an unpriced position's cost to the
+    # denominator while its P&L stayed out of the numerator, which treats it as exactly 0% return
+    # and drags the headline toward zero on any pricing gap — a fabricated number presented as a
+    # measured one. `stale_prices` already tells the page the book is partly unpriced.
+    total_pl_pct = totals.unrealized_pl_pct
 
     return AccountView(
         account_masked=snapshot.account.number_masked,

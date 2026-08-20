@@ -31,6 +31,7 @@ from fastapi import APIRouter, HTTPException
 from app.config import get_settings
 from app.debate.records import get_record, list_records
 from app.services.broker import get_snapshot
+from app.services.freshness import is_stale
 from app.services.marks import MARKS_PROVIDER, get_marks, resolve_ttl_seconds
 from app.services.slate import load_sizing_rules, load_slate, load_theses
 from app.services.snapshot import SnapshotError
@@ -229,12 +230,7 @@ def position(symbol: str) -> dict[str, Any]:
 
     history = _price_history(ticker)
     generated = snapshot.generated_at
-    stale = True
-    try:
-        gen_dt = datetime.fromisoformat(generated.replace("Z", "+00:00"))
-        stale = (datetime.now(timezone.utc) - gen_dt).total_seconds() > settings.snapshot_max_age_seconds
-    except (ValueError, AttributeError):
-        pass  # unparseable stamp stays stale — freshness is proven, never assumed
+    stale = is_stale(generated, settings.snapshot_max_age_seconds, field="snapshot generated_at")
 
     return {
         "meta": {

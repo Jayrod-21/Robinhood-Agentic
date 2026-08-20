@@ -37,6 +37,7 @@ from fastapi import APIRouter
 
 from app.config import get_settings
 from app.services.broker import get_snapshot
+from app.services.freshness import is_stale
 from app.services.slate import load_slate
 from app.services.snapshot import SnapshotError
 
@@ -200,15 +201,9 @@ def market_context() -> dict[str, Any]:
                     "sentiment": h.get("sentiment"),
                 })
 
-    brief_stale = True
-    if brief_generated_at:
-        try:
-            gen = datetime.fromisoformat(str(brief_generated_at).replace("Z", "+00:00"))
-            brief_stale = (
-                datetime.now(timezone.utc) - gen
-            ).total_seconds() > _BRIEF_STALE_AFTER_HOURS * 3600
-        except ValueError:
-            pass  # unparseable stamp stays stale — freshness is proven, never assumed
+    brief_stale = is_stale(
+        brief_generated_at, _BRIEF_STALE_AFTER_HOURS * 3600, field="market brief generated_at"
+    )
 
     return {
         "meta": {
