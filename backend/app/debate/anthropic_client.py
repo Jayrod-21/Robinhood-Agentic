@@ -114,3 +114,35 @@ async def cast_vote(model: str, system: str, user: str, max_tokens: int = 500) -
         if getattr(block, "type", None) == "tool_use" and block.name == "cast_vote":
             return dict(block.input)
     raise ValueError("juror response contained no cast_vote tool call")
+
+
+async def converse(
+    *,
+    model: str,
+    system: str,
+    messages: list[dict],
+    tools: list[dict] | None = None,
+    max_tokens: int = 1500,
+):
+    """One turn of a multi-turn conversation, returning the RAW response.
+
+    Unlike write_case and cast_vote, this hands back the whole response rather than extracting a
+    value: a tool-use turn has to be inspected for tool_use blocks and appended to the conversation
+    verbatim, so anything this function pulled out would have to be reassembled by the caller.
+
+    `tool_choice` is deliberately left unset — the opposite of cast_vote. A forced tool is right
+    when the answer must be structured; here the model has to be free to answer in prose without
+    calling anything, and forcing a call would make it invent a lookup to satisfy the constraint.
+    """
+    client = _client()
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": messages,
+    }
+    if tools:
+        kwargs["tools"] = tools
+    resp = await client.messages.create(**kwargs)
+    _record_usage(resp)
+    return resp
