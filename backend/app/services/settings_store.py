@@ -155,6 +155,21 @@ def get(key: str) -> float:
     return get_all()[0][key]
 
 
+def get_or(key: str, fallback: float) -> float:
+    """The tuned value, or ``fallback`` when settings cannot be read.
+
+    The shape every consumer should use. Reading a threshold must never be able to fail a request:
+    a database hiccup should cost you the operator's tuning, not the page. And it must never fail
+    SILENTLY into a different number than the operator set — get_all() already reports its source,
+    and every surface that shows a threshold reads that.
+    """
+    try:
+        return get_all()[0][key]
+    except Exception:  # noqa: BLE001 — a settings failure is never worth failing the caller for
+        logger.warning("could not read setting %s; using %s", key, fallback)
+        return fallback
+
+
 def set_value(key: str, value: float, *, actor: str | None) -> float:
     """Write one parameter, appending to history. Returns the stored value.
 

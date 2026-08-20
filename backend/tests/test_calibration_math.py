@@ -72,3 +72,68 @@ def test_no_scored_calls_yields_an_empty_grid_not_a_crash():
     assert out["ece"] is None and out["brier"] is None
     assert len(out["bins"]) == 10
     assert all(b["n"] == 0 for b in out["bins"])
+
+
+# ── the personas scope ────────────────────────────────────────────────────────────────────────
+
+
+def _conn_with(rows, proposals=(0, 0)):
+    class _Cur:
+        def __init__(self, r): self._r = r
+        def fetchone(self): return self._r[0] if self._r else None
+        def fetchall(self): return self._r
+
+    class _Conn:
+        def execute(self, sql, params=None):
+            if "agent_proposals" in sql:
+                return _Cur([proposals])
+            if "judgment_outcomes" in sql and "max(" in sql:
+                return _Cur([(None,)])
+            if "count(*)" in sql:
+                return _Cur([(0,)])
+            return _Cur(rows)
+
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    return _Conn()
+
+
+def test_personas_names_the_missing_field_not_a_waiting_period(monkeypatch):
+    """The scope used to filter judgments by agents.kind='persona'. judgments.judge_kind is a
+    generated column pinned to 'judge' behind a composite FK, so a persona judgment cannot exist and
+    the scope returned nothing forever — while reporting the UNSCOPED judgment count beside a note
+    telling the operator to wait for a five-session window. They were told to wait for data that
+    could never arrive."""
+    from app.routers import performance as mod
+
+    monkeypatch.setattr(mod, "connection", lambda: _conn_with([], proposals=(76, 0)))
+    body = mod.calibration(scope="personas")
+
+    note = body["meta"]["coverage_note"]
+    assert "76" in note, "the real proposal count must be reported"
+    assert "confidence" in note, "the note must name the missing field"
+    assert "not a waiting state" in note.lower(), (
+        "the previous note pointed at a clock; the blocker is a field that is never populated"
+    )
+    assert body["overall"]["n_decisions"] == 0
+    assert body["by_agent"] == []
+
+
+def test_personas_reports_scoring_as_the_blocker_once_confidences_exist(monkeypatch):
+    """If the engine starts asking researchers for a probability, the blocker moves from the field
+    to the scoring — and the note has to move with it rather than keep blaming the field."""
+    from app.routers import performance as mod
+
+    monkeypatch.setattr(mod, "connection", lambda: _conn_with([], proposals=(76, 40)))
+    note = mod.calibration(scope="personas")["meta"]["coverage_note"]
+    assert "40 of 76" in note
+    assert "not implemented" in note
+
+
+def test_the_declared_outcome_definition_follows_the_horizon():
+    """Two copies of "5 trading days" is one edit away from an endpoint declaring a window it did
+    not score against."""
+    from app.routers.performance import OUTCOME_HORIZON_DAYS, _OUTCOME_DEFINITION
+
+    assert f"{OUTCOME_HORIZON_DAYS} trading days" in _OUTCOME_DEFINITION

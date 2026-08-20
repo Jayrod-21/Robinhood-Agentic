@@ -66,10 +66,15 @@ async def _run_one_debate(ticker: str, sem: asyncio.Semaphore) -> dict:
 
 
 def _run_scan_sync() -> list:
+    from app.services import settings_store
     from src.daily_scan import DEFAULT_MIN_CAP, run_scan
     from src.universe import flat_universe
 
-    return run_scan(flat_universe(), min_market_cap=DEFAULT_MIN_CAP)
+    # The same tuned floor the interactive scan uses. Hardcoding the default here meant the cycle
+    # and the Scan page could screen the universe against different gates and both call it "the
+    # scan" — with nothing on either result saying which floor produced it.
+    min_cap = settings_store.get_or("screen_min_market_cap_b", DEFAULT_MIN_CAP / 1e9) * 1e9
+    return run_scan(flat_universe(), min_market_cap=min_cap)
 
 
 def _account_view_sync():

@@ -50,6 +50,38 @@ def _f(v):
     return float(v) if v is not None else None
 
 
+def _coverage(equity_curve: list[dict[str, Any]]) -> dict[str, Any]:
+    """What share of the equity curve actually has a benchmark point beside it.
+
+    Returns the `coverage` and `coverage_note` pair. The note names the missing span rather than
+    just the count, because "0.87" tells an operator something is wrong and not where to look.
+    """
+    if not equity_curve:
+        return {"coverage": None, "coverage_note": "No portfolio marks yet."}
+
+    missing = [p["trade_date"] for p in equity_curve if p["benchmark_cumulative_return"] is None]
+    covered = len(equity_curve) - len(missing)
+    coverage = covered / len(equity_curve)
+
+    if not missing:
+        return {"coverage": 1.0, "coverage_note": None}
+    if covered == 0:
+        return {
+            "coverage": 0.0,
+            "coverage_note": (
+                f"No {BENCHMARK_SYMBOL} bars since inception, so the benchmark line is absent."
+            ),
+        }
+    span = missing[0] if len(missing) == 1 else f"{missing[0]} to {missing[-1]}"
+    return {
+        "coverage": round(coverage, 4),
+        "coverage_note": (
+            f"{len(missing)} of {len(equity_curve)} session(s) have no {BENCHMARK_SYMBOL} bar "
+            f"({span}), so the benchmark line is broken there."
+        ),
+    }
+
+
 @router.get("/performance")
 def performance() -> dict[str, Any]:
     try:
@@ -120,10 +152,12 @@ def performance() -> dict[str, Any]:
             "benchmark_symbol": BENCHMARK_SYMBOL,
             "priced_through": equity_curve[-1]["trade_date"],
             "returns_basis": "price_only",
-            "coverage": 1.0 if bench_by_date else None,
-            "coverage_note": None if bench_by_date else (
-                f"No {BENCHMARK_SYMBOL} bars since inception, so the benchmark line is absent."
-            ),
+            # MEASURED, not asserted. This was `1.0 if bench_by_date else None` — a binary "does
+            # at least one SPY bar exist", reported as if it were the ratio the contract promises.
+            # A benchmark with holes, or one whose bars lag the portfolio marks, produced a line
+            # that quietly stopped mid-chart under a banner claiming 100% coverage, and the page's
+            # `coverage < 1` warning could never fire because the value was never between 0 and 1.
+            **_coverage(equity_curve),
         },
         "equity_curve": equity_curve,
         # Null rather than zeros. A Sharpe with no evaluation run is unavailable, not flat, and the
@@ -171,7 +205,10 @@ def _metrics(run) -> dict[str, Any] | None:
         "annualized_return": _f(ann),
         "information_ratio": _f(info),
         "walk_forward": split,
-        "risk_free_annual": _f(rf) or 0.0,
+        # None, not 0.0. `_f(rf) or 0.0` turned an unknown risk-free rate into a stated 0% — a
+        # number the Sharpe was NOT computed against, presented as the one it was. It also collapsed
+        # a genuine 0.0 and "we don't know" into the same value.
+        "risk_free_annual": _f(rf),
     }
 
 
@@ -184,11 +221,22 @@ MIN_N_FOR_CALIBRATION = 30
 # Must match db/score_judgments.py's default: the horizon the outcomes were actually scored at.
 OUTCOME_HORIZON_DAYS = 5
 
+# Built from the horizon, not restated beside it. Two copies of "5 trading days" is one edit away
+# from an endpoint that declares a window it did not score against.
+_OUTCOME_DEFINITION = f"counterfactual return positive over {OUTCOME_HORIZON_DAYS} trading days"
+
 
 # Rows a call must be graded on. A judgment with no stated confidence cannot be calibrated — there
 # is no claim to compare the outcome against — and one whose horizon has not elapsed has no outcome
 # row at all. Both are EXCLUDED rather than counted as misses, which the contract is explicit about:
 # scoring an unknown as a failure would make every recent call look like a bad one.
+#
+# JURY ONLY. This used to take the agent kind as a parameter, which made `scope=personas` look
+# implemented: it filtered `agents.kind = 'persona'` against `judgments`, where `judge_kind` is a
+# generated column pinned to 'judge' behind a composite foreign key. A persona judgment cannot
+# exist, so that scope returned zero rows forever — while reporting the UNSCOPED judgment count
+# beside a note telling the operator to wait for a five-session window. They were being told to
+# wait for data that could never arrive. See `_persona_state` for what the scope does now.
 _SCORED_SQL = """
 SELECT a.agent_key, a.display_name, j.decision, j.confidence, o.is_correct,
        o.forward_return, o.outcome_date, s.symbol
@@ -198,8 +246,15 @@ SELECT a.agent_key, a.display_name, j.decision, j.confidence, o.is_correct,
   JOIN debates d ON d.id = j.debate_id
   JOIN securities s ON s.id = d.security_id
  WHERE j.confidence IS NOT NULL
-   AND a.kind = %s
+   AND a.kind = 'judge'
  ORDER BY o.outcome_date DESC, a.agent_key
+"""
+
+# The personas live in `agent_proposals` — the table the frontend contract names, and the one the
+# old query never touched.
+_PERSONA_STATE_SQL = """
+SELECT count(*) AS proposals, count(confidence) AS with_confidence
+  FROM agent_proposals
 """
 
 
@@ -261,6 +316,49 @@ def _summarise(rows: list[tuple]) -> dict[str, Any]:
     }
 
 
+def _persona_response(conn) -> dict[str, Any]:
+    """The personas scope, told truthfully.
+
+    Personas are the bull and bear researchers, and they live in `agent_proposals`. They are not
+    calibratable today for a reason that has nothing to do with waiting: the engine asks them for a
+    written case, not a probability, so every proposal on record has a NULL confidence. Calibration
+    compares a stated confidence against an outcome; with no stated confidence there is no claim to
+    grade, and no amount of elapsed time changes that.
+
+    So this reports the real counts and names the actual blocker. The previous behaviour — an empty
+    chart under "N judgments on record, none scored yet, wait for the five-session window" — pointed
+    the operator at a clock instead of at the missing field.
+    """
+    proposals, with_confidence = conn.execute(_PERSONA_STATE_SQL).fetchone()
+    if with_confidence:
+        note = (
+            f"{with_confidence} of {proposals} persona proposal(s) state a confidence, but their "
+            f"outcome scoring is not implemented yet, so none are gradeable."
+        )
+    else:
+        note = (
+            f"Personas are not calibratable: {proposals} proposal(s) on record and none state a "
+            f"confidence. The bull and bear researchers are asked for a written case, not a "
+            f"probability, so there is no claim to compare an outcome against. This is not a "
+            f"waiting state — it changes only if the engine starts asking them for one."
+        )
+    return {
+        "meta": {
+            "scope": "personas",
+            "outcome_definition": _OUTCOME_DEFINITION,
+            "outcome_horizon_days": OUTCOME_HORIZON_DAYS,
+            "benchmark_relative": False,
+            "returns_basis": "price_only",
+            "priced_through": None,
+            "coverage": 0.0 if proposals else None,
+            "coverage_note": note,
+        },
+        "overall": _summarise([]),
+        "by_agent": [],
+        "decisions": [],
+    }
+
+
 @router.get("/calibration")
 def calibration(scope: str = Query("jury", pattern="^(jury|personas)$")) -> dict[str, Any]:
     """Stated confidence versus realised outcome.
@@ -268,11 +366,15 @@ def calibration(scope: str = Query("jury", pattern="^(jury|personas)$")) -> dict
     Both halves are required: a confident call with no known outcome cannot be graded, and such rows
     are EXCLUDED from the bins rather than counted as misses.
     """
-    kind = "judge" if scope == "jury" else "persona"
     try:
         with connection() as conn:
-            rows = conn.execute(_SCORED_SQL, (kind,)).fetchall()
-            judged = conn.execute("SELECT count(*) FROM judgments").fetchone()[0]
+            if scope == "personas":
+                return _persona_response(conn)
+            rows = conn.execute(_SCORED_SQL).fetchall()
+            judged = conn.execute(
+                "SELECT count(*) FROM judgments j JOIN agents a ON a.id = j.judge_agent_id"
+                " WHERE a.kind = 'judge'"
+            ).fetchone()[0]
             debates = conn.execute("SELECT count(*) FROM debates").fetchone()[0]
             priced_through = conn.execute(
                 "SELECT max(outcome_date)::text FROM judgment_outcomes"
@@ -312,7 +414,7 @@ def calibration(scope: str = Query("jury", pattern="^(jury|personas)$")) -> dict
     return {
         "meta": {
             "scope": scope,
-            "outcome_definition": "counterfactual return positive over 5 trading days",
+            "outcome_definition": _OUTCOME_DEFINITION,
             "outcome_horizon_days": OUTCOME_HORIZON_DAYS,
             "benchmark_relative": False,
             "returns_basis": "price_only",

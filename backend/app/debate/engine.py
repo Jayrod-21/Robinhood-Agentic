@@ -144,7 +144,14 @@ async def run_debate(ticker: str, question: str | None = None):
 
     # 3) Jury — all jurors concurrent (bounded), streamed as each returns.
     sem = asyncio.Semaphore(settings.debate_max_concurrency)
-    perspectives = JUROR_PERSPECTIVES[: settings.jury_size]
+    # Clamped to the briefs that exist: asking for fifteen jurors when ten perspectives are defined
+    # would silently seat ten and report a jury of fifteen. The registry's upper bound is 20 because
+    # bounds are about catching a slipped decimal, not about what this engine can currently seat.
+    from app.services import settings_store
+
+    jury_size = int(settings_store.get_or("debate_juror_count", settings.jury_size))
+    jury_size = max(1, min(jury_size, len(JUROR_PERSPECTIVES)))
+    perspectives = JUROR_PERSPECTIVES[:jury_size]
     tasks = [
         asyncio.create_task(
             _run_juror(aid, focus, lens, ticker, price, fundamentals, bull, bear, settings.jury_model, sem)
@@ -160,7 +167,7 @@ async def run_debate(ticker: str, question: str | None = None):
     votes.sort(key=lambda v: v.agent_id)
 
     # 4) Aggregate + decision.
-    jury = aggregate(votes, settings.jury_size)
+    jury = aggregate(votes, jury_size)
     record.jury = jury
     record.final_decision = jury.decision
     record.position_size_note = _position_size_note(jury.decision, jury)

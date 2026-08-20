@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.debate.engine import run_debate
 from app.debate.records import get_record, list_records
 from app.ratelimit import debate_limiter
+from app.services import settings_store
 from app.sse import sse_response
 from app.validation import validate_ticker
 
@@ -44,7 +45,10 @@ def run_stream(req: DebateRequest):
         )
 
     # Shared cooldown with the pipeline endpoint — both spend tokens, so they draw from one budget.
-    wait = debate_limiter.check_and_consume(settings.debate_min_interval_seconds)
+    # The tuned cooldown, not the env default. The Parameters page showed 60 while this read 15,
+    # so an operator raising it to stop a double-click spending tokens changed nothing.
+    cooldown = int(settings_store.get_or("debate_min_interval_s", settings.debate_min_interval_seconds))
+    wait = debate_limiter.check_and_consume(cooldown)
     if wait:
         raise HTTPException(
             status_code=429,

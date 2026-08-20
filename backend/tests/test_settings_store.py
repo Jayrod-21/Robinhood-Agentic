@@ -69,3 +69,37 @@ def test_the_database_being_down_yields_defaults_and_says_so(monkeypatch):
 def test_the_registry_and_its_index_cannot_drift():
     assert set(store.BY_KEY) == {p.key for p in store.REGISTRY}
     assert len(store.BY_KEY) == len(store.REGISTRY), "two parameters share a key"
+
+
+# ── the half-wired registry ───────────────────────────────────────────────────────────────────
+
+
+def test_every_registered_parameter_is_actually_read_by_something():
+    """The defect this file's own docstring warned about, shipped anyway.
+
+    `debate_min_interval_s`, `debate_juror_count` and `screen_min_market_cap_b` were declared,
+    rendered on the Parameters page, and stored on save — and read by nothing. The page showed a
+    60-second cooldown while the code used the env default of 15, so an operator raising it to stop
+    a double-click spending tokens got a confirmation and no change.
+
+    A knob that stores and does nothing is worse than a hardcoded constant, because it looks
+    configured. This walks the source instead of trusting review: a new registry entry with no
+    consumer fails here rather than on someone's dashboard.
+    """
+    import re
+    from pathlib import Path
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    sources = [
+        p.read_text(encoding="utf-8")
+        for p in app_dir.rglob("*.py")
+        if p.name != "settings_store.py"      # the registry declaring a key is not a consumer
+    ]
+    blob = "\n".join(sources)
+
+    unread = [p.key for p in store.REGISTRY if not re.search(rf'["\']{re.escape(p.key)}["\']', blob)]
+    assert not unread, (
+        f"declared on the Parameters page but read by nothing: {sorted(unread)}. "
+        "Wire each through settings_store.get_or(key, fallback), or delete the entry — "
+        "half-wired is the one option that lies to the operator."
+    )
