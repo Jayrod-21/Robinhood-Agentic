@@ -15,6 +15,35 @@ deploy/.env
 # Generated runtime artifacts
 .env.ports
 data/account_snapshot.json
+
+# Engine-generated debate records. The twice-daily cycle writes one JSON + one MD per held position
+# per run — roughly 30 files a day, which in two days added 60 to a repo where they are dead weight:
+# the same records are persisted to the `debates` / `judgments` tables (migration 004 + the
+# debate_store service), which is what calibration and every query actually read. Verified before
+# untracking: all 68 on-disk records were present in the database, including every tracked one.
+#
+# They stay on disk — logs/debates is the engine's primary write and /api/debate/records reads it.
+# This only stops them entering git.
+#
+# NOTE FOR ANYONE REBASING THIS COMMIT, or cloning after it: `git rm --cached` records a path
+# DELETION in the commit, and git cannot tell that apart from a real delete when the commit is later
+# replayed onto a tree where the files are tracked. Rebasing this very change removed all sixteen
+# from the working tree on the machine that wrote them; they were restored with
+# `git show <ref>:<path> > <path>`. The database copy is what makes that recoverable rather than a
+# loss, which is the argument for untracking them in the first place.
+#
+# HAND-WRITTEN debate write-ups are NOT covered by this: they are named by date and subject
+# (2026-06-03-debate-1-best-path.md) rather than by the engine's dbt-<timestamp>-<hash>, and they
+# are documents someone wrote rather than output a machine produced. They stay tracked.
+logs/debates/dbt-*
+
+# Cycle reports, written twice a day by bin/scheduled_cycle.sh. Same churn as the debate records
+# above, with one difference worth stating: these are NOT in the database. They are a RENDERING of
+# things that are — the account snapshot, the scan survivors, and the debate decisions — so nothing
+# unique is lost by keeping them out of git, but they cannot be regenerated for a past date either.
+# They remain on disk on the host that produced them.
+logs/reports/*-open.md
+logs/reports/*-close.md
 # Written by bin/stack_health.sh every 5 minutes: per-machine runtime state, not source.
 data/stack_health.json
 logs/refresh/
