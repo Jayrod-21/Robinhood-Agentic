@@ -26,6 +26,7 @@ from app.config import get_settings
 from app.debate.engine import run_debate
 from app.debate.records import PipelineRunRecord, list_pipeline_runs, persist_pipeline_run
 from app.ratelimit import debate_limiter
+from app.services import settings_store
 from app.services.marks import get_marks, resolve_ttl_seconds
 from app.sse import sse_response
 from app.validation import validate_ticker
@@ -188,7 +189,10 @@ def run_stream(req: PipelineRequest):
 
     # The pipeline wraps run_debate, so it spends Anthropic tokens just like the debate endpoint.
     # Share the SAME limiter as debate.py so the combined spend honors one budget, not two.
-    wait = debate_limiter.check_and_consume(settings.debate_min_interval_seconds)
+    # The tuned cooldown, not the env default. The Parameters page showed 60 while this read 15,
+    # so an operator raising it to stop a double-click spending tokens changed nothing.
+    cooldown = int(settings_store.get_or("debate_min_interval_s", settings.debate_min_interval_seconds))
+    wait = debate_limiter.check_and_consume(cooldown)
     if wait:
         raise HTTPException(
             status_code=429,

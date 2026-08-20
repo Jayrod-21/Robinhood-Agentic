@@ -117,7 +117,14 @@ def run_stream(req: ScanRequest):
     from src.universe import flat_universe
 
     settings = get_settings()
-    min_cap = req.min_cap or DEFAULT_MIN_CAP
+    # An explicit per-request cap still wins; otherwise the operator's tuned floor, and only then
+    # the compiled default. The registry stores BILLIONS (5.0) because that is how the number is
+    # written and read; the screen takes raw dollars.
+    from app.services import settings_store
+
+    min_cap = req.min_cap or settings_store.get_or(
+        "screen_min_market_cap_b", DEFAULT_MIN_CAP / 1e9
+    ) * 1e9
     if req.tickers:
         # B3: cap the user-supplied list so one request can't fan out unbounded blocking FMP
         # fetches. Reject (not silently truncate) so the caller knows the request was too large.
