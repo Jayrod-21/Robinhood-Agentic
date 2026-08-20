@@ -103,3 +103,30 @@ def test_every_registered_parameter_is_actually_read_by_something():
         "Wire each through settings_store.get_or(key, fallback), or delete the entry — "
         "half-wired is the one option that lies to the operator."
     )
+
+
+def test_a_cash_band_cannot_be_stored_inverted(monkeypatch):
+    """floor=30 / ceiling=20 passed field-by-field validation because each sits inside its own
+    bounds and nothing looked at the pair. Reconciliation then tested `lo <= cash <= hi` against an
+    empty interval, breaching every run whatever the cash actually was — a guardrail that can never
+    pass, with nothing saying the band itself was malformed."""
+    monkeypatch.setattr(
+        store, "get_all", lambda: ({**store.defaults(), "cash_ceiling_pct": 20.0}, "database")
+    )
+    with pytest.raises(store.SettingError, match="can never be satisfied"):
+        store.set_value("cash_floor_pct", 30.0, actor=None)
+
+
+def test_raising_the_ceiling_above_the_floor_is_allowed(monkeypatch):
+    """Guards the test above: if the cross-field check refused everything, the band would be
+    uneditable rather than merely un-invertible."""
+    written = {}
+    monkeypatch.setattr(
+        store, "get_all", lambda: ({**store.defaults(), "cash_floor_pct": 10.0}, "database")
+    )
+    monkeypatch.setattr(store, "connection", lambda: (_ for _ in ()).throw(AssertionError("reached the write")))
+    try:
+        store.set_value("cash_ceiling_pct", 25.0, actor=None)
+    except AssertionError as exc:
+        written["ok"] = "reached the write" in str(exc)
+    assert written.get("ok"), "a valid band must pass validation and proceed to the write"

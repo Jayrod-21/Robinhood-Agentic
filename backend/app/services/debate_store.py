@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.db import DbUnavailable, connection
+from app.services.freshness import parse_iso_utc
 
 logger = logging.getLogger("agentic.debate.store")
 
@@ -226,12 +227,16 @@ def _confidence(raw: Any) -> float | None:
 
 
 def _parse_ts(raw: Any) -> datetime:
+    """The debate's own timestamp, falling back to now when it cannot be read.
+
+    Uses the shared parser so a stamp this project writes is read the same way everywhere. The
+    fallback differs from the freshness callers on purpose: those decide whether to TRUST a number
+    and default to stale, while this one is choosing when a debate happened and has to write
+    something — now is the least wrong answer available at that point.
+    """
     if isinstance(raw, datetime):
         return raw
-    try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return _now()
+    return parse_iso_utc(raw, field="debate created_at") or _now()
 
 
 def _now() -> datetime:

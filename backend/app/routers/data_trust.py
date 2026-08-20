@@ -27,13 +27,13 @@ NOT A HEALTH CHECK
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter
 
 from app.config import get_settings
 from app.services.broker import get_snapshot
+from app.services.freshness import is_stale
 from app.services.marks import MARKS_PROVIDER, get_marks_detailed, resolve_ttl_seconds
 from app.services.snapshot import SnapshotError
 
@@ -44,17 +44,6 @@ router = APIRouter(prefix="/api", tags=["data-trust"])
 # Until dividends and corporate actions flow into the return series, every performance figure in
 # this app is price-only. Surfaced as a standing caveat rather than a footnote nobody reads.
 RETURNS_BASIS = "price_only"
-
-
-def _parse_iso(value: str | None) -> datetime | None:
-    """Parse the snapshot's ISO-8601 stamp, tolerating the trailing Z."""
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        logger.warning("snapshot generated_at is not ISO-8601: %r", value)
-        return None
 
 
 def _budget_status() -> dict[str, Any]:
@@ -113,14 +102,12 @@ def data_trust() -> dict[str, Any]:
             **posture,
         }
 
-    generated = _parse_iso(snapshot.generated_at)
-    if generated is None:
-        # An unparseable stamp cannot be shown to be fresh, so it is stale. Freshness must be
-        # PROVEN, never assumed — assuming it is how the July snapshot went unremarked.
-        stale = True
-    else:
-        age = (datetime.now(timezone.utc) - generated).total_seconds()
-        stale = age > settings.snapshot_max_age_seconds
+    # An unparseable or absent stamp is stale: freshness must be PROVEN, never assumed — assuming
+    # it is how the July snapshot went unremarked for three weeks. That rule now lives in one place
+    # (services/freshness.py) rather than in four routes that had already drifted apart.
+    stale = is_stale(
+        snapshot.generated_at, settings.snapshot_max_age_seconds, field="snapshot generated_at"
+    )
 
     symbols = snapshot.symbols
     ttl = resolve_ttl_seconds(settings.marks_ttl_seconds)

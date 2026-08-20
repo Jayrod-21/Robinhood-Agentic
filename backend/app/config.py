@@ -149,10 +149,6 @@ class Settings(BaseSettings):
     # Set to empty to disable and rely solely on the explicit ``cors_origins`` list.
     cors_origin_regex: str = Field(default=r"http://(localhost|127\.0\.0\.1):\d+")
 
-    # --- Refresh bridge ---------------------------------------------------------------------
-    # Cooldown between honored refresh requests, so a mashed button can't spawn a tab storm.
-    refresh_cooldown_seconds: int = Field(default=20, ge=0, le=600)
-
     # --- Debate rate limit ------------------------------------------------------------------
     # Each debate spends real Anthropic tokens; cap how often one can be kicked off.
     debate_min_interval_seconds: int = Field(default=15, ge=0, le=600)
@@ -235,10 +231,6 @@ class Settings(BaseSettings):
     @property
     def snapshot_path(self) -> Path:
         return self.data_dir / "account_snapshot.json"
-
-    @property
-    def refresh_request_path(self) -> Path:
-        return self.data_dir / "refresh.request"
 
     @property
     def debates_dir(self) -> Path:

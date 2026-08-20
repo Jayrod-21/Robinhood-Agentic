@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -35,9 +34,11 @@ from fastapi import APIRouter, HTTPException
 from app.config import get_settings
 from app.services import settings_store
 from app.services.broker import get_snapshot
+from app.services.freshness import is_stale
 from app.services.marks import get_marks, resolve_ttl_seconds
 from app.services.slate import load_sizing_rules, load_slate
 from app.services.snapshot import SnapshotError
+from app.services.valuation import account_totals, value_position, weight_pct
 
 logger = logging.getLogger("agentic.api.reconciliation")
 
@@ -117,26 +118,29 @@ def reconciliation() -> dict[str, Any]:
 
     symbols = [p.symbol for p in snapshot.positions]
     marks = get_marks(symbols, resolve_ttl_seconds(settings.marks_ttl_seconds)) if symbols else {}
-    account_value = snapshot.account.total_value
     cash = snapshot.account.cash
+    values = [
+        value_position(p.quantity, p.average_buy_price, marks.get(p.symbol))
+        for p in snapshot.positions
+    ]
+    totals = account_totals(values, cash)
 
-    held: dict[str, dict[str, Any]] = {}
-    for p in snapshot.positions:
-        price = marks.get(p.symbol)
-        market_value = p.quantity * price if price is not None else None
-        cost_basis = p.quantity * p.average_buy_price
-        held[p.symbol] = {
-            "market_value": market_value,
-            "weight": (market_value / account_value * 100.0)
-            if market_value is not None and account_value
-            else None,
-            "unrealized_pl_pct": (
-                ((market_value - cost_basis) / cost_basis * 100.0)
-                if market_value is not None and cost_basis
-                else None
-            ),
-            "priced": price is not None,
+    # The SAME denominator the Portfolio page uses: priced market value + cash, both from our own
+    # marks. This used snapshot.account.total_value — the broker's figure, computed from the
+    # broker's prices — while every numerator was an FMP mark. Two price sources in one ratio, so
+    # the same position could show one weight here and another on Portfolio, with nothing on either
+    # page saying which basis it was. See services/valuation.py for why this basis and not that one.
+    account_value = totals.total_value
+
+    held: dict[str, dict[str, Any]] = {
+        p.symbol: {
+            "market_value": v.market_value,
+            "weight": weight_pct(v.market_value, account_value),
+            "unrealized_pl_pct": v.unrealized_pl_pct,
+            "priced": v.priced,
         }
+        for p, v in zip(snapshot.positions, values, strict=True)
+    }
 
     rows: list[dict[str, Any]] = []
     counts = {"match": 0, "drifted": 0, "missing": 0, "unexpected": 0}
@@ -200,12 +204,7 @@ def reconciliation() -> dict[str, Any]:
     )
 
     generated = snapshot.generated_at
-    stale = True
-    try:
-        gen = datetime.fromisoformat(generated.replace("Z", "+00:00"))
-        stale = (datetime.now(timezone.utc) - gen).total_seconds() > settings.snapshot_max_age_seconds
-    except (ValueError, AttributeError):
-        pass
+    stale = is_stale(generated, settings.snapshot_max_age_seconds, field="snapshot generated_at")
 
     return {
         "meta": {
@@ -293,15 +292,36 @@ def _run_checks(
         + ("" if cash_ok else f", outside the {lo:.0f}-{hi:.0f}% band"),
     })
 
-    off_factor = sum(
-        r["live_weight_pct"] or 0.0 for r in rows if r["symbol"] in OFF_FACTOR_NAMES
-    )
-    checks.append({
-        "rule": f"Off-factor floor {'+'.join(OFF_FACTOR_NAMES)} >= {off_factor_floor:.0f}%",
-        "source": "SLATE.md §Sizing discipline",
-        "status": "pass" if off_factor >= off_factor_floor else "breach",
-        "severity": "info" if off_factor >= off_factor_floor else "warn",
-        "detail": f"{'+'.join(OFF_FACTOR_NAMES)} total {off_factor:.1f}% of account value",
-    })
+    # An off-factor name that is HELD but unpriced makes this check unanswerable, not failed.
+    #
+    # `r["live_weight_pct"] or 0.0` turned an unknown weight into zero, so a transient pricing gap
+    # on V or CVX flipped "V+CVX >= 20%" to breach while both were held at full weight — a guardrail
+    # firing on a data outage and pointing at the portfolio. Everywhere else this route treats
+    # unknown as unknown (an unpriced holding is "drifted", never "match"); this one check did the
+    # opposite and resolved unknown to the worst case.
+    off_rows = [r for r in rows if r["symbol"] in OFF_FACTOR_NAMES and r["status"] != "missing"]
+    unpriced = [r["symbol"] for r in off_rows if r["live_weight_pct"] is None]
+    off_factor = sum(r["live_weight_pct"] or 0.0 for r in off_rows)
+    rule = f"Off-factor floor {'+'.join(OFF_FACTOR_NAMES)} >= {off_factor_floor:.0f}%"
+
+    if unpriced:
+        checks.append({
+            "rule": rule,
+            "source": "SLATE.md §Sizing discipline",
+            "status": "unknown",
+            "severity": "warn",
+            "detail": (
+                f"cannot be checked: {', '.join(unpriced)} held but unpriced, so the off-factor "
+                f"total is unknown rather than {off_factor:.1f}%"
+            ),
+        })
+    else:
+        checks.append({
+            "rule": rule,
+            "source": "SLATE.md §Sizing discipline",
+            "status": "pass" if off_factor >= off_factor_floor else "breach",
+            "severity": "info" if off_factor >= off_factor_floor else "warn",
+            "detail": f"{'+'.join(OFF_FACTOR_NAMES)} total {off_factor:.1f}% of account value",
+        })
 
     return checks

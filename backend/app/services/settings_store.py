@@ -170,6 +170,35 @@ def get_or(key: str, fallback: float) -> float:
         return fallback
 
 
+# Parameters that are only meaningful against each other. Each entry is (floor_key, ceiling_key).
+#
+# Validating fields one at a time let floor=30 / ceiling=20 be stored: both sit inside their own
+# bounds, and nothing looked at the pair. Reconciliation then tested `lo <= cash <= hi` against an
+# empty interval, so the cash check breached on every run whatever the actual cash was — a
+# guardrail that can never pass, with nothing anywhere saying the band itself was malformed.
+_BANDS: tuple[tuple[str, str], ...] = (("cash_floor_pct", "cash_ceiling_pct"),)
+
+
+def _reject_inverted_band(key: str, value: float) -> None:
+    """Refuse a write that would leave a floor above its ceiling.
+
+    Checked at the WRITE, not at the read. Catching it in reconciliation would report a broken band
+    every run forever; refusing it here means the operator learns at the moment they can still fix
+    it, in the field they are editing.
+    """
+    for floor_key, ceiling_key in _BANDS:
+        if key not in (floor_key, ceiling_key):
+            continue
+        current, _ = get_all()
+        floor = value if key == floor_key else current[floor_key]
+        ceiling = value if key == ceiling_key else current[ceiling_key]
+        if floor > ceiling:
+            raise SettingError(
+                f"{BY_KEY[floor_key].label} ({floor:g}) cannot be above "
+                f"{BY_KEY[ceiling_key].label} ({ceiling:g}) — that band can never be satisfied."
+            )
+
+
 def set_value(key: str, value: float, *, actor: str | None) -> float:
     """Write one parameter, appending to history. Returns the stored value.
 
@@ -189,6 +218,7 @@ def set_value(key: str, value: float, *, actor: str | None) -> float:
         raise SettingError(
             f"{param.label} must be between {param.minimum:g} and {param.maximum:g} {param.unit}."
         )
+    _reject_inverted_band(key, numeric)
 
     with connection() as conn, conn.transaction():
         previous = conn.execute(

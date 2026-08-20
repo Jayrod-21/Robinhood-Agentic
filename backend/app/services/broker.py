@@ -96,10 +96,10 @@ def get_snapshot(snapshot_path) -> AccountSnapshot:
 def reset_cache() -> None:
     """Drop the cached snapshot. TEST SUPPORT ONLY — nothing in the app calls this.
 
-    The docstring used to claim "and the refresh path", which was never true: routers/refresh.py
-    does not import this module, and the refresh it triggers rewrites the fallback FILE rather than
-    anything Alpaca serves. A docstring naming a caller that does not exist sends the next reader
-    hunting for wiring that was never built.
+    The docstring used to claim "and the refresh path", which was never true even while that path
+    existed: it rewrote the fallback FILE rather than anything this cache holds. The bridge is gone
+    now, but the lesson outlived it — a docstring naming a caller that does not exist sends the next
+    reader hunting for wiring that was never built.
 
     Nothing needs it, either — the TTL is five seconds, so a stale entry outlives its usefulness
     before anyone could act on it.
