@@ -181,6 +181,25 @@ else
   fail "calendar:horizon" "could not read market_calendar"
 fi
 
+# ── the database is actually being backed up ──────────────────────────────────────────────────
+# bin/db_backup.sh existed and worked for weeks while never being scheduled: the newest dump was
+# three weeks old and predated the Alpaca migration entirely. A backup job that was never installed
+# and one that is silently failing look identical from outside — the same reason the cron entries
+# above are checked. This one matters more now that engine-generated debate records live only on
+# disk and in the database.
+BACKUP_MAX_AGE_H="${AGENTIC_BACKUP_MAX_AGE_H:-36}"
+newest_backup="$(find "${PROJECT_DIR}/data/backups/db" -name '*.dump' -printf '%T@\n' 2>/dev/null | sort -n | tail -1)"
+if [[ -n "${newest_backup}" ]]; then
+  age_h=$(( ( $(date +%s) - ${newest_backup%.*} ) / 3600 ))
+  if (( age_h <= BACKUP_MAX_AGE_H )); then
+    pass "backup:recent (${age_h}h)"
+  else
+    fail "backup:recent" "newest database dump is ${age_h}h old (>${BACKUP_MAX_AGE_H}h) — is the db_backup cron running?"
+  fi
+else
+  fail "backup:recent" "no database dump found in data/backups/db"
+fi
+
 if ${NOTIFY_OK}; then
   pass "notify:available"
 else
@@ -188,7 +207,7 @@ else
 fi
 
 crontab_text="$(crontab -l 2>/dev/null)"
-for job in alpaca_sync.sh nightly_marks.sh scheduled_cycle.sh; do
+for job in alpaca_sync.sh nightly_marks.sh scheduled_cycle.sh db_backup.sh; do
   if grep -q "${job}" <<<"${crontab_text}"; then
     pass "cron:${job}"
   else

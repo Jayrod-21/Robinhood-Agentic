@@ -103,3 +103,42 @@ def test_an_unmetered_call_is_not_an_error():
 
     ac._usage.set(None)
     ac._record_usage(_Resp())   # must not raise
+
+
+# ── persistence shape ─────────────────────────────────────────────────────────────────────────
+
+
+def test_a_verdict_arriving_as_an_enum_still_maps():
+    """The two-day silent data loss, in one assertion.
+
+    The engine passed record.model_dump(), which keeps Vote.HOLD as an enum. _decision_of str()'d
+    it into "vote.hold", matched nothing, returned None, and the judgment was dropped. Thirty
+    debates a day were stored with zero judgments while the FILE records — already JSON — looked
+    correct, which is exactly why the backfill tests passed.
+    """
+    import enum
+
+    from app.services.debate_store import _decision_of
+
+    class Vote(str, enum.Enum):
+        HOLD = "HOLD"
+        BUY = "BUY"
+
+    assert _decision_of(Vote.HOLD) == "hold"
+    assert _decision_of(Vote.BUY) == "buy"
+    assert _decision_of("HOLD") == "hold", "plain strings must keep working"
+    assert _decision_of("nonsense") is None, "an unmappable verdict is still refused"
+    assert _decision_of(None) is None
+
+
+def test_the_engine_hands_the_store_json_shaped_data():
+    """Guards the fix at its source rather than only at the mapper: the store is fed by the engine,
+    and mode="json" is what makes enums arrive as the strings every other producer sends."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "app" / "debate" / "engine.py"
+    text = src.read_text(encoding="utf-8")
+    assert 'persist_debate, record.model_dump(mode="json")' in text, (
+        "the engine must serialise before persisting; a plain model_dump() reintroduces the enum "
+        "mismatch that dropped every judgment"
+    )
