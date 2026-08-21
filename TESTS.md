@@ -81,7 +81,7 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
 
 ### 3b. Migration runner + loader tests (needs Docker)
 - **Command:** `python3 -m pytest db/tests/ -q`
-- **Pass criteria:** all tests pass (currently 194). Six layers: discovery tests for the
+- **Pass criteria:** all tests pass (currently 246). Seven layers: discovery tests for the
   filename-based destructive classification (ADR-002: `NNN_name.destructive.{up,down}.sql`),
   loud rejection of near-miss filenames (uppercase `.SQL`, trailing junk — never silently
   skipped), byte-level rejection (NUL / BOM / invalid UTF-8), the best-effort keyword sniff
@@ -110,6 +110,14 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
   encrypted TOTP secret + hashed single-use recovery codes, weak-password rejection, unlock,
   disable, reset-password/reset-totp with session revocation, exit-code contract, and no
   secret ever printed).
+  Plus the Testing Lab store (`test_lab_store.py`): the mapping from a ValidationResult to a
+  `model_runs` row, and the layer that catches an inconsistent result BEFORE the 023 CHECK
+  constraint has to — `predictions_made` is attempts and not successes, the two directions of the
+  measured/counts disagreement, a failure with no message still closing its experiment, a
+  baseline move clearing the previous one transactionally, a sweep winner drawn from measured
+  points only, a leaderboard that never surfaces an unmeasured run and labels a measured-but-
+  degenerate one, and a health probe that tells an unreachable database apart from an unmigrated
+  one.
 - **Network:** Docker only — testcontainers spins a throwaway postgres:16-alpine; the live rh-db
   is never touched.
 
@@ -135,6 +143,24 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
 
 ## Smoke checks (manual, need network / Docker)
 - **Daily scan:** `python3 -m src.daily_scan AAPL NVDA OXY` → ranked survivors + annotated rejects (live yfinance).
+- **Testing Lab, end to end (needs Docker + the live rh-db):**
+  ```
+  docker build -f lab/Dockerfile -t rh-lab:test .
+  DSN=$(grep -o '^DATABASE_URL=.*' backend/.env | cut -d= -f2-)
+  docker run --rm --name rh-lab-smoke -d --network rh-internal -e "DATABASE_URL=$DSN" rh-lab:test
+  docker run --rm --network rh-internal curlimages/curl -sS \
+    http://rh-lab-smoke:8100/api/testing-lab/health
+  docker run --rm --network rh-internal curlimages/curl -sS -N -X POST \
+    http://rh-lab-smoke:8100/api/testing-lab/experiments/run -H 'Content-Type: application/json' \
+    -d '{"name":"smoke","models":["xgboost","random_forest","elastic_net"],
+         "dataset":{"source":"historical_bars","symbol":"AAPL"}}'
+  docker rm -f rh-lab-smoke
+  ```
+  Pass criteria: health reports `database: true, schema: true` and a non-zero `daily_bars`; the run
+  streams a `dataset` event naming `historical_bars` and its class balance, one `model_result` per
+  model with `measured: true`, and ends with `done`. Then
+  `POST /experiments/run` with `"symbol":"NOSUCHTICKER"` must return an `error` event that says it
+  is refusing rather than substituting synthetic data — never a result.
 - **Full stack:** `bash bin/up.sh` (needs a reachable Docker daemon) → open `http://localhost:$FRONTEND_PORT`:
   Portfolio shows the real account with live P&L; Refresh opens an MCP-bridge tab; Scan streams the
   screen; Pipeline/Debate run the live jury (needs `ANTHROPIC_API_KEY` in `backend/.env`).

@@ -118,7 +118,12 @@ jobs:
           # bin/manage_operator.py, which SystemExits at import when they are missing —
           # that kills pytest collection outright. Versions match backend/requirements.txt
           # so the CLI is never tested against a different crypto stack than it ships with.
-          pip install "psycopg[binary]==3.3.4" "testcontainers[postgres]>=4,<5" "pytest>=8" \
+          #
+          # psycopg-pool: db/tests/test_lab_store.py imports lab/store.py, which opens the Lab's
+          # own pool. Pinned to match lab/requirements.txt and backend/requirements.txt so all
+          # three run the same pool implementation against the same database.
+          pip install "psycopg[binary]==3.3.4" "psycopg-pool==3.3.1" \
+                      "testcontainers[postgres]>=4,<5" "pytest>=8" \
                       "argon2-cffi==25.1.0" "pyotp==2.10.0" "cryptography==50.0.0"
 
       - name: Migration runner + schema tests
