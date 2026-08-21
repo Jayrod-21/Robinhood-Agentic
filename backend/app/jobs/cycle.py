@@ -34,6 +34,7 @@ from app.config import get_settings
 # and this cron job share one implementation; importing it here costs one extra app construction
 # at job start, which is negligible next to the scan + debates the job exists to run.
 from app.main import configure_logging
+from app.services import cycle_state
 
 configure_logging()
 logger = logging.getLogger("agentic.jobs.cycle")
@@ -141,12 +142,38 @@ def _format_report(phase: str, now: datetime, account, survivors, scanned, debat
 
 
 async def run_cycle(phase: str, max_debates: int = 0) -> str:
+    """Run one cycle, recording that it ran.
+
+    The progress row is opened here and closed here, including on the way out through an exception:
+    a crashed cycle that never closes its row reports as in progress until the stale sweep catches
+    it 90 minutes later, which answers "is it running?" wrongly and confidently. Recording the
+    failure immediately is the difference between a page that says "failed at 09:34 — FMP timeout"
+    and one that says "running" about a process that is not.
+    """
+    # Opened before any work, so a cycle that dies during the scan is still visible as one that
+    # started and did not finish — rather than as nothing having happened at all.
+    run_id = await asyncio.to_thread(cycle_state.start, phase)
+    try:
+        return await _run_cycle_body(phase, max_debates, run_id)
+    except Exception as exc:
+        # The message, not the traceback: this lands on an operator's screen. The traceback is
+        # already in the log via the caller.
+        await asyncio.to_thread(
+            cycle_state.finish, run_id, error=f"{type(exc).__name__}: {exc}"[:500]
+        )
+        raise
+
+
+async def _run_cycle_body(phase: str, max_debates: int, run_id: int | None) -> str:
     settings = get_settings()
     now = datetime.now(timezone.utc)
 
     account = await asyncio.to_thread(_account_view_sync)
     scanned = await asyncio.to_thread(_run_scan_sync)
     survivors = sorted((r for r in scanned if r.passed), key=lambda r: r.composite or 0.0, reverse=True)
+    await asyncio.to_thread(
+        cycle_state.update, run_id, scanned=len(scanned), survivors=len(survivors)
+    )
 
     debates: list[dict] = []
     if not settings.anthropic_api_key:
@@ -171,8 +198,26 @@ async def run_cycle(phase: str, max_debates: int = 0) -> str:
         # Count only, no tickers: this line lands in logs/cron/ twice a day, and the symbol list
         # is the account's holdings (issue #14). The per-ticker detail lives in the report file.
         logger.info("debating %d position(s)", len(symbols))
+        await asyncio.to_thread(cycle_state.update, run_id, total_positions=len(symbols))
         sem = asyncio.Semaphore(2)  # 2 debates at once (each already fans out its own jury)
-        debates = await asyncio.gather(*[_run_one_debate(s, sem) for s in symbols])
+
+        # Progress is recorded as each debate FINISHES, not as it is dispatched: two run at a time,
+        # so a count of what has been started would sit at 2 for eighty seconds and then jump. What
+        # an operator wants to know is how much is done.
+        done = 0
+        lock = asyncio.Lock()
+
+        async def _tracked(symbol: str) -> dict:
+            nonlocal done
+            result = await _run_one_debate(symbol, sem)
+            async with lock:
+                done += 1
+                await asyncio.to_thread(
+                    cycle_state.update, run_id, completed_positions=done, current_symbol=symbol
+                )
+            return result
+
+        debates = await asyncio.gather(*[_tracked(s) for s in symbols])
 
     report = _format_report(phase, now, account, survivors, scanned, debates)
     report_path = settings.logs_dir / "reports" / f"{now:%Y-%m-%d}-{phase}.md"
@@ -195,6 +240,7 @@ async def run_cycle(phase: str, max_debates: int = 0) -> str:
     with settings.events_path.open("a") as fh:
         fh.write(json.dumps(event) + "\n")
 
+    await asyncio.to_thread(cycle_state.finish, run_id)
     logger.info("cycle %s complete → %s", phase, report_path)
     return str(report_path)
 

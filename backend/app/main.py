@@ -36,6 +36,9 @@ from app.routers import (
     chat as chat_router,
 )
 from app.routers import (
+    cycle as cycle_router,
+)
+from app.routers import (
     settings as settings_router,
 )
 from app.services.auth import auth_enforcement_configured, enforce_authenticated
@@ -287,6 +290,7 @@ def create_app() -> FastAPI:
     app.include_router(data_trust.router)
     app.include_router(auth.router)
     app.include_router(chat_router.router)
+    app.include_router(cycle_router.router)
     app.include_router(account.router)
     app.include_router(accounts_router.router)
     app.include_router(scan.router)
