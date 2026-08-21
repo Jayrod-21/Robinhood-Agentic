@@ -50,6 +50,12 @@ export default function DebateDetailPage({ params }: { params: { id: string } })
   }
 
   const isArchive = data.source === "archive";
+  // Sorted here rather than trusting the payload's order: the turns come back in insertion order
+  // today, but "round 2 before round 1" would read as the bull answering something not yet said.
+  const transcript = [...(data.turns ?? [])].sort(
+    (a, b) => a.round_no - b.round_no || (a.side === "bull" ? -1 : 1),
+  );
+  const rounds = data.rounds ?? (transcript.at(-1)?.round_no ?? 1);
   const votes = data.jury?.votes ?? [];
   const counts = data.jury?.counts ?? {};
 
@@ -102,25 +108,67 @@ export default function DebateDetailPage({ params }: { params: { id: string } })
             </Card>
           )}
 
-          {data.bull_bear && (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-gain">Bull case</CardTitle>
-                </CardHeader>
-                <CardBody>
-                  <Markdown text={data.bull_bear.bull_case} />
-                </CardBody>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-loss">Bear case</CardTitle>
-                </CardHeader>
-                <CardBody>
-                  <Markdown text={data.bull_bear.bear_case} />
-                </CardBody>
-              </Card>
-            </div>
+          {/* The exchange, when there was one. Rendered in ORDER rather than as two columns:
+              a rebuttal is a reply, and side-by-side columns hide which claim it is replying to —
+              which is the only thing that distinguishes a debate from two essays. Records written
+              before rebuttals existed, and hand-written archive entries, have no turns and fall
+              back to the two-column view below. */}
+          {transcript.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>The exchange</CardTitle>
+                <span className="text-xs text-zinc-500">
+                  {rounds} round{rounds === 1 ? "" : "s"} · {transcript.length} turns
+                </span>
+              </CardHeader>
+              <CardBody className="space-y-4">
+                {transcript.map((turn, i) => (
+                  <div
+                    key={`${turn.round_no}-${turn.side}-${i}`}
+                    className={cn(
+                      "border-l-2 pl-4",
+                      turn.side === "bull" ? "border-gain/50" : "border-loss/50",
+                    )}
+                  >
+                    <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                      <span
+                        className={cn(
+                          "text-sm font-medium",
+                          turn.side === "bull" ? "text-gain" : "text-loss",
+                        )}
+                      >
+                        {turn.side === "bull" ? "Bull" : "Bear"}
+                      </span>
+                      <Badge tone="neutral">
+                        Round {turn.round_no} · {turn.kind}
+                      </Badge>
+                    </div>
+                    <Markdown text={turn.content} />
+                  </div>
+                ))}
+              </CardBody>
+            </Card>
+          ) : (
+            data.bull_bear && (
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-gain">Bull case</CardTitle>
+                  </CardHeader>
+                  <CardBody>
+                    <Markdown text={data.bull_bear.bull_case} />
+                  </CardBody>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-loss">Bear case</CardTitle>
+                  </CardHeader>
+                  <CardBody>
+                    <Markdown text={data.bull_bear.bear_case} />
+                  </CardBody>
+                </Card>
+              </div>
+            )
           )}
 
           {data.jury && (
