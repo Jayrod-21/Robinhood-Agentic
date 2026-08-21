@@ -239,3 +239,33 @@ def test_a_naive_filing_stamp_is_read_as_eastern_and_stored_as_utc():
 
 def test_an_unparseable_filing_stamp_is_undated_rather_than_guessed():
     assert known_at_from_statement({"acceptedDate": "not a date"}) is None
+
+
+def test_forward_pe_is_absent_rather_than_a_peg_wearing_its_name():
+    """A bear researcher found this mid-debate, calling it "almost certainly a data error".
+
+    `forward_pe` was mapped from `forwardPriceToEarningsGrowthRatio` — a forward PEG. NVDA's
+    forward P/E therefore rendered as 0.57, byte-identical to its PEG and not a plausible multiple
+    for anything. FMP offers a trailing P/E and two PEG variants on this plan; there is no forward
+    P/E among them, so the honest value is nothing.
+
+    This is the path the DEBATE reads, so it is the one that was misinforming the researchers.
+
+    No test caught it because a test would have asserted the field was populated, and it was.
+    """
+    from src.data import fundamentals_from_fmp
+
+    bundle = {
+        # marketCap is required: without it the mapper returns None entirely, because a row
+        # that cannot be gated must not look like one that failed the gates.
+        "profile": {"price": 100.0, "companyName": "Test", "marketCap": 1_000_000_000},
+        "ratios": {
+            "priceToEarningsRatio": 37.8,
+            "priceToEarningsGrowthRatio": 0.5731,
+            "forwardPriceToEarningsGrowthRatio": 0.5731,
+        },
+    }
+    out = fundamentals_from_fmp(bundle)
+    assert out.get("forward_pe") is None, "a forward PEG must not be served as a forward P/E"
+    assert out.get("trailing_pe") == pytest.approx(37.8), "the real trailing P/E still comes through"
+    assert out.get("peg") == pytest.approx(0.5731), "the PEG itself is still reported, as a PEG"

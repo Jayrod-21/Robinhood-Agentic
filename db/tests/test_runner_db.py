@@ -388,6 +388,10 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # — but with TODAY's rule, so if the rule has changed since, the restored table will not
         # match what calibration reported before. Recomputable is not the same as recoverable.
         ("020", False, True),
+        # 021's down drops every transcript. Unlike the scored outcomes above, these cannot be
+        # recomputed at all: rerunning a debate produces a DIFFERENT argument, not the same one
+        # again, and the JSON file records are no longer tracked in git.
+        ("021", False, True),
     ]
 
 

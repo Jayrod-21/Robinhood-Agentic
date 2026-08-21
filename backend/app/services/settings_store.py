@@ -98,6 +98,11 @@ REGISTRY: tuple[Param, ...] = (
           "How many held positions the twice-daily cycle debates. 0 means all of them. Each debate "
           "fans out a jury, so this is the dial between thorough and expensive.",
           "Twice-daily cycle"),
+    Param("debate_rounds", "Debate rounds", "Runs", "count", 2.0, 1.0, 4.0,
+          "How many rounds the bull and bear argue. 1 is opening statements only — two monologues "
+          "the jury never sees answered. 2 adds a rebuttal where each side must engage the other's "
+          "actual case. Each extra round is two more model calls per debate.",
+          "Debate — the exchange"),
     Param("debate_juror_count", "Jurors", "Runs", "count", 10.0, 1.0, 20.0,
           "How many independent jurors weigh in per debate. More jurors is a steadier verdict and a "
           "proportionally larger bill.",

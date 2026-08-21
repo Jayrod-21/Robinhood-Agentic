@@ -155,6 +155,22 @@ def _persist(record: dict[str, Any]) -> int | None:
                 (debate_id, agent_id, stance, text),
             ).fetchone()[0]
 
+        # The transcript. Written before the judgments so a debate row always carries its argument
+        # even if the jury mapping fails — the exchange is the expensive half to produce and the
+        # half that cannot be recreated, since rerunning yields a DIFFERENT argument, not the same
+        # one again.
+        for turn in record.get("turns") or []:
+            content = str(turn.get("content") or "").strip()
+            if not content:
+                continue
+            conn.execute(
+                "INSERT INTO debate_turns (debate_id, round_no, side, kind, content)"
+                " VALUES (%s, %s, %s, %s, %s)"
+                " ON CONFLICT (debate_id, round_no, side) DO NOTHING",
+                (debate_id, int(turn.get("round_no") or 1), str(turn.get("side") or ""),
+                 str(turn.get("kind") or "opening"), content),
+            )
+
         written = 0
         dropped: list[str] = []
         for i, vote in enumerate(votes):
