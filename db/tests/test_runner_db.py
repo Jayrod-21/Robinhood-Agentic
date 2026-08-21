@@ -398,6 +398,12 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # the SQL does, not what the table happens to hold. What is lost is the timeline of what ran
         # when, which cannot be reconstructed from the results.
         ("022", False, True),
+        # 023's down drops the Lab's three tables. The tempting argument — third time this exact
+        # argument has come up, after 014 and 022 — is that experiments are re-runnable. They are
+        # not. A walk-forward validation measures a specific model against a specific dataset at a
+        # specific time; re-running it after the code has moved produces a different number, not the
+        # same one. What is lost is the record of what was true when the decision was made.
+        ("023", False, True),
     ]
 
 
