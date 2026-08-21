@@ -392,6 +392,12 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # recomputed at all: rerunning a debate produces a DIFFERENT argument, not the same one
         # again, and the JSON file records are no longer tracked in git.
         ("021", False, True),
+        # 022's down drops cycle_runs. The first draft of that file argued it was non-destructive
+        # because progress telemetry is derived from work whose real output lives elsewhere — the
+        # runner refused it, correctly, on the same grounds it refused 014: destructiveness is what
+        # the SQL does, not what the table happens to hold. What is lost is the timeline of what ran
+        # when, which cannot be reconstructed from the results.
+        ("022", False, True),
     ]
 
 
