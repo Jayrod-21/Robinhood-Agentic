@@ -1,0 +1,30 @@
+# Testing Lab image — the heavy ML stack that deliberately does NOT ship in the backend.
+#
+# This file is the whole reason the Lab is a separate service. Measured on M, 2026-08-21: the
+# backend image is 979 MB and the Lab image is 1.53 GB, so adding these lines to
+# backend/requirements.txt would push the backend past 1.5 GB — and put a multi-minute CPU-bound
+# training run in the same process that renders the portfolio page.
+#
+# Pinned exactly, same policy as backend/requirements.txt: an unpinned dependency turns someone
+# else's release into a different model. That matters more here than anywhere — a scikit-learn
+# minor bump can change a default, and a leaderboard whose rows were measured under different
+# library versions is comparing the libraries, not the models.
+#
+# The web/DB pins below MATCH backend/requirements.txt on purpose. Two services speaking the same
+# wire protocol to the same database should not be running two different psycopg versions.
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+pydantic==2.13.4
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
+
+# The numerics. pandas pin matches backend/requirements.txt and requirements.txt; numpy is pinned
+# explicitly rather than left to pandas' resolver, because every model here is sensitive to it.
+numpy==2.5.1
+pandas==3.0.5
+
+# The models themselves.
+xgboost==3.4.1
+scikit-learn==1.9.0
+statsmodels==0.14.6
+joblib==1.5.3
