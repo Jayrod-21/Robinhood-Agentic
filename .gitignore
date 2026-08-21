@@ -44,6 +44,20 @@ logs/debates/dbt-*
 # They remain on disk on the host that produced them.
 logs/reports/*-open.md
 logs/reports/*-close.md
+
+# The event store. Appended to by every debate and every cycle — ~16 lines a day now that the
+# twice-daily cycle runs — so it was modified on every branch and conflicted on checkout. It did
+# exactly that on 2026-08-21, blocking a sync.
+#
+# Redundant in git, verified by content rather than assumed: the 90 debate events carry
+# id/ticker/decision/escalated, all of which live in `debates` and `judgments`; the 10 cycle events
+# carry phase/survivors (cycle_runs), decisions/escalations (judgments), and total_value /
+# unrealized_pl (portfolio_returns_daily).
+#
+# One nuance kept honest: a cycle event records total_value at CYCLE time, twice a day, while the
+# marks table records it once. That intraday pair is the only thing this file held uniquely, and it
+# is still written to disk — just not to git.
+logs/events.jsonl
 # Written by bin/stack_health.sh every 5 minutes: per-machine runtime state, not source.
 data/stack_health.json
 logs/refresh/
