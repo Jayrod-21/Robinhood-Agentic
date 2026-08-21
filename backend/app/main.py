@@ -28,6 +28,7 @@ from app.routers import (
     position,
     reconciliation,
     scan,
+    testing_lab,
 )
 from app.routers import (
     accounts as accounts_router,
@@ -291,6 +292,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(chat_router.router)
     app.include_router(cycle_router.router)
+    app.include_router(testing_lab.router)
     app.include_router(account.router)
     app.include_router(accounts_router.router)
     app.include_router(scan.router)

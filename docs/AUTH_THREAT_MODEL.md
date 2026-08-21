@@ -1304,3 +1304,76 @@ operator's change**, because it is.
   that debate text is untrusted. Stripping instruction-like phrasing from the content was considered
   and rejected: it would silently alter what a juror actually wrote, which breaks the summary, and
   the structural control above already holds without it.
+
+---
+
+## 13. The Testing Lab (`lab/`, proxied at `/api/testing-lab/*`)
+
+### 13.1 The Lab authenticates nobody, deliberately
+
+`lab/app.py` has no session check, no CSRF guard and no operator lookup. It is the only service in
+this project of which that is true, and it is safe for exactly one reason: **nothing can reach it
+that has not already been authenticated.**
+
+The Lab container is on `rh-internal` only, with no `ports:` entry and no route in
+`deploy/Caddyfile`. The single path in is `backend/app/routers/testing_lab.py`, an `APIRouter` — so
+every request through it has already passed the app-wide `enforce_same_origin` and
+`enforce_authenticated` dependencies registered in `app/main.py` (§4).
+
+The alternative was a second implementation of session validation inside the Lab, with its own
+grants on the auth tables. Two implementations of an auth check is how one of them drifts.
+
+### 13.2 The consequence: the compose file is part of the security boundary
+
+Adding a `ports:` line to the `lab` service, or a `reverse_proxy lab:8100` to the Caddyfile, turns
+the Lab into an **unauthenticated endpoint that trains models on demand** — CPU exhaustion at
+minimum, and a read of every daily bar in the database.
+
+That is not a comment-only guarantee. `backend/tests/test_testing_lab_proxy.py` reads
+`deploy/docker-compose.prod.yml` and `deploy/Caddyfile` directly and fails if the Lab gains a host
+port, gains a second network, or if Caddy grows an upstream other than `backend:8000` and
+`frontend:3000`. The warning paragraph is repeated in `lab/app.py`, in the proxy router, and in the
+compose service comment, because the guarantee is split across three files and none of them can
+state it alone.
+
+### 13.3 An enumerated allow-list, not a passthrough
+
+The proxy does not forward `/{path:path}` to the Lab. Reads are checked against a fixed tuple, and
+each write is its own declared route. A Lab endpoint added later is unreachable from the internet
+until someone adds it here on purpose — which is the point at which it gets reviewed at this
+boundary.
+
+### 13.4 Attribution
+
+The Lab records an `operator` on every experiment. The proxy **overwrites** that field with
+`request.state.operator` before forwarding, using the same derivation as
+`routers/settings.py::update_setting`. A client-supplied value never survives. When session
+enforcement is standing down the field is recorded as `null` rather than `"unknown"` — a run
+attributed to nobody and a run attributed to a placeholder are different facts.
+
+### 13.5 What the Lab is not given
+
+It reads `backend/.env` for `DATABASE_URL` and then every credential in that file is **blanked** in
+the service's `environment:` block, which overrides `env_file`. It holds no `AUTH_DATABASE_URL`, no
+`TOTP_SECRET_ENC_KEY`, no Alpaca key pair, no Anthropic or FMP key, and no SMTP credentials. The one
+DSN it does hold is role `rh_app`, which migration 012 REVOKEd the auth tables from entirely — so
+even a fully compromised Lab cannot read a password hash or a TOTP secret.
+
+It also has no `default` network, so it cannot reach the internet at all. A compromised Lab has
+nothing to exfiltrate *to*.
+
+Most importantly: **the Lab has no order path and no write to production settings.** It measures.
+Applying a tuned result to a live weight remains a separate confirmed, bounded, audited write
+through `PUT /api/settings/{key}`.
+
+### 13.6 What is still open
+
+* **Compute is not fairly shared.** The Lab is capped at 2 CPUs and 3 GB, and its run route is rate
+  limited to 6 POSTs/minute, but an operator can still queue enough work to make the box slow. The
+  cap is a blast radius, not a scheduler.
+* **Bar data is trusted input.** Features are computed from `price_bars_daily`, which is loaded from
+  a third-party provider. A poisoned bar produces a wrong model, not a compromised process — but the
+  Lab does not validate provenance beyond the schema's own OHLC constraints.
+* **No per-operator isolation.** Joe and Jared share one Lab and one set of tables. Experiments are
+  attributed but not partitioned; either can read or supersede the other's results. That matches the
+  two-operator trust model in §1 and should be revisited if a third person ever gets an account.

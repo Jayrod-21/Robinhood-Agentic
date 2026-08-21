@@ -321,6 +321,36 @@ stack.
 Cloudflare Access (see [Open decisions](#open-decisions)) remains a separate, still-open decision —
 cutting over to per-operator auth does not by itself close that half of issue #17.
 
+## Testing Lab (optional service)
+
+The Lab trains and validates models. It is **optional**: with `LAB_BASE_URL` unset or the `lab`
+service stopped, every `/api/testing-lab/*` route answers `503` with a sentence saying it is not
+deployed, and nothing else on the dashboard changes.
+
+```bash
+cd "/srv/agentic/robinhood-agentic"
+docker compose -f deploy/docker-compose.prod.yml up -d --build lab
+docker compose -f deploy/docker-compose.prod.yml up -d backend   # picks up LAB_BASE_URL
+```
+
+Verify it came up and can see its data:
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml exec lab \
+  curl -fsS http://localhost:8100/api/testing-lab/health
+# {"service":"testing-lab","database":true,"schema":true,"experiments":N,"daily_bars":12844192}
+```
+
+`schema: false` with `database: true` means migration `023` has not been applied — run
+`bash bin/db_migrate.sh up`, not a network diagnosis. The two are reported separately precisely
+because they look identical from the outside and have completely different fixes.
+
+**The Lab has no host port and no Caddy route, and that is load-bearing** — it authenticates
+nobody, and relies entirely on being reachable only from the backend. Read
+`docs/AUTH_THREAT_MODEL.md` §13 before changing anything about how it is exposed. The first build
+takes several minutes (xgboost, scikit-learn, statsmodels; the image is ~1.5 GB) and the container
+needs ~45 s to import them before its healthcheck passes.
+
 ## Operations
 
 - **Logs:** `docker compose -f deploy/docker-compose.prod.yml logs -f backend`; cron output in
