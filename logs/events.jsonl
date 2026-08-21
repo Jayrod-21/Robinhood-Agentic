@@ -74,3 +74,7 @@
 {"ts": "2026-08-20T22:04:46Z", "type": "debate", "payload": {"id": "dbt-20260820T220446Z-f5ed22", "ticker": "V", "decision": "HOLD", "escalated": false}}
 {"ts": "2026-08-20T22:05:02Z", "type": "debate", "payload": {"id": "dbt-20260820T220502Z-1f50ef", "ticker": "VST", "decision": "SELL", "escalated": false}}
 {"ts": "2026-08-20T22:02:02Z", "type": "cycle", "payload": {"phase": "close", "total_value": 99935.86, "unrealized_pl": -64.13, "survivors": ["TSM"], "decisions": {"AMD": "HOLD", "BE": "SELL", "BRK.B": "HOLD", "CVX": "HOLD", "GLD": "SELL", "GM": "SELL", "ISRG": "HOLD", "MSFT": "HOLD", "NVDA": "HOLD", "QBTS": "SELL", "QCOM": "HOLD", "SVRA": "SELL", "TMO": "HOLD", "V": "HOLD", "VST": "SELL"}, "escalations": []}}
+{"ts": "2026-08-20T23:54:06Z", "type": "debate", "payload": {"id": "dbt-20260820T235406Z-533389", "ticker": "AMD", "decision": "HOLD", "escalated": false}}
+{"ts": "2026-08-21T00:21:52Z", "type": "debate", "payload": {"id": "dbt-20260821T002152Z-3bbf94", "ticker": "NVDA", "decision": "HOLD", "escalated": false}}
+{"ts": "2026-08-21T00:24:03Z", "type": "debate", "payload": {"id": "dbt-20260821T002403Z-ac9d2b", "ticker": "GM", "decision": "HOLD", "escalated": false}}
+{"ts": "2026-08-21T00:25:57Z", "type": "debate", "payload": {"id": "dbt-20260821T002557Z-7869d0", "ticker": "GM", "decision": "HOLD", "escalated": false}}
