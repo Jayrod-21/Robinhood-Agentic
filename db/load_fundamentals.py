@@ -263,7 +263,18 @@ def snapshot_row(bundle: dict, security_id: int, fetched_at: datetime) -> dict |
         "market_cap": market_cap,
         "price": _num(profile.get("price")),
         "pe_trailing": _num(ratios.get("priceToEarningsRatio")),
-        "pe_forward": _num(ratios.get("forwardPriceToEarningsGrowthRatio")),
+        # NOT AVAILABLE on this plan, and therefore None rather than a stand-in.
+        #
+        # This read forwardPriceToEarningsGrowthRatio — a forward PEG — into a column named
+        # pe_forward. FMP offers priceToEarningsRatio (trailing), priceToEarningsGrowthRatio and
+        # forwardPriceToEarningsGrowthRatio; there is no forward P/E among them. So every row
+        # reported NVDA's forward P/E as 0.57, byte-identical to its PEG, which is not a plausible
+        # multiple for anything and was being shown on the dashboard as one.
+        #
+        # Found by a bear researcher in a live debate, which called it "almost certainly a data
+        # error" while arguing against the bull case. Worth recording how it surfaced: no test
+        # caught it, because a test would have asserted the column was populated, and it was.
+        "pe_forward": None,
         "peg_ratio": _num(ratios.get("priceToEarningsGrowthRatio")),
         "free_cash_flow": free_cash_flow,
         # Percent, matching the screen spec — and mixing a statement numerator with a market

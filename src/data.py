@@ -91,7 +91,15 @@ def fundamentals_from_fmp(bundle: dict) -> dict | None:
         "sector": profile.get("sector"),
         "industry": profile.get("industry"),
         "trailing_pe": _safe_num(ratios.get("priceToEarningsRatio")),
-        "forward_pe": _safe_num(ratios.get("forwardPriceToEarningsGrowthRatio")),
+        # None, not a stand-in. This read forwardPriceToEarningsGrowthRatio — a forward PEG — into
+        # a field named forward_pe, so every debate was handed NVDA's "forward P/E" as 0.57,
+        # byte-identical to its PEG. FMP offers priceToEarningsRatio (trailing) and two PEG
+        # variants on this plan; there is no forward P/E among them.
+        #
+        # This is the path the DEBATE reads, which is how it surfaced: a bear researcher called it
+        # "almost certainly a data error" while arguing against the bull case, and it was. The same
+        # mapping in db/load_fundamentals.py is fixed alongside it.
+        "forward_pe": None,
         "price": _safe_num(profile.get("price")),
     }
 

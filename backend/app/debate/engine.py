@@ -16,9 +16,16 @@ from datetime import datetime, timezone
 from app.config import get_settings
 from app.debate import anthropic_client as ac
 from app.debate.aggregate import aggregate
-from app.debate.prompts import JUROR_PERSPECTIVES, SYSTEM_GROUNDING, juror_user_prompt, researcher_prompt
+from app.debate.prompts import (
+    JUROR_PERSPECTIVES,
+    SYSTEM_GROUNDING,
+    juror_user_prompt,
+    rebuttal_prompt,
+    researcher_prompt,
+)
 from app.debate.records import persist_record
-from app.debate.schemas import BullBear, DebateRecord, Decision, JurorVote, JuryResult, Vote
+from app.debate.schemas import BullBear, DebateRecord, DebateTurn, Decision, JurorVote, JuryResult, Vote
+from app.services import settings_store
 
 logger = logging.getLogger("agentic.debate.engine")
 
@@ -47,9 +54,10 @@ async def _run_juror(
     bear: str,
     model: str,
     sem: asyncio.Semaphore,
+    transcript: str | None = None,
 ) -> JurorVote:
     """One juror: a forced-tool vote with a single retry, defaulting to HOLD on repeated failure."""
-    prompt = juror_user_prompt(ticker, focus_area, lens, price, fundamentals, bull, bear)
+    prompt = juror_user_prompt(ticker, focus_area, lens, price, fundamentals, bull, bear, transcript)
     async with sem:
         for attempt in (1, 2):
             try:
@@ -88,6 +96,18 @@ def _position_size_note(decision: Decision, jury: JuryResult) -> str:
     if decision == Decision.SELL:
         return "Lean exit — trim or close per the name's stop; don't average down. Read-only."
     return "No conviction — HOLD. Don't force a trade. Read-only."
+
+
+def _format_transcript(turns: list[DebateTurn]) -> str:
+    """The exchange as the jury reads it: in order, labelled, with the round visible.
+
+    Plain text rather than JSON because the reader is a model being asked to weigh an argument, and
+    a structure it has to parse first is a structure it can misread.
+    """
+    lines = []
+    for t in turns:
+        lines.append(f"[Round {t.round_no} · {t.side.upper()} · {t.kind}]\n{t.content}")
+    return "\n\n".join(lines)
 
 
 async def run_debate(ticker: str, question: str | None = None):
@@ -139,22 +159,69 @@ async def run_debate(ticker: str, question: str | None = None):
         }
         return
     record.bull_bear = BullBear(bull_case=bull, bear_case=bear)
+    turns: list[DebateTurn] = [
+        DebateTurn(round_no=1, side="bull", kind="opening", content=bull),
+        DebateTurn(round_no=1, side="bear", kind="opening", content=bear),
+    ]
+    record.turns = list(turns)
     yield {"type": "bull_complete", "bull_case": bull}
     yield {"type": "bear_complete", "bear_case": bear}
+    yield {"type": "turn", "turn": turns[0].model_dump()}
+    yield {"type": "turn", "turn": turns[1].model_dump()}
+
+    # 2b) THE ARGUMENT. Openings are written concurrently because neither side should see the other
+    # before committing to a position — that part was right. Everything after it was missing: the
+    # two cases were handed straight to the jury without either researcher ever answering the other.
+    # That is two monologues and a vote, not a debate, and it cannot surface the thing a debate is
+    # for — whether a case survives being contradicted by someone trying to break it.
+    #
+    # Each rebuttal round is SEQUENTIAL per side, because a rebuttal that has not seen what it is
+    # rebutting is just another monologue. The two sides within a round still run concurrently:
+    # they are answering the previous round, not each other's current turn.
+    rounds = max(1, min(int(settings_store.get_or("debate_rounds", 2)), 4))
+    record.rounds = rounds
+
+    latest = {"bull": bull, "bear": bear}
+    for round_no in range(2, rounds + 1):
+        try:
+            bull_reply, bear_reply = await asyncio.gather(
+                ac.write_case(settings.synth_model, SYSTEM_GROUNDING,
+                              rebuttal_prompt(ticker, "bull", latest["bear"], round_no)),
+                ac.write_case(settings.synth_model, SYSTEM_GROUNDING,
+                              rebuttal_prompt(ticker, "bear", latest["bull"], round_no)),
+            )
+        except Exception:
+            # A failed rebuttal round is not a failed debate: the openings are already on record and
+            # the jury can rule on them. Losing the whole thing over round 2 would throw away work
+            # that is already paid for.
+            logger.exception("rebuttal round %d failed for debate %s; ruling on what exists",
+                             round_no, debate_id)
+            yield {"type": "notice",
+                   "message": f"Rebuttal round {round_no} failed; the jury will rule on the "
+                              f"argument up to that point."}
+            break
+
+        latest = {"bull": bull_reply, "bear": bear_reply}
+        for side, text in (("bull", bull_reply), ("bear", bear_reply)):
+            turn = DebateTurn(round_no=round_no, side=side, kind="rebuttal", content=text)
+            turns.append(turn)
+            yield {"type": "turn", "turn": turn.model_dump()}
+        record.turns = list(turns)
+
+    transcript = _format_transcript(turns)
 
     # 3) Jury — all jurors concurrent (bounded), streamed as each returns.
     sem = asyncio.Semaphore(settings.debate_max_concurrency)
     # Clamped to the briefs that exist: asking for fifteen jurors when ten perspectives are defined
     # would silently seat ten and report a jury of fifteen. The registry's upper bound is 20 because
     # bounds are about catching a slipped decimal, not about what this engine can currently seat.
-    from app.services import settings_store
-
     jury_size = int(settings_store.get_or("debate_juror_count", settings.jury_size))
     jury_size = max(1, min(jury_size, len(JUROR_PERSPECTIVES)))
     perspectives = JUROR_PERSPECTIVES[:jury_size]
     tasks = [
         asyncio.create_task(
-            _run_juror(aid, focus, lens, ticker, price, fundamentals, bull, bear, settings.jury_model, sem)
+            _run_juror(aid, focus, lens, ticker, price, fundamentals, bull, bear, settings.jury_model,
+                       sem, transcript)
         )
         for (aid, focus, lens) in perspectives
     ]

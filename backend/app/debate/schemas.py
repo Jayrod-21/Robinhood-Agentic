@@ -36,7 +36,27 @@ class JuryResult(BaseModel):
     reason: str
 
 
+class DebateTurn(BaseModel):
+    """One thing one side said, in order.
+
+    The transcript is the record of the argument as it actually happened. Keeping only the final
+    bull and bear cases — which is all BullBear ever held — throws away the exchange, and the
+    exchange is where a case either survives contact or does not.
+    """
+
+    round_no: int
+    side: str          # "bull" | "bear"
+    kind: str          # "opening" | "rebuttal" | "closing"
+    content: str
+
+
 class BullBear(BaseModel):
+    """The opening statements. Kept for the existing readers and the archive format.
+
+    Superseded for display by `turns`, which carries the whole exchange; these two fields are the
+    round-1 openings and nothing more.
+    """
+
     bull_case: str
     bear_case: str
 
@@ -51,6 +71,10 @@ class DebateRecord(BaseModel):
     price: float | None = None
     fundamentals: dict | None = None
     bull_bear: BullBear | None = None
+    # The full exchange in order. Empty on records written before rebuttals existed, which is why
+    # it is a plain default rather than something a reader can assume is populated.
+    turns: list[DebateTurn] = Field(default_factory=list)
+    rounds: int = 1
     jury: JuryResult | None = None
     final_decision: Decision | None = None
     position_size_note: str | None = None
