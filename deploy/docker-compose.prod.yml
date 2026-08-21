@@ -30,6 +30,10 @@ services:
       # Same origin via Caddy → no cross-origin requests, so CORS can stay closed.
       - CORS_ORIGINS=
       - CORS_ORIGIN_REGEX=
+      # Where the Lab lives. The backend is the ONLY thing that may reach it (see the lab service
+      # below). Unset is supported and means "the Lab is not deployed here" — the routes answer 503
+      # with that sentence rather than a connection error that reads like a broken service.
+      - LAB_BASE_URL=http://lab:8100
     volumes:
       - ../data:/app/data
       - ../logs:/app/logs
@@ -61,6 +65,9 @@ services:
     networks:
       - default
       - rh-internal
+    # Deliberately NOT `depends_on: lab`. The Lab is optional and slow to start (it imports xgboost,
+    # scikit-learn and statsmodels); gating the dashboard on it would mean a Lab that fails to build
+    # takes the portfolio page down with it. The proxy answers 503 while the Lab is absent.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
       interval: 30s
@@ -84,6 +91,97 @@ services:
       resources:
         limits:
           memory: 1g
+          cpus: "2.0"
+          pids: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  lab:
+    # The Testing Lab. Trains and validates models; measures, never trades.
+    #
+    # ─────────────────────────────────────────────────────────────────────────────────────────
+    # THIS SERVICE HAS NO AUTHENTICATION, AND THAT IS THE DESIGN.
+    #
+    # It is reachable ONLY from the backend: `rh-internal` only, no `ports:`, and no route in
+    # deploy/Caddyfile. Everything that gets in has therefore already passed the app-wide CSRF
+    # guard and session gate in backend/app/main.py, via the enumerated proxy in
+    # backend/app/routers/testing_lab.py.
+    #
+    # ADDING A `ports:` LINE OR A CADDY ROUTE HERE TURNS IT INTO AN UNAUTHENTICATED ENDPOINT THAT
+    # TRAINS MODELS ON DEMAND. This paragraph is repeated in lab/app.py and in the proxy router,
+    # because the guarantee is split across all three files and no one of them can state it alone.
+    # ─────────────────────────────────────────────────────────────────────────────────────────
+    build:
+      context: ..
+      dockerfile: lab/Dockerfile
+    # backend/.env is the single place DATABASE_URL is written, so the Lab reads it from there —
+    # and then every secret in that file that the Lab has no business holding is BLANKED below.
+    #
+    # The blanks are the point. `environment` overrides `env_file`, so each line is an explicit
+    # denial that survives someone adding a new key to backend/.env without thinking about this
+    # service. The Lab reads bars and writes its own three tables; it has no auth path, no broker,
+    # no model API, and no mail. A test (backend/tests/test_testing_lab_proxy.py) reads this file
+    # and fails if a secret-shaped key in backend/.env is missing a denial here.
+    env_file:
+      - ../backend/.env
+    environment:
+      # Denied: the auth role's DSN and the key that decrypts TOTP secrets. Migration 012 REVOKEs
+      # the auth tables from rh_app entirely, so even the DSN it DOES hold cannot read them.
+      - AUTH_DATABASE_URL=
+      - TOTP_SECRET_ENC_KEY=
+      # Denied: the broker. The Lab must never be able to place an order, and the cheapest way to
+      # guarantee that is for it to hold no credential that could.
+      - ALPACA_API_KEY_ID=
+      - ALPACA_API_SECRET_KEY=
+      - AGENTIC_ACCOUNT_NUMBER=
+      # Denied: billable third-party APIs. Nothing here calls out — the service has no `default`
+      # network, so these would not work even if they were set.
+      - ANTHROPIC_API_KEY=
+      - FMP_API_KEY=
+      # Denied: mail. A training service has nobody to write to.
+      - SMTP_HOST=
+      - SMTP_USER=
+      - SMTP_PASS=
+      - SMTP_FROM=
+    # `rh-internal` ONLY — no `default`. The Lab needs the database and nothing else; it makes no
+    # outbound calls, so it has no reason to reach the internet and now cannot. This is stricter
+    # than the backend, which is dual-homed because it must call the Anthropic API.
+    networks:
+      - rh-internal
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8100/api/testing-lab/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      # Longer than the others: importing xgboost, scikit-learn and statsmodels takes real seconds,
+      # and a start_period shorter than that restart-loops a container that is merely booting.
+      start_period: 45s
+    restart: always
+    expose:
+      - "8100"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Read-only rootfs. The Lab persists results to the database, not to disk — the one thing it
+    # writes is joblib scratch, which lives in /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=512m
+    # Sized above the backend's 1g: fitting a forest over a few thousand bars holds the feature
+    # matrix, the ensemble and the walk-forward predictions at once. The cap still exists so a
+    # runaway sweep cannot take the box down — 9b runs on this machine too.
+    memswap_limit: 3g
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+          # Two cores, not all of them. A training run is pure CPU and would otherwise starve the
+          # backend it is proxied through, so the page that shows the results stops rendering while
+          # they are computed.
           cpus: "2.0"
           pids: 256
     logging:
