@@ -323,14 +323,29 @@ class ModelComparison:
         if len(self._results) < 2:
             return {"error": "Need at least 2 models for disagreement analysis"}
 
-        models = list(self._results.keys())
+        # A model whose validation never measured anything is EXCLUDED, not defaulted.
+        # The original filled a missing accuracy with 0.5 and a missing Sharpe with 0.0, which put
+        # a fabricated point inside the spread the caller reads as the models' real disagreement.
+        # An unmeasured model is reported by name instead, so the caller can see the gap.
+        measured = {
+            m: r
+            for m, r in self._results.items()
+            if r.get("measured", True) and "accuracy" in r
+        }
+        unmeasured = [m for m in self._results if m not in measured]
+        if len(measured) < 2:
+            return {
+                "error": "Need at least 2 measured models for disagreement analysis",
+                "unmeasured_models": unmeasured,
+            }
 
-        # Compare accuracy spread as a proxy for disagreement
-        accuracies = [self._results[m].get("accuracy", 0.5) for m in models]
-        sharpes = [self._results[m].get("sharpe_ratio", 0.0) for m in models]
+        models = list(measured.keys())
+        accuracies = [measured[m]["accuracy"] for m in models]
+        sharpes = [measured[m].get("sharpe_ratio", 0.0) for m in models]
 
         return {
             "models": models,
+            "unmeasured_models": unmeasured,
             "accuracy_spread": {
                 "min": round(min(accuracies), 4),
                 "max": round(max(accuracies), 4),
