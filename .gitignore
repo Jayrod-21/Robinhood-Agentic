@@ -16,6 +16,10 @@ deploy/.env
 .env.ports
 data/account_snapshot.json
 
+# Ingested Market Mover briefs. Third-party editorial content, regenerated from the source emails
+# by bin/ingest_market_mover.py, and 79 files of it — the emails are the record, not this.
+data/market_mover/
+
 # Engine-generated debate records. The twice-daily cycle writes one JSON + one MD per held position
 # per run — roughly 30 files a day, which in two days added 60 to a repo where they are dead weight:
 # the same records are persisted to the `debates` / `judgments` tables (migration 004 + the
