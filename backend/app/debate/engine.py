@@ -188,7 +188,11 @@ async def run_debate(ticker: str, question: str | None = None):
         # discard completed work. persist_debate never raises.
         from app.services.debate_store import persist_debate
 
-        await asyncio.to_thread(persist_debate, record.model_dump())
+        # mode="json" so enums become the strings the store expects. Plain model_dump() keeps
+        # Vote.HOLD as an enum, which stringifies to "Vote.HOLD", matches no decision, and was
+        # dropped — 30 debates a day persisted with zero judgments while the file records (already
+        # JSON) looked fine. The backfill tests passed for exactly that reason.
+        await asyncio.to_thread(persist_debate, record.model_dump(mode="json"))
     except Exception as exc:  # noqa: BLE001 — persistence failure shouldn't break the response
         logger.warning("failed to persist debate %s: %s", debate_id, exc)
     yield {"type": "debate_complete", "record": record.model_dump()}

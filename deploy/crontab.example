@@ -39,6 +39,19 @@ CRON_TZ=America/New_York
 # failure has been seen at least once.
 */5 * * * * /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/stack_health.sh" --quiet
 
+# ── Database backup, nightly ──────────────────────────────────────────────────────────────────
+# 22:30 ET, after the 17:15 marking run has finished writing.
+#
+# bin/db_backup.sh existed, worked, and had NEVER been scheduled: the newest dump was three weeks
+# old, predating the Alpaca migration, the seeded book, every debate record, the fundamentals
+# history and two schema migrations. Restoring it would have produced a database from a different
+# era of the project.
+#
+# That gap mattered more once the engine-generated debate records left git (see .gitignore): the
+# database became the only durable copy of a corpus that costs real tokens to produce — ~390 model
+# calls a day — and rh-db has already vanished once, on 2026-08-18.
+30 22 * * * /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/db_backup.sh"
+
 # ── Twice-daily cycle ─────────────────────────────────────────────────────────────────────────
 # Refresh the fallback snapshot, then run the cycle in the backend container: scan the universe,
 # debate every held position, write logs/reports/<date>-<phase>.md.

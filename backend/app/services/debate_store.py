@@ -81,12 +81,18 @@ def _security_id(conn, symbol: str) -> int | None:
     return row[0] if row else None
 
 
-def _decision_of(raw: str | None) -> str | None:
+def _decision_of(raw: Any) -> str | None:
     """Map the engine's verdict onto ck_judgments_decision. Unknown verdicts are dropped, not
-    coerced: writing 'hold' for something the engine did not say would fabricate a call."""
-    if not raw:
+    coerced: writing 'hold' for something the engine did not say would fabricate a call.
+
+    Accepts an enum as well as a string. It used to str() whatever it was given, so a Vote.HOLD
+    arriving from model_dump() became "vote.hold", matched nothing, and was discarded — silently,
+    which is what let it run for two days.
+    """
+    if raw is None or raw == "":
         return None
-    value = str(raw).strip().lower()
+    value = getattr(raw, "value", raw)          # enum -> its value; str -> itself
+    value = str(value).strip().lower()
     return value if value in ("buy", "sell", "hold", "escalate") else None
 
 
@@ -150,9 +156,13 @@ def _persist(record: dict[str, Any]) -> int | None:
             ).fetchone()[0]
 
         written = 0
+        dropped: list[str] = []
         for i, vote in enumerate(votes):
             decision = _decision_of(vote.get("vote"))
             if decision is None:
+                # LOUD. A vote that cannot be mapped is a juror's opinion being thrown away, and
+                # the previous `continue` made that indistinguishable from a debate with no jury.
+                dropped.append(repr(vote.get("vote")))
                 continue
             # Keyed on FOCUS AREA, not position in the list. The engine gives each juror a standing
             # brief — valuation, cash_flow, tail_risk — and those are identical across every debate
@@ -185,6 +195,13 @@ def _persist(record: dict[str, Any]) -> int | None:
                 decision=_decision_of(final if isinstance(final, str) else final.get("decision")),
                 confidence=None, rationale=record.get("position_size_note"),
                 proposals=proposals,
+            )
+
+        if dropped:
+            logger.error(
+                "debate %s: %d juror vote(s) could not be mapped to a decision and were NOT "
+                "stored: %s. The debate is recorded with fewer judgments than it produced.",
+                record.get("id"), len(dropped), ", ".join(sorted(set(dropped))),
             )
 
     logger.info("debate %s stored as debates.id=%s with %d judgment(s)",
