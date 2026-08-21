@@ -74,6 +74,19 @@ export interface BullBear {
   bear_case: string;
 }
 
+/** One thing one side said, in order.
+ *
+ *  The exchange, not just the conclusions. `bull_bear` above holds the round-1 OPENINGS only —
+ *  which was the whole record while the two researchers wrote concurrently and never saw each
+ *  other. With rebuttal rounds the order carries the meaning: a concession in round 2 is only
+ *  legible next to the claim in round 1 that forced it. */
+export interface DebateTurn {
+  round_no: number;
+  side: "bull" | "bear";
+  kind: "opening" | "rebuttal" | "closing";
+  content: string;
+}
+
 /** The fundamentals shape produced by src/data.py::fundamentals_from_info. Every field optional —
  *  yfinance misses fields routinely and older records may predate some of them. */
 export interface FundamentalsData {
@@ -105,6 +118,10 @@ export interface DebateDetail {
   price?: number | null;
   fundamentals?: FundamentalsData | null;
   bull_bear?: BullBear | null;
+  /** Empty on records written before rebuttals existed, and on hand-written archive entries — so
+   *  the page falls back to bull_bear rather than assuming this is populated. */
+  turns?: DebateTurn[];
+  rounds?: number;
   jury?: JuryResult | null;
   final_decision?: Decision | null;
   position_size_note?: string | null;

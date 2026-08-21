@@ -49,8 +49,22 @@ export function debateToMarkdown(d: DebateDetail): string {
   if (d.source) meta.push(`source: ${d.source}`);
   if (meta.length) lines.push(`\n${meta.join(" · ")}`);
 
-  if (d.bull_bear?.bull_case) lines.push(`\n## Bull case\n\n${d.bull_bear.bull_case}`);
-  if (d.bull_bear?.bear_case) lines.push(`\n## Bear case\n\n${d.bull_bear.bear_case}`);
+  // The exchange in order when there was one, falling back to the two opening statements.
+  // Exporting only bull_bear would hand someone a "transcript" missing every rebuttal — the half
+  // where each side actually answers the other, which is the half worth reading.
+  const turns = [...(d.turns ?? [])].sort(
+    (a, b) => a.round_no - b.round_no || (a.side === "bull" ? -1 : 1),
+  );
+  if (turns.length > 0) {
+    lines.push(`\n## The exchange`);
+    for (const t of turns) {
+      const who = t.side === "bull" ? "Bull" : "Bear";
+      lines.push(`\n### Round ${t.round_no} — ${who} (${t.kind})\n\n${t.content}`);
+    }
+  } else {
+    if (d.bull_bear?.bull_case) lines.push(`\n## Bull case\n\n${d.bull_bear.bull_case}`);
+    if (d.bull_bear?.bear_case) lines.push(`\n## Bear case\n\n${d.bull_bear.bear_case}`);
+  }
 
   if (d.jury) {
     lines.push(`\n## Jury (${d.jury.votes.length} votes)`);
