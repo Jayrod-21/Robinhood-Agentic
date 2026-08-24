@@ -13,14 +13,14 @@
 # The web/DB pins below MATCH backend/requirements.txt on purpose. Two services speaking the same
 # wire protocol to the same database should not be running two different psycopg versions.
 fastapi==0.141.1
-uvicorn[standard]==0.52.3
+uvicorn[standard]==0.52.4
 pydantic==2.13.4
 psycopg[binary]==3.3.4
 psycopg-pool==3.3.1
 
 # The numerics. pandas pin matches backend/requirements.txt and requirements.txt; numpy is pinned
 # explicitly rather than left to pandas' resolver, because every model here is sensitive to it.
-numpy==2.5.1
+numpy==2.5.2
 pandas==3.0.5
 
 # The models themselves.
