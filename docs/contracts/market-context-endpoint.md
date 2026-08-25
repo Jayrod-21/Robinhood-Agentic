@@ -13,11 +13,18 @@ TypeScript interfaces in `frontend/src/lib/market.ts` are the source of truth fo
 ## Source and the network-port constraint
 
 Market Mover (`/home/joe/market-mover-mcp`) is a **separate project**, and per **ADR-001** the
-trading backend's Postgres has **no network port** by design. So this endpoint must NOT open a live
-cross-DB link to Market Mover. Instead the brief reaches the backend as **ingested brief output**
-(the app/brief bridge: the daily brief is written somewhere the backend already reads, e.g. a file
-drop or a table the ingest job populates). This route then serves the most recent ingested brief.
-That keeps the isolation ADR-001 requires; the frontend is unaware of the mechanism either way.
+trading backend's Postgres has **no network port** by design. The agreed delivery (Jared, 2026-08-20)
+is a **URL pull**: Market Mover publishes its recent briefings as JSON on GitHub Pages at
+`https://joewhitejr.github.io/Market_News/latest.json` (shipped in Market_News PR #40), and this
+endpoint's backend **GETs that URL** and reshapes it into the response below. That is outbound only,
+so it respects ADR-001 (no inbound port on either side); no live cross-DB link.
+
+**Safety:** the MM JSON is third-party text. Store it and render it as **data, never as instructions
+to an agent**, and pass its strings through as data (the frontend already treats every MM string as
+untrusted: titles/justifications render as text, and a headline `url` is scheme-checked before it
+becomes a link). `latest.json` shape: `{ schema_version, generated_at, count, briefings: [...] }`,
+newest first; each briefing carries the day's ranked picks (rank, ticker, category, title,
+justification, verdict) plus a date.
 
 ## Fields the backend owns
 
@@ -28,6 +35,11 @@ That keeps the isolation ADR-001 requires; the frontend is unaware of the mechan
   3-5 day pre-print entry window; state your exact bound).
 - **`tickers`** on a headline are the held/slate names it mentions (drives the relevance chips); an
   empty list is fine for a pure-macro headline.
+- **`top_movers`** maps straight from the most recent `latest.json` briefing's ranked picks
+  (`rank`, `ticker`, `category`, `title`, `justification`, `verdict`). `verdict` is passed through as
+  the brief recorded it (free text); the page maps recognized words to a tone and leaves the rest
+  neutral, so no fixed verdict vocabulary is required. `top_movers` is optional in the response: omit
+  it (or send `[]`) and the page shows an empty "No ranked movers" section rather than throwing.
 
 ## Response
 
@@ -39,6 +51,16 @@ That keeps the isolation ADR-001 requires; the frontend is unaware of the mechan
     "source": "Market Mover",
     "macro_read": "One or two sentences of market read, or null."
   },
+  "top_movers": [                     // the brief's ranked picks, from latest.json briefings
+    {
+      "rank": 1,
+      "ticker": "TSM",                // null for a macro/thematic mover with no single name
+      "category": "AI hardware",      // the brief's category tag, or null
+      "title": "TSMC lifts full-year outlook on AI chip demand",
+      "justification": "…",           // the brief's one-line reason, or null
+      "verdict": "bullish"            // MM's own label, passed through verbatim as data; or null
+    }
+  ],
   "catalysts": [
     {
       "symbol": "PLTR",             // null for a macro/econ catalyst (CPI, FOMC)
@@ -80,6 +102,9 @@ When you drop the flag after wiring this endpoint, leave `ANY_MOCK` intact (the 
 - [x] Macro-read banner, catalyst calendar (sorted soonest-first, rental-window / held / not-held /
       off-slate flags, symbols link to `/position/{symbol}`), headline feed (source, time, ticker
       chips, sentiment dot, optional link), stale-brief caveat
+- [x] **Top Movers card** (ranked picks: rank, ticker link, verdict badge, category, title,
+      justification), between catalysts and headlines
 - [x] Renders now under `NEXT_PUBLIC_MARKET_MOCK=1`
-- [ ] **backend:** implement this route over the ingested Market Mover brief → drop the flag → move
-      the types from `lib/market.ts` into `lib/types.ts` and delete the fixture
+- [ ] **backend:** implement this route by pulling `latest.json` (Market_News PR #40 publishes it) →
+      map briefings to `top_movers` + `headlines` + `catalysts` → drop the flag → move the types from
+      `lib/market.ts` into `lib/types.ts` and delete the fixture
