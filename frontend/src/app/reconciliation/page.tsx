@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, Database, ShieldAlert } from "lucide-react
 import { PageHeader } from "@/components/shell";
 import { Badge, Card, CardBody, CardHeader, CardTitle, Spinner, StatCard } from "@/components/ui";
 import { fetcher } from "@/lib/api";
+import { useAccount, withAccount } from "@/components/account-context";
 import { ago, cn, pct, plColor, usd } from "@/lib/format";
 import { MOCK_RECONCILIATION, RECON_MOCK, type PositionStatus, type ReconciliationResponse } from "@/lib/reconciliation";
 
@@ -32,8 +33,9 @@ const STATUS_LABEL: Record<PositionStatus, string> = {
 };
 
 export default function ReconciliationPage() {
+  const { selectedId } = useAccount();
   const { data, error, isLoading } = useSWR<ReconciliationResponse>(
-    RECON_MOCK ? null : "/api/reconciliation",
+    RECON_MOCK ? null : withAccount("/api/reconciliation", selectedId),
     fetcher,
     { refreshInterval: 30_000 },
   );

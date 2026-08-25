@@ -14,6 +14,7 @@ import useSWR from "swr";
 import { Clock, Database, FlaskConical, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui";
 import { fetcher } from "@/lib/api";
+import { useAccount, withAccount } from "@/components/account-context";
 import { ago, cn } from "@/lib/format";
 import { ANY_MOCK, MOCK_DATA_TRUST, TRUST_MOCK, type DataTrustResponse } from "@/lib/dataTrust";
 
@@ -40,8 +41,9 @@ function Bar({ children }: { children: React.ReactNode }) {
 }
 
 export function DataTrustStrip() {
+  const { selectedId } = useAccount();
   const { data, error, isLoading } = useSWR<DataTrustResponse>(
-    TRUST_MOCK ? null : "/api/data-trust",
+    TRUST_MOCK ? null : withAccount("/api/data-trust", selectedId),
     fetcher,
     { refreshInterval: 30_000, shouldRetryOnError: false },
   );

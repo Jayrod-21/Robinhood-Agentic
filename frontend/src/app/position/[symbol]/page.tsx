@@ -16,6 +16,7 @@ import { AlertTriangle, ArrowLeft, Database, ShieldAlert } from "lucide-react";
 import { PageHeader } from "@/components/shell";
 import { Badge, Card, CardBody, CardHeader, CardTitle, Spinner, StatCard, decisionTone } from "@/components/ui";
 import { fetcher } from "@/lib/api";
+import { useAccount, withAccount } from "@/components/account-context";
 import { ago, cn, pct, plColor, usd } from "@/lib/format";
 import { POSITION_MOCK, buildMockPosition, type PositionDetailResponse, type ThesisStatus } from "@/lib/position";
 
@@ -36,8 +37,9 @@ const fmtDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString
 
 export default function PositionDetailPage({ params }: { params: { symbol: string } }) {
   const symbol = decodeURIComponent(params.symbol).toUpperCase();
+  const { selectedId } = useAccount();
   const { data, error, isLoading } = useSWR<PositionDetailResponse>(
-    POSITION_MOCK ? null : `/api/position/${encodeURIComponent(symbol)}`,
+    POSITION_MOCK ? null : withAccount(`/api/position/${encodeURIComponent(symbol)}`, selectedId),
     fetcher,
     { refreshInterval: 15_000 },
   );
