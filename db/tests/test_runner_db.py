@@ -410,6 +410,11 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # book looked like when a cycle chose what to debate. A broker that has moved on cannot be
         # asked that question again.
         ("024", False, True),
+        # 025's down UPDATEs every non_common_instrument row back to provider_unresolvable — it has
+        # to, or the old CHECK cannot be re-added. security_type is recomputable from two FMP
+        # calls; the dispositions are not. They carry the judgement that a hole was explained, and
+        # resetting them loses which holes a human has already looked at.
+        ("025", False, True),
     ]
 
 
