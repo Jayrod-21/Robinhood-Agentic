@@ -103,6 +103,12 @@ REGISTRY: tuple[Param, ...] = (
           "the jury never sees answered. 2 adds a rebuttal where each side must engage the other's "
           "actual case. Each extra round is two more model calls per debate.",
           "Debate — the exchange"),
+    Param("cycle_halt_on_desync", "Halt on desync", "Runs", "count", 0.0, 0.0, 1.0,
+          "Whether a cycle STOPS when the broker does not hold what docs/SLATE.md says it should. "
+          "0 warns loudly and runs anyway; 1 refuses to debate against a slate that no longer "
+          "describes the book. Off by default because a guardrail that silently stops work is how "
+          "a cycle quietly does nothing for a week — the desync itself is always loud either way.",
+          "Twice-daily cycle — reconciliation preflight"),
     Param("debate_juror_count", "Jurors", "Runs", "count", 10.0, 1.0, 20.0,
           "How many independent jurors weigh in per debate. More jurors is a steadier verdict and a "
           "proportionally larger bill.",

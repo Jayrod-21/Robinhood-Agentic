@@ -34,7 +34,7 @@ from app.config import get_settings
 # and this cron job share one implementation; importing it here costs one extra app construction
 # at job start, which is negligible next to the scan + debates the job exists to run.
 from app.main import configure_logging
-from app.services import cycle_state
+from app.services import cycle_state, reconcile_check
 
 configure_logging()
 logger = logging.getLogger("agentic.jobs.cycle")
@@ -89,8 +89,14 @@ def _account_view_sync():
         return None
 
 
-def _format_report(phase: str, now: datetime, account, survivors, scanned, debates) -> str:
+def _format_report(
+    phase: str, now: datetime, account, survivors, scanned, debates, reconciliation=None
+) -> str:
     lines = [f"# Cycle report — {phase.upper()} — {now:%Y-%m-%d %H:%M UTC}", ""]
+
+    # First, above the account and the debates. It is the only section that changes how every other
+    # section should be read.
+    lines += reconcile_check.report_section(reconciliation)
 
     if account is not None:
         lines += [
@@ -168,6 +174,16 @@ async def _run_cycle_body(phase: str, max_debates: int, run_id: int | None) -> s
     settings = get_settings()
     now = datetime.now(timezone.utc)
 
+    # PREFLIGHT, before anything else spends a token. Debating eight positions against a slate that
+    # no longer describes the book is not a cheaper mistake for being made first — it is the same
+    # mistake with a bill attached, and it is what happened twice a day for weeks (issue #22).
+    reconciliation = await asyncio.to_thread(reconcile_check.run)
+    # Record BEFORE honouring a halt. The run an operator most wants explained is the one that
+    # refused to proceed, and it must not be the one that stored nothing about why.
+    await asyncio.to_thread(cycle_state.record_reconciliation, run_id, reconciliation)
+    if reconciliation.get("halt"):
+        raise reconcile_check.DesyncHalt(reconciliation["halt"])
+
     account = await asyncio.to_thread(_account_view_sync)
     scanned = await asyncio.to_thread(_run_scan_sync)
     survivors = sorted((r for r in scanned if r.passed), key=lambda r: r.composite or 0.0, reverse=True)
@@ -219,7 +235,7 @@ async def _run_cycle_body(phase: str, max_debates: int, run_id: int | None) -> s
 
         debates = await asyncio.gather(*[_tracked(s) for s in symbols])
 
-    report = _format_report(phase, now, account, survivors, scanned, debates)
+    report = _format_report(phase, now, account, survivors, scanned, debates, reconciliation)
     report_path = settings.logs_dir / "reports" / f"{now:%Y-%m-%d}-{phase}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report)
