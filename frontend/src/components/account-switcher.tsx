@@ -68,10 +68,9 @@ export function AccountSwitcher() {
                 <Check className={cn("mt-0.5 h-4 w-4 shrink-0", active ? "text-gain" : "text-transparent")} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm text-zinc-100">{a.name}</span>
-                  {a.strategy && <span className="block truncate text-xs text-zinc-500">{a.strategy}</span>}
                 </span>
-                <span className={cn("mt-0.5 shrink-0 text-[10px] uppercase tracking-wide", a.broker_env === "alpaca-live" ? "text-loss" : "text-brass")}>
-                  {a.broker_env === "alpaca-live" ? "live" : "paper"}
+                <span className={cn("mt-0.5 shrink-0 text-[10px] uppercase tracking-wide", a.is_paper ? "text-brass" : "text-loss")}>
+                  {a.is_paper ? "paper" : "live"}
                 </span>
               </button>
             );

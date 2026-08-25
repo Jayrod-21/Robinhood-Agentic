@@ -5,10 +5,17 @@
 // operator on the account they were looking at. Degrades cleanly: until the accounts list resolves
 // (or if it never does), `selected` is null and callers fall back to the backend's default account.
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { fetcher } from "@/lib/api";
-import { ACCOUNTS_MOCK, MOCK_ACCOUNTS, type Account, type AccountsResponse } from "@/lib/accounts";
+import {
+  ACCOUNTS_MOCK,
+  MOCK_ACCOUNTS,
+  defaultAccountId,
+  toAccounts,
+  type Account,
+  type AccountsResponse,
+} from "@/lib/accounts";
 
 const STORAGE_KEY = "ww.selectedAccountId";
 
@@ -29,7 +36,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     { shouldRetryOnError: false, revalidateOnFocus: false },
   );
   const resp = ACCOUNTS_MOCK ? MOCK_ACCOUNTS : data;
-  const accounts = resp?.accounts ?? [];
+  const accounts = useMemo(() => toAccounts(resp), [resp]);
+  const defaultId = useMemo(() => defaultAccountId(resp), [resp]);
   const [selectedId, setSelectedIdState] = useState<string | null>(null);
 
   // Hydrate the selection once the list is known. localStorage is read here (an effect), never in
@@ -38,10 +46,10 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!accounts.length) return;
     const stored = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
-    const valid = stored && accounts.some((a) => a.id === stored) ? stored : resp?.default_id ?? accounts[0].id;
+    const valid = stored && accounts.some((a) => a.id === stored) ? stored : defaultId ?? accounts[0].id;
     setSelectedIdState(valid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accounts.length, resp?.default_id]);
+  }, [accounts.length, defaultId]);
 
   const setSelectedId = (id: string) => {
     setSelectedIdState(id);
