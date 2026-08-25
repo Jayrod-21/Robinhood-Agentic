@@ -11,12 +11,12 @@
 
 import useSWR from "swr";
 import Link from "next/link";
-import { AlertTriangle, CalendarClock, Database, Newspaper } from "lucide-react";
+import { AlertTriangle, CalendarClock, Database, Newspaper, TrendingUp } from "lucide-react";
 import { PageHeader } from "@/components/shell";
 import { Badge, Card, CardBody, CardHeader, CardTitle, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import { ago, cn } from "@/lib/format";
-import { MARKET_MOCK, MOCK_MARKET_CONTEXT, type Catalyst, type Headline, type MarketContextResponse, type Sentiment } from "@/lib/market";
+import { MARKET_MOCK, MOCK_MARKET_CONTEXT, type Catalyst, type Headline, type MarketContextResponse, type Sentiment, type TopMover } from "@/lib/market";
 
 const SENTIMENT_DOT: Record<Sentiment, string> = { positive: "bg-gain", negative: "bg-loss", neutral: "bg-zinc-600" };
 
@@ -95,6 +95,7 @@ export default function MarketPage() {
   }
 
   const { meta, catalysts, headlines } = resp;
+  const topMovers = resp.top_movers ?? [];
   const sortedCatalysts = [...catalysts].sort((a, b) => (a.days_until ?? 1e9) - (b.days_until ?? 1e9));
 
   return (
@@ -136,6 +137,26 @@ export default function MarketPage() {
         </CardBody>
       </Card>
 
+      {/* The brief's ranked movers: Market Mover's own signal, above the raw headline feed. */}
+      <Card className="mt-4">
+        <CardHeader className="flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-zinc-500" />
+          <CardTitle>Top Movers</CardTitle>
+          <span className="text-[11px] text-zinc-600">Market Mover brief</span>
+        </CardHeader>
+        <CardBody className="p-0">
+          {topMovers.length === 0 ? (
+            <p className="px-5 py-6 text-sm text-zinc-500">No ranked movers in the brief.</p>
+          ) : (
+            <ul className="divide-y divide-ink-850">
+              {topMovers.map((m) => (
+                <MoverRow key={m.rank} m={m} />
+              ))}
+            </ul>
+          )}
+        </CardBody>
+      </Card>
+
       {/* Then the headline feed for names in the book. */}
       <Card className="mt-4">
         <CardHeader className="flex items-center gap-2">
@@ -160,6 +181,38 @@ export default function MarketPage() {
         act on catalysts against the documented slate, not on a single headline.
       </p>
     </div>
+  );
+}
+
+// Verdict is a free-text label from the brief; map only the words we recognize to a tone and leave
+// the rest neutral, rather than asserting a fixed enum the upstream brief may not use.
+function moverTone(verdict: string): "buy" | "sell" | "neutral" {
+  const v = verdict.toLowerCase();
+  if (/bull|buy|positive|upgrade|\bup\b/.test(v)) return "buy";
+  if (/bear|sell|negative|downgrade|avoid|\bdown\b/.test(v)) return "sell";
+  return "neutral";
+}
+
+function MoverRow({ m }: { m: TopMover }) {
+  return (
+    <li className="flex items-start gap-3 px-5 py-3">
+      <div className="w-7 shrink-0 pt-0.5 text-sm font-medium tnum text-zinc-500">#{m.rank}</div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          {m.ticker ? (
+            <Link href={`/position/${encodeURIComponent(m.ticker)}`} className="text-sm font-medium text-zinc-100 transition-colors hover:text-brass">
+              {m.ticker}
+            </Link>
+          ) : (
+            <span className="text-sm font-medium text-zinc-300">Macro</span>
+          )}
+          {m.verdict && <Badge tone={moverTone(m.verdict)}>{m.verdict}</Badge>}
+          {m.category && <span className="text-[10px] uppercase tracking-wide text-zinc-600">{m.category}</span>}
+        </div>
+        <div className="mt-0.5 text-sm text-zinc-200">{m.title}</div>
+        {m.justification && <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">{m.justification}</p>}
+      </div>
+    </li>
   );
 }
 

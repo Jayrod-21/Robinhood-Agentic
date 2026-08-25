@@ -47,6 +47,23 @@ export interface Catalyst {
   note: string | null;
 }
 
+// A ranked market-mover pick from the brief: the daily "what moved and why", in the brief's own
+// order. Sourced from Market Mover's latest.json briefing records; text fields are third-party and
+// rendered as data (never trusted), same rule as the headlines.
+export interface TopMover {
+  /** 1-based rank within the day's brief. */
+  rank: number;
+  /** The name the pick is about; null for a macro/thematic mover with no single ticker. */
+  ticker: string | null;
+  /** The brief's category tag for the pick (e.g. "AI hardware", "Macro"); null when none. */
+  category: string | null;
+  title: string;
+  /** The brief's one-line reason for the pick; null when none. */
+  justification: string | null;
+  /** Market Mover's own verdict label, passed through verbatim as data; null when none. */
+  verdict: string | null;
+}
+
 export interface MarketMeta {
   brief_generated_at: string | null;
   /** The brief is older than a trading day; act on it with that caveat. */
@@ -58,6 +75,9 @@ export interface MarketMeta {
 
 export interface MarketContextResponse {
   meta: MarketMeta;
+  /** The brief's ranked movers. Optional so a backend that has not added the field yet degrades to
+   *  an empty section rather than throwing. */
+  top_movers?: TopMover[];
   catalysts: Catalyst[];
   headlines: Headline[];
 }
@@ -190,6 +210,41 @@ const HEADLINES: Headline[] = [
   },
 ];
 
+const TOP_MOVERS: TopMover[] = [
+  {
+    rank: 1,
+    ticker: "TSM",
+    category: "AI hardware",
+    title: "TSMC lifts full-year outlook on sustained AI chip demand",
+    justification: "Advanced-node orders read straight through to the compute anchor; the strongest confirming signal in the book today.",
+    verdict: "bullish",
+  },
+  {
+    rank: 2,
+    ticker: "VST",
+    category: "AI power",
+    title: "Vistra signs another data-center power agreement",
+    justification: "Adds to the unguided PPA option the thesis sized VST above GEV for.",
+    verdict: "bullish",
+  },
+  {
+    rank: 3,
+    ticker: "QCOM",
+    category: "Semis",
+    title: "Qualcomm slump extends after soft guidance",
+    justification: "The name is past its -20% stop; the tape keeps confirming the break, not the thesis.",
+    verdict: "bearish",
+  },
+  {
+    rank: 4,
+    ticker: null,
+    category: "Macro",
+    title: "Fed officials signal caution as CPI looms",
+    justification: "Frames the CPI print two days out as the near-term pivot for the whole book.",
+    verdict: "neutral",
+  },
+];
+
 export const MOCK_MARKET_CONTEXT: MarketContextResponse = {
   meta: {
     brief_generated_at: "2026-08-16T12:30:00Z",
@@ -198,6 +253,7 @@ export const MOCK_MARKET_CONTEXT: MarketContextResponse = {
     macro_read:
       "AI-capex sentiment is wobbling into a CPI print two days out; the power leg (VST/CVX) is holding better than the compute leg. Two held names report within two weeks, and PLTR's rental window is open.",
   },
+  top_movers: TOP_MOVERS,
   catalysts: CATALYSTS,
   headlines: HEADLINES,
 };
