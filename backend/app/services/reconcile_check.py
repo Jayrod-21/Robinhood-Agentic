@@ -63,6 +63,14 @@ def run(*, halt_on_desync: bool | None = None) -> dict[str, Any]:
         return {"checked": False, "reason": f"{type(exc).__name__}: {exc}"}
 
     meta = report.get("meta") or {}
+    if meta.get("slate_documented") is False:
+        # Not a desync and not a failure — this account was never given targets. Reported as
+        # "did not run", with the reason, so the cycle row stores NULLs (024) rather than a
+        # verdict about a comparison that did not happen.
+        reason = report.get("note") or "no documented slate for this account"
+        logger.info("reconciliation skipped: %s", reason)
+        return {"checked": False, "reason": reason}
+
     summary = report.get("summary") or {}
     positions = report.get("positions") or []
     checks = report.get("checks") or []

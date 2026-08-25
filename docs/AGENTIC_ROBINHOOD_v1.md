@@ -8,6 +8,25 @@
 > (see `reference/SOURCES.md`), adapted for a small, aggressive, fully-agentic equities account.
 > Read the Wasden framework (via `reference/SOURCES.md` → 3a `KNOWLEDGE_BASE_v2.md`) before acting.
 
+> ## ⚠ What this charter says that is no longer true (as of 2026-08-25)
+>
+> This is a **dated charter**, kept as the record of what was agreed on June 3, 2026. Its principles
+> — concentration over leverage, human confirmation on every order, no-ruin sizing — all still hold.
+> Several of its *facts* do not, and they are listed here rather than edited in place, because
+> silently rewriting a signed charter loses the thing a charter is for.
+>
+> | §  | Says | Actually |
+> |----|------|----------|
+> | 2  | Venue is Robinhood `••••4025`, $100 cash | Account of record is **Alpaca paper `••••I1PN`, ~$100,000**, since 2026-08-17 |
+> | 2  | "the ONLY account the agent may trade" | **Multiple Alpaca paper accounts** are planned for testing; `GET /api/accounts` is the live registry, and each account reconciles against its own slate (`docs/slates/`) or none |
+> | 2  | Cash account, T+1 settlement, no margin | Paper account, margin multiplier 1 — buying power == equity |
+> | 3  | Market data: Robinhood MCP quotes, yfinance/Finnhub fundamentals | **FMP** for prices and fundamentals; yfinance survives only in the corporate-actions/delistings loader image |
+> | 3  | Execution: Robinhood MCP `review` → confirm → `place` | Alpaca (`src/alpaca.py`); `ALPACA_BASE_URL` is the one variable separating paper from live, and execution refuses live unless explicitly enabled |
+> | 5  | Risk constants retuned for a $100 account | The percentage rules carry over unchanged — they were always allocations. The **dollar** figures do not. |
+>
+> Everything below is the June 3 text. `PROJECT_HISTORY.md` has the full account of what changed and
+> when; `README.md` has the current state.
+
 ---
 
 ## 1. Mission

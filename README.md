@@ -9,9 +9,14 @@ measurement layer needed to tell whether any of it is actually working.
 
 Private repo. Co-owned — see [Ownership](#ownership).
 
-> **Current state, 2026-08-17.** The account of record is now an **Alpaca paper account**
-> (`••••I1PN`, $100,000 cash, 0 positions, margin multiplier 1 so buying power == equity), not the
-> Robinhood account this file otherwise describes. `/api/account` reads Alpaca live
+> **Current state, 2026-08-25.** The account of record is an **Alpaca paper account**
+> (`••••I1PN`, ~$100,000, margin multiplier 1 so buying power == equity), not the Robinhood account
+> this file otherwise describes. It holds **fifteen seeded positions at ~0.5% each with ~92% cash** —
+> an equal-dollar basket added 2026-08-17/18 to give the marking job and the performance page
+> something real to value, *not* the strategy's track record and not the documented slate
+> (`docs/SLATE.md` §"Holdings that are not this slate"). More paper accounts are planned for
+> testing; each gets its own slate under `docs/slates/`, or none, and reconciliation never measures
+> one account against another's targets. `/api/account` reads Alpaca live
 > (`backend/app/services/broker.py` → `src/alpaca.py`), verified against the live API.
 > `ALPACA_BASE_URL` is the one variable separating paper from live trading; paper is the default.
 > When Alpaca is configured but unreachable, the dashboard refuses rather than falling back to the

@@ -86,6 +86,44 @@ class SizingRules:
     trim_multiple: float = 1.3
 
 
+# Where a per-account slate lives. Account 1 keeps docs/SLATE.md, because that is the file the
+# charter, the README, the reconciliation checks and three years of journal entries all name.
+SLATE_DIR = "slates"
+DEFAULT_SLATE = "SLATE.md"
+
+
+def slate_path_for(docs_dir: Path, account_id: int | None, default_account_id: int = 1) -> Path | None:
+    """The slate governing one account, or None when that account has no documented slate.
+
+    NONE IS NOT "FALL BACK TO ACCOUNT 1"
+        This is the whole point of the function. Before it, reconciliation read docs/SLATE.md no
+        matter which account_id it was given, so the moment a second account exists every one of
+        them reconciles against the first account's plan. An ML-testing account would report as
+        catastrophically out of sync with a strategy it was never meant to follow, and the operator
+        would learn to ignore the alarm — which costs more than having no alarm at all.
+
+        A slate is a claim about what a SPECIFIC book should hold. Applying one account's claim to
+        another account's holdings does not produce a weaker answer; it produces a wrong one.
+
+    RESOLUTION ORDER
+        docs/slates/account-<N>.md          — explicit, for any account
+        docs/SLATE.md                       — account 1 only, and only if the above is absent
+        None                                — this account has no documented slate
+
+    The per-account file wins even for account 1, so a book can be moved onto the numbered scheme
+    without a code change and without two files silently disagreeing about the same account.
+    """
+    if account_id is None:
+        account_id = default_account_id
+    explicit = docs_dir / SLATE_DIR / f"account-{int(account_id)}.md"
+    if explicit.is_file():
+        return explicit
+    legacy = docs_dir / DEFAULT_SLATE
+    if int(account_id) == default_account_id and legacy.is_file():
+        return legacy
+    return None
+
+
 def _read(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8")

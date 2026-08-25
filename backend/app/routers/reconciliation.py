@@ -32,11 +32,11 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query
 
 from app.config import get_settings
-from app.services import settings_store
+from app.services import accounts, settings_store
 from app.services.broker import get_snapshot
 from app.services.freshness import is_stale
 from app.services.marks import get_marks, resolve_ttl_seconds
-from app.services.slate import load_sizing_rules, load_slate
+from app.services.slate import SLATE_DIR, load_sizing_rules, load_slate, slate_path_for
 from app.services.snapshot import SnapshotError
 from app.services.valuation import account_totals, value_position, weight_pct
 
@@ -69,6 +69,20 @@ OFF_FACTOR_NAMES = ("V", "CVX")
 _SLATE_DATED = re.compile(r"Allocation \(as of (?P<date>\d{4}-\d{2}-\d{2})\)")
 # "$100 Agentic account" — what the slate assumed the book was worth when it was written. A gap
 # against the live account value usually means deposits nobody recorded.
+# The book size the slate was written against. TWO patterns, in order:
+#
+#   1. An explicit `Documented book: $100,000` line. This is what a slate should carry.
+#   2. The original prose form, "$100,000 Agentic account", kept so slates written before the
+#      labelled line existed still parse.
+#
+# Pattern 2 is why this comment is long. It scraped a number out of an English sentence, so
+# rewriting that sentence — which happened the moment SLATE.md gained a per-account header —
+# silently turned documented_book_value into None, and the endpoint went on reporting a book size
+# of "unknown" as though the slate had never claimed one. A value that depends on prose phrasing is
+# a value that breaks on an edit nobody thought was risky.
+_DOCUMENTED_BOOK_LABELLED = re.compile(
+    r"Documented book:\s*\$(?P<amount>[0-9][0-9,]*(?:\.[0-9]{2})?)", re.IGNORECASE
+)
 _DOCUMENTED_BOOK = re.compile(r"\$(?P<amount>[0-9][0-9,]*(?:\.[0-9]{2})?)\s+Agentic account")
 
 
@@ -81,17 +95,65 @@ def _slate_meta(text: str) -> tuple[str | None, float | None]:
     if m:
         dated = m.group("date")
     book = None
-    m = _DOCUMENTED_BOOK.search(text)
+    m = _DOCUMENTED_BOOK_LABELLED.search(text) or _DOCUMENTED_BOOK.search(text)
     if m:
         book = float(m.group("amount").replace(",", ""))
     return dated, book
+
+
+def _relative(path: Any, settings: Any) -> str:
+    """The slate's path as it is written in the docs, not as it is mounted in a container."""
+    try:
+        return f"docs/{path.relative_to(settings.docs_dir)}"
+    except (ValueError, AttributeError):
+        return str(path)
+
+
+def _undocumented(account_id: int | None, settings: Any, docs: Any) -> dict[str, Any]:
+    """The response for an account with no slate on file.
+
+    Deliberately NOT a diff. Listing every holding as 'unexpected' against an empty target set is
+    technically true and practically a lie: it reads as fifteen findings when the finding is one,
+    and it is the shape that trains an operator to skim past a reconciliation panel.
+    """
+    resolved = account_id or accounts.DEFAULT_ACCOUNT_ID
+    expected = f"docs/{SLATE_DIR}/account-{resolved}.md"
+    logger.info("account %s has no documented slate (looked for %s)", resolved, expected)
+    return {
+        "meta": {
+            "slate_source": None,
+            "slate_documented": False,
+            "account_id": resolved,
+            "slate_dated": None,
+            "expected_slate_path": expected,
+            "thresholds_source": None,
+        },
+        "summary": {"matched": 0, "drifted": 0, "missing": 0, "unexpected": 0,
+                    "checks_total": 0, "checks_failing": 0},
+        "positions": [],
+        "checks": [],
+        "note": (
+            f"Account {resolved} has no documented slate. Nothing was reconciled — this is a "
+            f"normal state for a testing book. Write {expected} to give it targets."
+        ),
+    }
 
 
 @router.get("/reconciliation")
 def reconciliation(account_id: AccountId = None) -> dict[str, Any]:
     settings = get_settings()
     docs = settings.docs_dir
-    slate_path = docs / "SLATE.md"
+    # Per ACCOUNT, never a fall-back to account 1's plan. A slate is a claim about what a specific
+    # book should hold, and applying one account's claim to another's holdings does not produce a
+    # weaker answer — it produces a wrong one, on every row.
+    slate_path = slate_path_for(docs, account_id, accounts.DEFAULT_ACCOUNT_ID)
+
+    if slate_path is None:
+        # 200 with an explicit "nothing to reconcile against". NOT a 503, which means the slate
+        # could not be READ, and not a diff against some other account's targets. An account with
+        # no documented slate is a normal state — a testing book is not supposed to have one.
+        return _undocumented(account_id, settings, docs)
+
     slate = load_slate(slate_path)
     rules = load_sizing_rules(slate_path)
 
@@ -213,7 +275,9 @@ def reconciliation(account_id: AccountId = None) -> dict[str, Any]:
 
     return {
         "meta": {
-            "slate_source": "docs/SLATE.md",
+            "slate_source": _relative(slate_path, settings),
+            "slate_documented": True,
+            "account_id": account_id or accounts.DEFAULT_ACCOUNT_ID,
             "slate_dated": slate_dated,
             "snapshot_generated_at": generated,
             "snapshot_stale": stale,

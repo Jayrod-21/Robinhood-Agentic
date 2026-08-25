@@ -1,8 +1,18 @@
-# Target Slate — current allocation plan
+# Target Slate — account 1
 
-> The live target portfolio for the $100,000 Agentic account. Output of the 2026-06-03 allocation
-> debate (12-agent workflow; Reframe-Barbell philosophy won 80/82/84). Updated each cycle; executed
-> in bootstrap mode (an owner confirms every order). Theses live in `THESES.md`.
+> **This file is the slate for ACCOUNT 1 only.** Alpaca paper `••••I1PN` — the agentic debate book.
+>
+> **Documented book: $100,000.** That line is parsed (`_DOCUMENTED_BOOK_LABELLED`) and reported as
+> `documented_book_value`, so reconciliation can say when the live account has drifted from the size
+> the slate assumes — unrecorded deposits, or a broker migration. **Keep the label.** The value used
+> to be scraped out of a prose sentence naming the account and its size, so rewriting that sentence
+> — which adding this per-account header did — turned it into `None` with nothing noticing. Other accounts have their own slates under `docs/slates/account-<N>.md`, or no slate
+> at all, and reconciliation never applies one account's targets to another's holdings. See
+> [Which slate governs which account](#which-slate-governs-which-account) below.
+>
+> Output of the 2026-06-03 allocation debate (12-agent workflow; Reframe-Barbell philosophy won
+> 80/82/84). Updated each cycle; executed in bootstrap mode (an owner confirms every order). Theses
+> live in `THESES.md`.
 >
 > **Account of record (since 2026-08-17): Alpaca paper `••••I1PN`, $100,000.** The debate that
 > produced these weights was run against a $100 Robinhood book; the percentages carry over
@@ -43,15 +53,59 @@ That is deliberately not the same as promoting them to targets: a position with 
 no thesis is exactly what the sell-discipline rule exists to catch, and blessing fifteen of them by
 editing the table above would switch that alarm off rather than answer it.
 
-    AMD · NVDA · GM · MSFT · QBTS · ISRG · GLD · BRK.B · BE · QCOM · VST · V · CVX · SVRA · TMO
+**Measured 2026-08-25** (account value $99,992.61, cash 92.51%):
 
-Five of them (NVDA, VST, V, CVX, QCOM) are also slate names, so they reconcile as **drifted** — held
-at ~0.5% of account value against double-digit targets. The other ten reconcile as **unrecorded**.
-Cash sits at ~93% against a 10-20% band, which breaches by design: the slate has not been executed.
+| Held | Weight | Reconciles as |
+|------|--------|---------------|
+| NVDA | 0.48% | drifted (13% target) |
+| VST | 0.48% | drifted (15% target) |
+| V | 0.53% | drifted (12% target) |
+| CVX | 0.49% | drifted (11% target) |
+| QCOM | 0.50% | drifted (6% target) |
+| AMD | 0.49% | unrecorded |
+| BE | 0.49% | unrecorded |
+| BRK.B | 0.50% | unrecorded |
+| GLD | 0.53% | unrecorded |
+| GM | 0.51% | unrecorded |
+| ISRG | 0.46% | unrecorded |
+| MSFT | 0.51% | unrecorded |
+| QBTS | 0.47% | unrecorded |
+| SVRA | 0.52% | unrecorded |
+| TMO | 0.54% | unrecorded |
+
+Five are also slate names, so they reconcile as **drifted** — held at ~0.5% of account value against
+double-digit targets. The other ten reconcile as **unrecorded**. TSM, GEV and PLTR are **missing**
+entirely: they were never seeded. Cash sits at 92.5% against a 10-20% band, which breaches by
+design, because the slate has not been executed.
+
+**The twice-daily cycle now reports this every run** (`backend/app/services/reconcile_check.py`).
+It reads OUT OF SYNC at the top of every cycle report and logs at ERROR, which is correct and
+expected until the slate is either executed or replaced. It does not stop the cycle; the
+`cycle_halt_on_desync` tunable decides that and is off by default.
 
 TMO was originally written "TMOM", which is not a symbol on any venue this project can reach. It was
 resolved with the owner as Thermo Fisher and seeded 2026-08-18, which is why it arrived a day after
 the other fourteen.
+
+## Which slate governs which account
+
+Reconciliation resolves a slate **per account** and never falls back to another account's plan
+(`backend/app/services/slate.py::slate_path_for`):
+
+| Account | Slate file |
+|---------|-----------|
+| 1 (this one) | `docs/SLATE.md`, or `docs/slates/account-1.md` if that exists |
+| N | `docs/slates/account-N.md` |
+| any, with no such file | **none** — reconciliation reports "no documented slate" and diffs nothing |
+
+An account with no slate is a normal state, not a fault: a testing book is not supposed to have
+targets. What must never happen is account 4 being measured against account 1's targets — every row
+would be a finding, the panel would be permanently red, and an operator would learn to skim past the
+one place a real desync shows up.
+
+To give an account targets, write `docs/slates/account-N.md` with a table in the same shape as the
+one above. The parser reads rows matching `| **TICKER** | pct | ... |` and treats `CASH` as the
+cash target rather than a position.
 
 ## Correlation verdict (Wasden risk #3)
 ~60% of the book (TSM+VST+NVDA+GEV+QCOM) is **one bet** — the AI-buildout capex cycle staying intact.

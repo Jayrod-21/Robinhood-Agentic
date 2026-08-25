@@ -29,10 +29,15 @@ unchanged.
   churn and this account's fast-moving strategy stay out of the shared, governed 3a repo — a
   separation of concerns between two codebases, not between people.
 
-## Account
-Robinhood "Agentic" `••••4025` (cash, `agentic_allowed: true`) — the ONLY account the agent may
-trade. Started June 3, 2026 with $100.00, all cash. **Superseded as the dashboard's account of
-record 2026-08-17** by an Alpaca paper account — see
+## Accounts
+**Account of record: Alpaca paper `••••I1PN`, ~$100,000** (since 2026-08-17). More Alpaca paper
+accounts are planned for testing; `GET /api/accounts` is the live registry, populated from
+`ALPACA_ACCOUNT_<N>_*` environment variables. Each account reconciles against **its own** slate
+(`docs/SLATE.md` for account 1, `docs/slates/account-N.md` for the rest) or against none —
+one account's targets are never applied to another's holdings.
+
+*Historical:* Robinhood "Agentic" `••••4025` (cash, `agentic_allowed: true`) was the only account
+the agent could trade. Started June 3, 2026 with $100.00, all cash. Superseded 2026-08-17 — see
 [Current account state](#current-account-state-2026-08-17) above.
 
 ## Tech Stack
