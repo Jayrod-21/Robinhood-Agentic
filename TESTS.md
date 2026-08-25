@@ -81,7 +81,7 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
 
 ### 3b. Migration runner + loader tests (needs Docker)
 - **Command:** `python3 -m pytest db/tests/ -q`
-- **Pass criteria:** all tests pass (currently 246). Seven layers: discovery tests for the
+- **Pass criteria:** all tests pass (currently 256). Seven layers: discovery tests for the
   filename-based destructive classification (ADR-002: `NNN_name.destructive.{up,down}.sql`),
   loud rejection of near-miss filenames (uppercase `.SQL`, trailing junk — never silently
   skipped), byte-level rejection (NUL / BOM / invalid UTF-8), the best-effort keyword sniff
@@ -117,7 +117,10 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
   baseline move clearing the previous one transactionally, a sweep winner drawn from measured
   points only, a leaderboard that never surfaces an unmeasured run and labels a measured-but-
   degenerate one, and a health probe that tells an unreachable database apart from an unmigrated
-  one.
+  one. Plus 024's reconciliation columns on `cycle_runs` (`test_cycle_reconciliation.py`): a run
+  that never reconciled leaves them NULL rather than zeroed, a partial write is refused, `in_sync`
+  must agree with the counts in both directions, and desynced runs are indexed apart from runs that
+  never checked.
 - **Network:** Docker only — testcontainers spins a throwaway postgres:16-alpine; the live rh-db
   is never touched.
 

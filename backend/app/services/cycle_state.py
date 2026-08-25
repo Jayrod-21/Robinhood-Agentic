@@ -20,6 +20,7 @@ STALE RUNS ARE SWEPT, NOT TRUSTED
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -54,6 +55,10 @@ def update(run_id: int | None, **fields: Any) -> None:
         return
     allowed = {
         "total_positions", "completed_positions", "current_symbol", "scanned", "survivors",
+        # 024. Written as one patch from record_reconciliation() below, never piecemeal: the
+        # CHECK constraints require reconciled_at, in_sync and the counts to arrive together.
+        "reconciled_at", "in_sync", "recon_matched", "recon_drifted", "recon_missing",
+        "recon_unexpected", "recon_breaches", "recon_findings",
     }
     sets = {k: v for k, v in fields.items() if k in allowed}
     if not sets:
@@ -67,6 +72,29 @@ def update(run_id: int | None, **fields: Any) -> None:
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not update cycle_runs %s: %s", run_id, exc)
+
+
+def record_reconciliation(run_id: int | None, result: dict) -> None:
+    """Store the preflight's verdict on the run, as one atomic patch.
+
+    A reconciliation that DID NOT RUN writes nothing, deliberately. 024 distinguishes NULL ("we
+    never looked") from FALSE ("we looked and it does not match"), and filling the columns with
+    zeros for a check that failed to execute would collapse exactly the distinction that migration
+    exists to preserve.
+    """
+    if run_id is None or not result.get("checked"):
+        return
+    update(
+        run_id,
+        reconciled_at=datetime.now(timezone.utc),
+        in_sync=bool(result["in_sync"]),
+        recon_matched=int(result["matched"]),
+        recon_drifted=int(result["drifted"]),
+        recon_missing=int(result["missing"]),
+        recon_unexpected=int(result["unexpected"]),
+        recon_breaches=int(result["breaches"]),
+        recon_findings=json.dumps(result.get("findings") or [], default=str),
+    )
 
 
 def finish(run_id: int | None, *, error: str | None = None) -> None:

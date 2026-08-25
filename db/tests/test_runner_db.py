@@ -404,6 +404,12 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # specific time; re-running it after the code has moved produces a different number, not the
         # same one. What is lost is the record of what was true when the decision was made.
         ("023", False, True),
+        # 024's down drops columns, which destroys their data — the runner checks the filename and
+        # is right to. Fourth outing for the "it is only a cache" argument, after 014, 022 and 023:
+        # /api/reconciliation answers about the book RIGHT NOW, while these columns record what the
+        # book looked like when a cycle chose what to debate. A broker that has moved on cannot be
+        # asked that question again.
+        ("024", False, True),
     ]
 
 
