@@ -71,6 +71,14 @@ are not in the system interpreter.
     §5.4 `otpauth://`-URI and base32-secret rules).
 - **Network:** none — yfinance/Anthropic calls are monkeypatched. Docker only, for
   `test_auth_db.py` and `test_outcomes_db.py` (throwaway testcontainers postgres).
+  Plus the per-account slate resolution (`test_slate_per_account.py`): a slate governs ONE account
+  and reconciliation never falls back to another account's targets, an account with no slate reports
+  a state rather than a fifteen-row diff, and the numbered file wins for account 1 too. Plus the
+  documentation-consistency suite (`test_docs_consistency.py`): every thesis is either in the slate
+  or marked as excluded, dated prices in headings carry an as-of label, SLATE.md still parses and
+  documents the resolution order it is subject to, the README does not claim an empty account, the
+  charter lists its superseded facts, and the documented book size parses from its LABEL rather than
+  from a prose sentence that any edit can break.
 
 ### 3. Frontend build
 - **Command:** `cd frontend && npm install --no-audit --no-fund && npm run build`

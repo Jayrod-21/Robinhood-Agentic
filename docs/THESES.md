@@ -1,8 +1,36 @@
 # Living Forward Theses
 
-> The forward-thinking layer's output (see `THESIS_FRAMEWORK.md`). Re-read and updated every cycle.
-> Each thesis is forward + falsifiable. Drafted June 3, 2026. Reactivity (buy fear, exit gaps) is the
-> seatbelt; these theses are the anticipatory WHAT/WHY. Sources captured in the research that produced them.
+> The forward-thinking layer's output (see `THESIS_FRAMEWORK.md`). Each thesis is forward +
+> falsifiable. Reactivity (buy fear, exit gaps) is the seatbelt; these theses are the anticipatory
+> WHAT/WHY. Sources captured in the research that produced them.
+
+## ⚠ Status as of 2026-08-25 — read this before using any number below
+
+This file says "re-read and updated every cycle". **It has not been.** Every thesis below was
+drafted **June 3, 2026** and none has been revisited since. That is stated here rather than left to
+be inferred, because a stale thesis is more dangerous than a missing one: it reads as a current
+judgement.
+
+Three things follow, and they are facts about this file, not opinions about the names:
+
+1. **Every price in a heading is a June 3 price.** TSM $439.86, V $309.80, CVX $190.28 and the rest
+   are what those names traded at nearly three months ago. They are kept because they anchor what
+   the thesis was written against — they are **not** quotes. `/api/position` and the dashboard have
+   live marks.
+
+2. **Three names below are NOT in the slate.** `SLATE.md` excludes CCJ and IONQ by unanimous debate
+   and demotes UNH off the core. Their blocks are kept as the record of *why* they were dropped —
+   deleting a rejected thesis loses the reasoning that rejected it — but they are not positions and
+   must not be read as recommendations. Each is marked at the top of its block.
+
+3. **Ten of the fifteen names actually held have no thesis here at all.** The account holds AMD, BE,
+   BRK.B, GLD, GM, ISRG, MSFT, QBTS, SVRA and TMO — the 2026-08-17/18 seeded basket
+   (`SLATE.md` §"Holdings that are not this slate"). They were seeded to give the marking job and
+   the performance page something real to value, not because anyone underwrote them. **A position
+   with a dollar amount and no thesis is exactly what the sell-discipline rule exists to catch.**
+   Writing theses for them, or exiting them, is an open owner decision.
+
+Held **and** underwritten: NVDA, VST, V, CVX, QCOM — five of fifteen.
 
 ## ⚠️ Correction logged June 3, 2026
 The earlier "V → June 17 GENIUS Act vote" catalyst was **wrong**: the GENIUS Act already **passed/was signed in 2025**. The live 2026 catalyst is the **CLARITY Act** (market structure — Senate Banking advanced it 15-9 in May 2026; full-floor vote pending, no fixed June 17 date). The Walmart/Amazon own-stablecoin story was a **June 2025** WSJ report; no at-scale launch since. The forward layer caught this — exactly its job.
@@ -27,7 +55,7 @@ The earlier "V → June 17 GENIUS Act vote" catalyst was **wrong**: the GENIUS A
 
 ---
 
-## TSM — Taiwan Semiconductor · $439.86 · **conviction HIGH**
+## TSM — Taiwan Semiconductor · $439.86 *(price as of 2026-06-03)* · **conviction HIGH**
 **Core thesis (6–18mo):** A structural AI-compute monopoly *raising prices into sold-out demand*, whose embedded Taiwan-risk discount just shrank (US intel downgraded the 2027 invasion thesis, Mar 2026) — re-rates higher; PEG 1.35 is too cheap for a price-maker.
 - **Forward drivers:** N2 ramp + CoWoS doubling, sold out through 2028; 4 straight years of wafer price hikes through 2029; GM structurally >65% (not mean-reverting); Nvidia now #1 customer + sovereign-chip demand diversifying concentration; cheaper inference (Jevons) drives *more* compute, not less.
 - **Expectations gap:** market prices it as a cyclical foundry with a commoditization + invasion discount. Reality = monopoly pricing power + a *shrinking* geopolitical discount not yet repriced.
@@ -43,14 +71,16 @@ The earlier "V → June 17 GENIUS Act vote" catalyst was **wrong**: the GENIUS A
 - **Falsification (bull):** US-comm <100% or a guide cut → stock halves. **(bear):** sustained 80%+ blended growth + multi-$B Golden Dome booking → grows into the multiple.
 - **Role:** high-beta *payload* — own small, buy volatility-driven drawdowns, never chase strength; **dated-catalyst rental only.**
 
-## UNH — UnitedHealth · $385.65 · **DEMOTED (conviction LOW — resolution trade, not forward)**
+## UNH — UnitedHealth · $385.65 *(price as of 2026-06-03)* · **DEMOTED (conviction LOW — resolution trade, not forward)**
+
+> **NOT IN THE SLATE.** Demoted off the core (`SLATE.md` §Excluded). Kept as the record of why.
 **Revised June 3, 2026 — the skeptic was right.** The recovery thesis has *not paid*: -37% from the Nov-2024 ATH ($603), **19 months underwater**, and after a +47% bounce off the March low it has **stalled at lower highs** ($404 → $378). Crucially, **Berkshire exited its entire UNH stake in Q1'26** (disclosed May 15) — smart money left at exactly the recovery's test point.
 - **Why it hasn't paid (the core reason):** it's an *overhang stock*. Every fundamental green shoot is capped by an **unquantifiable legal ceiling** — an open, *expanding* DOJ **criminal** probe (MA risk-coding, OptumRx, physician reimbursement) plus an **active antitrust** suit targeting the Optum flywheel (forced-divestiture tail). You cannot re-rate the multiple while a felony/breakup tail is open, so good quarters buy bounces, not breakouts.
 - **Bear data:** MA membership shrinking 1.3–1.4M in 2026 (revenue declines by design), UHC 2025 operating earnings -40% YoY, ACA enhanced-subsidy cliff (expired Jan 2026), ~21x forward at $385 with only ~4% to consensus PT. **Data conflict to resolve:** earlier research cited the 2027 CMS rate finalized at +2.48%; the bear pass cites +0.09% — unresolved, and the uncertainty itself argues for caution.
 - **Honest verdict:** the fat pitch ($235) is gone; what's left is "fairly valued, waiting on a subpoena." It's a **resolution trade** (buy the *DOJ-settlement-with-no-breakup* headline if/when it comes), **not** a forward/momentum trade. Hold dry powder for that catalyst rather than owning the dead-money stall.
 - **Role:** OFF the core slate. Watchlist only; revive trigger = DOJ resolution w/o Optum breakup, or 2–3 quarters of clean MCR beats.
 
-## V — Visa · $309.80 · **conviction MED-HIGH**
+## V — Visa · $309.80 *(price as of 2026-06-03)* · **conviction MED-HIGH**
 **Core thesis (re-rate 6–18mo; structural watch 3–5yr):** The market over-prices *disintermediation*; Visa is actively **co-opting** the stablecoin/agentic shift (USDC settlement live; Circle Arc design partner). Estimates are *rising* while the multiple compresses on headline-beta — own the gap.
 - **Forward drivers:** Q2 rev +17%, VAS now 30% of revenue (+25%), cross-border +12–17% (high-margin), Visa Direct scaling; card lock-in (rewards + chargeback + 200-country acceptance) holds; banks tokenize *on* the rails (JPM Kinexys), they don't route around them.
 - **Expectations gap:** stock trades on stablecoin *headline beta*, not on (rising) estimates. Market conflates slow, partly-V-captured *settlement* disruption with *interchange* disruption (overstated).
@@ -58,7 +88,7 @@ The earlier "V → June 17 GENIUS Act vote" catalyst was **wrong**: the GENIUS A
 - **Falsification:** a top-3 merchant launches an *at-scale* proprietary stablecoin that visibly dents US volume; **CCCA** passes with routing/price-cap teeth; cross-border growth decelerates to mid-single-digits; VAS growth slips <15%.
 - **Role:** buy-the-fear catalyst trade; size against CCCA + flagship-merchant-stablecoin tail risk.
 
-## CVX — Chevron · $190.28 · **conviction MED-HIGH**
+## CVX — Chevron · $190.28 *(price as of 2026-06-03)* · **conviction MED-HIGH**
 **Core thesis (12–24mo):** *Not* a directional oil bet — the **highest-quality ballast in the patch**. Crude has a near-term geopolitical-premium top that fades into 2H'26–2027, but CVX's low breakeven (low-$30s Brent) + Guyana/Permian growth funds the dividend/buyback through a $60 tape — and the **AI-power → natural-gas optionality is the under-priced re-rate.**
 - **Forward drivers:** +$9B incremental FCF in '26 *at $60 Brent*, debt ratio 14.4% (below target), Guyana Stabroek (30%) → 1.2 Mboe/d by '27, Hess synergies >$2B; **the second leg:** Henry Hub $3.50'26→~$4.60'27 on LNG + datacenter power (US datacenter demand 31GW'25→66GW'27), CVX's 2.5GW W.Texas gas plant (2027) + Engine No.1 4GW.
 - **Expectations gap:** Street prices CVX as a crude-beta value trap and models its gas/power optionality at ~zero. If crude fades to $70 but Henry Hub climbs and datacenter PPAs sign, CVX earns a *non-oil growth* multiple.
@@ -98,6 +128,9 @@ The earlier "V → June 17 GENIUS Act vote" catalyst was **wrong**: the GENIUS A
 - **Role:** the nuclear/power anchor for a $100 aggressive acct (aggression *with* a floor — not a coin flip).
 
 ## CCJ — Cameco · **conviction MED-HIGH** (uncorrelated uranium lever)
+
+> **NOT IN THE SLATE.** Dropped by the allocation debate — it deepened the AI-power factor and
+> lost most on the down-tape, so it was not a real diversifier. Kept as the record of why.
 **Core thesis (12–24mo):** Uranium fuel-cycle leverage to the nuclear restart — uncorrelated to the SMR-execution-risk story. Spot ~$84/lb, term ~$93 and ratcheting (Citi $100–125); supply-tight, real revenue.
 - **Expectations gap:** the term-price ratchet flows to CCJ/enrichment *before* spot moves; market underweights the structural supply deficit.
 - **Catalysts:** term-price prints, restart/PPA flow, HALEU scarcity (lifts enrichment cousin **LEU**); **2nd-order:** any new reactor restart announcement.
@@ -105,6 +138,9 @@ The earlier "V → June 17 GENIUS Act vote" catalyst was **wrong**: the GENIUS A
 - **Role:** diversifying commodity lever away from the over-loved SMR pure-plays.
 
 ## IONQ — IonQ · **conviction LOW — LOTTERY SLEEVE ONLY**
+
+> **NOT IN THE SLATE.** Killed 3-0 by the panel: a name you expect to lose has no place in a
+> no-ruin book. Kept as the record of why.
 **Honest frame:** quantum is real science, *pre-real-business* (NISQ era; scale commercialization ~2029–2035). Pure-plays trade on milestone headlines, not cash flows — ±20–50% on news, P/S ~100+, insiders net-sold ~$931M, this price leg is late/blown-off-top-risk.
 - **If touched at all:** IONQ only (most revenue, lowest [still absurd] P/S, DARPA HARQ validation). **Size $5–10 max, expect to lose most of it.** Do NOT spread the $100 across multiple quantum names; do NOT use IBM/GOOGL for quantum exposure (diluted to ~0 beta).
 - **Role:** Wasden bucket-5 scratch ticket — wrong 99/100, sized so a -50% gap is survivable. Optional, not core.
