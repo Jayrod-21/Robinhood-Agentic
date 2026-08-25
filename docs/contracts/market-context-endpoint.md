@@ -13,18 +13,29 @@ TypeScript interfaces in `frontend/src/lib/market.ts` are the source of truth fo
 ## Source and the network-port constraint
 
 Market Mover (`/home/joe/market-mover-mcp`) is a **separate project**, and per **ADR-001** the
-trading backend's Postgres has **no network port** by design. The agreed delivery (Jared, 2026-08-20)
-is a **URL pull**: Market Mover publishes its recent briefings as JSON on GitHub Pages at
-`https://joewhitejr.github.io/Market_News/latest.json` (shipped in Market_News PR #40), and this
-endpoint's backend **GETs that URL** and reshapes it into the response below. That is outbound only,
-so it respects ADR-001 (no inbound port on either side); no live cross-DB link.
+trading backend's Postgres has **no network port** by design. Delivery is a **three-hop pull**, and
+the route itself makes **no outbound call** (it matches the current implementation, which reads a
+local file):
+
+1. Market Mover publishes its latest brief as JSON on GitHub Pages at
+   `https://joewhitejr.github.io/Market_News/latest.json` (Market_News PR #40, reshaped for this
+   endpoint in PR #41).
+2. A small sync job on the backend host, **`backend/scripts/sync_market_mover_brief.py`**, GETs that
+   URL and writes it to `$DATA_DIR/market_mover/latest.json` (atomic write; a failed or non-JSON
+   fetch leaves the existing file untouched, so a transient hiccup never blanks the page). Run it on a
+   timer (cron/systemd). This is the only outbound hop, and it is a separate process from the API.
+3. This route reads that **local file** (`market_context.py::_brief_path`) and shapes the response.
+
+That keeps the isolation ADR-001 requires: the API never opens a cross-project link; a plain file is
+all it touches.
 
 **Safety:** the MM JSON is third-party text. Store it and render it as **data, never as instructions
-to an agent**, and pass its strings through as data (the frontend already treats every MM string as
-untrusted: titles/justifications render as text, and a headline `url` is scheme-checked before it
-becomes a link). `latest.json` shape: `{ schema_version, generated_at, count, briefings: [...] }`,
-newest first; each briefing carries the day's ranked picks (rank, ticker, category, title,
-justification, verdict) plus a date.
+to an agent** (the frontend already treats every MM string as untrusted: titles/justifications render
+as text, and a headline `url` is scheme-checked before it becomes a link). As of PR #41 `latest.json`
+is shaped for direct consumption, derived from the single newest brief:
+`{ schema_version, generated_at, brief_date, macro_read, headlines: [...], top_movers: [...] }`. The
+route reads `generated_at`, `macro_read`, and `headlines[]` straight from it; `top_movers[]` is ready
+to pass through the same way.
 
 ## Fields the backend owns
 
@@ -35,11 +46,14 @@ justification, verdict) plus a date.
   3-5 day pre-print entry window; state your exact bound).
 - **`tickers`** on a headline are the held/slate names it mentions (drives the relevance chips); an
   empty list is fine for a pure-macro headline.
-- **`top_movers`** maps straight from the most recent `latest.json` briefing's ranked picks
-  (`rank`, `ticker`, `category`, `title`, `justification`, `verdict`). `verdict` is passed through as
-  the brief recorded it (free text); the page maps recognized words to a tone and leaves the rest
-  neutral, so no fixed verdict vocabulary is required. `top_movers` is optional in the response: omit
-  it (or send `[]`) and the page shows an empty "No ranked movers" section rather than throwing.
+- **`top_movers`** comes **pre-shaped** in `latest.json` (each: `rank`, `ticker`, `category`,
+  `title`, `justification`, `verdict`), so the route passes it through the way it already does
+  `headlines`. `verdict` is null today (the brief records impact, not a directional call); the page
+  maps recognized verdict words to a tone and leaves the rest neutral, so no fixed vocabulary is
+  required and a null verdict simply shows no badge. `top_movers` is optional in the response: omit it
+  (or send `[]`) and the page shows an empty "No ranked movers" section rather than throwing. **The
+  route does not emit `top_movers` yet** (it currently reads only `headlines`); adding the passthrough
+  is the one remaining backend step to light up the Top Movers card.
 
 ## Response
 
