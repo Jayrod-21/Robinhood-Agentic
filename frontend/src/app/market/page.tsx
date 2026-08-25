@@ -15,6 +15,7 @@ import { AlertTriangle, CalendarClock, Database, Newspaper } from "lucide-react"
 import { PageHeader } from "@/components/shell";
 import { Badge, Card, CardBody, CardHeader, CardTitle, Spinner } from "@/components/ui";
 import { fetcher } from "@/lib/api";
+import { useAccount, withAccount } from "@/components/account-context";
 import { ago, cn } from "@/lib/format";
 import { MARKET_MOCK, MOCK_MARKET_CONTEXT, type Catalyst, type Headline, type MarketContextResponse, type Sentiment } from "@/lib/market";
 
@@ -37,8 +38,9 @@ function httpUrl(url: string | null): string | null {
 }
 
 export default function MarketPage() {
+  const { selectedId } = useAccount();
   const { data, error, isLoading } = useSWR<MarketContextResponse>(
-    MARKET_MOCK ? null : "/api/market-context",
+    MARKET_MOCK ? null : withAccount("/api/market-context", selectedId),
     fetcher,
     { refreshInterval: 60_000 },
   );
