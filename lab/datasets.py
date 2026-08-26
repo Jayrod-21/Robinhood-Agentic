@@ -33,6 +33,12 @@ logger = logging.getLogger("lab.datasets")
 # volatility) to leave a usable sample behind, let alone for walk-forward to have steps to take.
 MIN_BARS = 250
 
+# Mirrors the investable_securities view (migration 027) and db/instrument_class.py::INVESTABLE.
+# Named here rather than imported because the Lab image ships lab/ and src/ and not db/ — the VIEW
+# is the shared definition, and this constant only guards the one path that reads `securities`
+# directly. lab/tests assert the two agree against the live view.
+INVESTABLE_TYPES = ("stock", "etf", "share_class")
+
 
 class DatasetUnavailable(RuntimeError):
     """The requested data does not exist. Raised instead of substituting generated data."""
@@ -72,7 +78,31 @@ def historical_bars(conn, symbol: str, start: str | None = None, end: str | None
     computed from split- and dividend-adjusted prices, and price_bars_daily keeps both side by side
     precisely because they are not interchangeable. The other three legs are left raw, since they
     only feed range and volume features that are scale-free within a bar.
+
+    A non-investable instrument is refused HERE as well as excluded from /datasets. The listing is a
+    convenience for whoever is choosing; this is the guarantee. A caller who types a symbol, or
+    replays an old request, must not be able to train on a warrant just because the dropdown no
+    longer offers it.
     """
+    row = conn.execute(
+        "SELECT security_type FROM securities WHERE symbol = %s", (symbol.upper(),)
+    ).fetchone()
+    if row is not None and row[0] not in INVESTABLE_TYPES:
+        # NULL and a known non-investable type both refuse, matching instrument_class.is_investable
+        # ("defaulting the unknown to investable is how a warrant ends up being fundamentally
+        # screened"). They get DIFFERENT messages, because they are different problems: one is a
+        # category error the caller should stop making, the other is a loader that has not run and
+        # the operator can fix in one command.
+        if row[0] is None:
+            raise DatasetUnavailable(
+                f"{symbol.upper()} has no instrument classification, so it is not known to be a "
+                "company or a fund. Run bin/db_instrument_types.sh classify, then retry."
+            )
+        raise DatasetUnavailable(
+            f"{symbol.upper()} is a {row[0]}, not a company or a fund. Training on a warrant's or "
+            "a unit's price history is a category error, not a weak model — see issue #41."
+        )
+
     rows = conn.execute(
         """
         SELECT b.trade_date, b.open, b.high, b.low,

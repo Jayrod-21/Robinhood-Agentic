@@ -89,7 +89,7 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
 
 ### 3b. Migration runner + loader tests (needs Docker)
 - **Command:** `python3 -m pytest db/tests/ -q`
-- **Pass criteria:** all tests pass (currently 349). Nine layers: discovery tests for the
+- **Pass criteria:** all tests pass (currently 356). Ten layers: discovery tests for the
   filename-based destructive classification (ADR-002: `NNN_name.destructive.{up,down}.sql`),
   loud rejection of near-miss filenames (uppercase `.SQL`, trailing junk — never silently
   skipped), byte-level rejection (NUL / BOM / invalid UTF-8), the best-effort keyword sniff
@@ -139,7 +139,10 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
   statement row it was computed from, `formula_version` has no default so a corrected formula stays
   applicable retroactively, `scope_reasons` uses `cardinality` not `array_length` (which returns
   NULL for an empty array, and a CHECK passes on NULL), and the runs table separates "never ran"
-  from "ran and every quote failed" from "the market was closed".
+  from "ran and every quote failed" from "the market was closed". Plus the investable view
+  (`test_investable_view.py`): the view admits exactly what `instrument_class.INVESTABLE` calls
+  investable — share classes included, NULL excluded — so a universe filter cannot come to mean two
+  different things in two containers.
 - **Network:** Docker only — testcontainers spins a throwaway postgres:16-alpine; the live rh-db
   is never touched.
 

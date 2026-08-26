@@ -165,9 +165,18 @@ def parameters() -> dict:
 def datasets(q: str | None = Query(None, min_length=1, max_length=16)) -> dict:
     """What real data actually exists, so a request never has to guess at a symbol or a range.
 
-    Symbols with fewer than the minimum usable number of bars are excluded rather than listed and
-    then refused — an option the caller can select but the Lab will reject is a worse answer than
-    no option at all.
+    Two exclusions, for the same reason: an option the caller can select but the Lab will reject is
+    a worse answer than no option at all.
+
+      * fewer bars than the rolling windows and a walk-forward split need, and
+      * anything that is not a company or a fund. Measured before this filter existed, the listing
+        offered 1,984 trainable-looking non-investable instruments — 1,041 warrants, 577 the
+        provider does not carry, 318 units and 48 rights. A model fitted to a SPAC warrant's price
+        history is not a bad model, it is a category error.
+
+    The investable set comes from the `investable_securities` VIEW rather than a hardcoded type
+    list, so the Lab and the classifier cannot drift apart. The Lab image ships no db/ package, so
+    a view is the only way it can share that definition rather than copy it (migration 027).
     """
     from lab.datasets import MIN_BARS
 
@@ -175,11 +184,12 @@ def datasets(q: str | None = Query(None, min_length=1, max_length=16)) -> dict:
         with store.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT s.symbol, count(*) AS bars, min(b.trade_date), max(b.trade_date)
+                SELECT s.symbol, s.security_type, count(*) AS bars,
+                       min(b.trade_date), max(b.trade_date)
                   FROM price_bars_daily b
-                  JOIN securities s ON s.id = b.security_id
+                  JOIN investable_securities s ON s.id = b.security_id
                  WHERE (%s::text IS NULL OR s.symbol LIKE upper(%s) || '%%')
-                 GROUP BY s.symbol
+                 GROUP BY s.symbol, s.security_type
                 HAVING count(*) >= %s
                  ORDER BY count(*) DESC, s.symbol
                  LIMIT 100
@@ -193,7 +203,16 @@ def datasets(q: str | None = Query(None, min_length=1, max_length=16)) -> dict:
     return {
         "min_bars": MIN_BARS,
         "symbols": [
-            {"symbol": r[0], "bars": r[1], "start": str(r[2]), "end": str(r[3])} for r in rows
+            {
+                "symbol": r[0],
+                # Reported, not just filtered on. A caller looking at a list of tickers should be
+                # able to see that GLD is a fund and BRK.B is a share class without asking.
+                "security_type": r[1],
+                "bars": r[2],
+                "start": str(r[3]),
+                "end": str(r[4]),
+            }
+            for r in rows
         ],
     }
 

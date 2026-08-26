@@ -17,6 +17,7 @@ import pandas as pd
 import pytest
 
 from lab.datasets import (
+    INVESTABLE_TYPES,
     MIN_BARS,
     DatasetUnavailable,
     features_and_labels,
@@ -128,27 +129,35 @@ def test_synthetic_is_reproducible_from_its_seed() -> None:
 # ── the refusal ───────────────────────────────────────────────────────────────────────────────
 
 
-class _EmptyDb:
+class _Db:
+    """A stand-in database. `kind` is what SELECT security_type returns; `bars` is the bar count."""
+
+    def __init__(self, *, kind: str | None = "stock", bars: int = 0, known: bool = True):
+        self._kind = kind
+        self._bars = bars
+        self._known = known
+
+    def execute(self, sql, *_a, **_k):
+        self._last = sql
+        return self
+
+    def fetchone(self):
+        # None means the symbol is not in `securities` at all, which is not the same as being
+        # classified non-investable and must not be refused as though it were.
+        return (self._kind,) if self._known else None
+
+    def fetchall(self):
+        return [(pd.Timestamp("2024-01-01"), 1.0, 1.0, 1.0, 1.0, 1)] * self._bars
+
+
+def _EmptyDb():
     """A database with no bars for anything."""
-
-    def execute(self, *_a, **_k):
-        return self
-
-    def fetchall(self):
-        return []
+    return _Db(bars=0)
 
 
-class _ThinDb:
+def _ThinDb(n: int):
     """A database holding fewer bars than the rolling windows and a walk-forward split need."""
-
-    def __init__(self, n: int):
-        self._n = n
-
-    def execute(self, *_a, **_k):
-        return self
-
-    def fetchall(self):
-        return [(pd.Timestamp("2024-01-01"), 1.0, 1.0, 1.0, 1.0, 1)] * self._n
+    return _Db(bars=n)
 
 
 def test_a_symbol_with_no_bars_raises_rather_than_returning_synthetic_data() -> None:
@@ -164,3 +173,56 @@ def test_a_symbol_with_too_little_history_raises_and_says_how_much_it_had() -> N
 
     assert str(MIN_BARS - 1) in str(exc.value)
     assert str(MIN_BARS) in str(exc.value)
+
+
+# ── the universe filter (#41), enforced at the loader and not only in the listing ──────────────
+
+
+@pytest.mark.parametrize("kind", ["warrant", "unit", "right", "untracked"])
+def test_a_non_investable_instrument_is_refused_before_any_bar_is_read(kind: str) -> None:
+    """The /datasets listing excludes these; this is the guarantee behind that convenience.
+
+    A caller who types a symbol, or replays an old request, must not be able to train on a warrant
+    just because the dropdown no longer offers it. Break: drop the check in historical_bars.
+    """
+    with pytest.raises(DatasetUnavailable, match="category error"):
+        historical_bars(_Db(kind=kind, bars=5_000), "ACABW")
+
+
+@pytest.mark.parametrize("kind", ["stock", "etf", "share_class"])
+def test_companies_funds_and_share_classes_are_allowed(kind: str) -> None:
+    """share_class is here because BRK.B is a held position and was excluded once already (#135)."""
+    frame = historical_bars(_Db(kind=kind, bars=MIN_BARS + 10), "BRK.B")
+    assert len(frame) == MIN_BARS + 10
+
+
+def test_an_unclassified_symbol_is_refused_but_told_apart_from_a_warrant() -> None:
+    """NULL refuses too, matching instrument_class.is_investable — defaulting the unknown to
+    investable is how a warrant ends up in a training set.
+
+    But the MESSAGE differs, because the problems differ: a warrant is a category error the caller
+    should stop making; an unclassified row is a loader that has not run, which the operator fixes
+    in one command. A single shared message would send someone hunting the wrong thing.
+    """
+    with pytest.raises(DatasetUnavailable, match=r"db_instrument_types\.sh") as exc:
+        historical_bars(_Db(kind=None, bars=MIN_BARS + 1), "NEW")
+
+    assert "category error" not in str(exc.value)
+
+
+def test_a_symbol_absent_from_securities_falls_through_to_the_bars_check() -> None:
+    """It then fails as "no daily bars", which is the accurate reason."""
+    with pytest.raises(DatasetUnavailable, match="Refusing rather than substituting"):
+        historical_bars(_Db(known=False, bars=0), "NOSUCH")
+
+
+def test_the_local_investable_list_matches_the_documented_view() -> None:
+    """lab/datasets.py names the types rather than importing them — the Lab image ships no db/.
+    This pins the copy against the migration that defines the view, so the two cannot drift."""
+    from pathlib import Path as _Path
+
+    migration = _Path(__file__).resolve().parents[1] / "db" / "migrations" / "027_investable_view.up.sql"
+    sql = migration.read_text(encoding="utf-8")
+    for kind in INVESTABLE_TYPES:
+        assert f"'{kind}'" in sql, f"{kind} is in lab/datasets.py but not in the view"
+    assert sql.count("security_type IN") == 1, "one WHERE clause defines the view"
