@@ -20,6 +20,16 @@
 --   Same shape as intraday_observations' formula_version (#133), and it matters more here, because
 --   this ledger decides who owes whom.
 --
+-- IT STARTS AT ZERO, DELIBERATELY
+--   An earlier draft seeded the ~$9 already spent so balancing would begin from the real position.
+--   The owners decided that history is not worth settling: the split applies GOING FORWARD only.
+--   That is recorded here because the table would otherwise look like it was designed by someone
+--   who forgot about the prior spend, rather than by someone who was told to ignore it.
+--
+--   The policy is unchanged and still not round-robin. Even from a level start, calls cost
+--   different amounts — a Haiku juror and a Sonnet synthesis are not the same money — so
+--   alternating by CALL COUNT would not split by DOLLARS. Selection tracks dollars.
+--
 -- estimated_cost_usd IS NULLABLE ON PURPOSE
 --   NULL means "this model has no published rate in the pricing table" — a new model dropped into
 --   JURY_MODEL, for instance. Zero would be a claim that the call was free, and would under-report

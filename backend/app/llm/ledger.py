@@ -9,7 +9,6 @@ because this is the record two people settle up from.
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
 
 from app.db import connection
 from app.llm.pricing import PRICING_VERSION, cost_usd
@@ -152,19 +151,3 @@ def totals() -> dict:
             "Reconcile against the real invoice before settling up."
         ),
     }
-
-
-def opening_balance(provider: str, key_owner: str, amount_usd: str, note: str) -> None:
-    """Record spend that happened BEFORE this ledger existed.
-
-    Without it, balancing starts from zero and treats an owner who has already paid $9 as level with
-    one who has paid nothing — so the policy would split evenly from here and preserve the gap it
-    exists to close. One row, zero tokens, with the reason in `purpose`.
-    """
-    with connection() as conn:
-        conn.execute(
-            "INSERT INTO llm_usage (provider, key_owner, model, purpose, calls, input_tokens,"
-            " output_tokens, estimated_cost_usd, pricing_version)"
-            " VALUES (%s,%s,'(opening balance)',%s,0,0,0,%s,%s)",
-            (provider, key_owner, note, Decimal(amount_usd), PRICING_VERSION),
-        )
