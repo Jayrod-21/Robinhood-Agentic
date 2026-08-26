@@ -73,3 +73,19 @@ CRON_TZ=America/New_York
 
 # Market CLOSE 16:00 ET → run at 16:02. Mon–Fri.
 2 16 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" close
+
+# ── Market Mover brief sync, every 30 minutes ─────────────────────────────────────────────────
+# Pulls the published brief and atomically rewrites data/market_mover/latest.json, which
+# backend/app/routers/market_context.py reads. The route makes no outbound call of its own
+# (ADR-001), so this job is the only thing that keeps the Market page current.
+#
+# OWNERSHIP, since Joe's note left it open: the backend runs on THIS machine, in the `deploy`
+# compose project, administered by Jared. So the cron is ours, not an ops task elsewhere.
+#
+# Safe to run often and safe to run early. A non-200, non-JSON, or non-object response exits 1 and
+# leaves the existing file untouched, so a transient upstream hiccup never blanks the Market page —
+# and until Market Mover first publishes, every run is a clean no-op.
+#
+# Stdlib only, so it runs on the host python3 with no venv. DATA_DIR must match the path the
+# backend container has mounted (../data:/app/data), which is the repo's own data/ directory.
+*/30 * * * * cd "$HOME/projects/3b. Robinhood Agentic" && /usr/bin/env DATA_DIR="$HOME/projects/3b. Robinhood Agentic/data" python3 backend/scripts/sync_market_mover_brief.py >> "$HOME/.local/state/agentic/mm-brief-sync.log" 2>&1
