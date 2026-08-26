@@ -420,6 +420,10 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # rebuilt after the fact — price_bars_daily is one bar a day and the provider's intraday
         # history is not free. Every row dropped is a measurement that cannot be taken again.
         ("026", False, True),
+        # 027's down drops a view. No data is destroyed and the view is one line of recreatable
+        # SQL — but the runner classifies by what the SQL DOES, and the seventh outing for "this
+        # one is only derived" is not the moment to start making exceptions.
+        ("027", False, True),
     ]
 
 
