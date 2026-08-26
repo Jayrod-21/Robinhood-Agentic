@@ -181,6 +181,7 @@ def market_context(account_id: AccountId = None) -> dict[str, Any]:
 
     brief = _load_brief()
     headlines: list[dict[str, Any]] = []
+    top_movers: list[dict[str, Any]] = []
     brief_generated_at = None
     macro_read = None
     if brief:
@@ -206,6 +207,34 @@ def market_context(account_id: AccountId = None) -> dict[str, Any]:
                     "sentiment": h.get("sentiment"),
                 })
 
+        # top_movers arrives PRE-SHAPED from Market Mover (contract §"Fields the backend owns"):
+        # each entry is {rank, ticker, category, title, justification, verdict}. So this is a
+        # passthrough like headlines above, with the same two rules.
+        #
+        # `verdict` is null today — the brief records impact, not a directional call — and the page
+        # maps recognised verdict words to a tone, leaving anything else neutral. So it is passed
+        # through UNMODIFIED rather than normalised to a fixed vocabulary here: inventing a default
+        # would put a directional call in front of an operator that the brief never made.
+        raw_movers = brief.get("top_movers")
+        if isinstance(raw_movers, list):
+            for m in raw_movers:
+                if not isinstance(m, dict):
+                    continue
+                ticker = m.get("ticker")
+                top_movers.append({
+                    "rank": m.get("rank"),
+                    "ticker": ticker.upper() if isinstance(ticker, str) else None,
+                    "category": m.get("category"),
+                    "title": m.get("title"),
+                    "justification": m.get("justification"),
+                    "verdict": m.get("verdict"),
+                    # Not from the brief. Whether WE hold it or the slate targets it is the
+                    # backend's to answer (contract: held/in_slate are "fields the backend owns"),
+                    # and it is what makes a ranked mover actionable rather than trivia.
+                    "held": isinstance(ticker, str) and ticker.upper() in held,
+                    "in_slate": isinstance(ticker, str) and ticker.upper() in set(slate),
+                })
+
     brief_stale = is_stale(
         brief_generated_at, _BRIEF_STALE_AFTER_HOURS * 3600, field="market brief generated_at"
     )
@@ -223,4 +252,9 @@ def market_context(account_id: AccountId = None) -> dict[str, Any]:
         },
         "catalysts": _catalysts(set(slate) | held, slate, held),
         "headlines": headlines,
+        # Always present, `[]` when the brief has none. The contract permits omitting the key, but
+        # an absent key and an empty list read identically to a page that shows "No ranked movers"
+        # — and they are different facts. Emitting [] means "the brief carried none"; the page can
+        # tell that from `brief_present` in meta.
+        "top_movers": top_movers,
     }

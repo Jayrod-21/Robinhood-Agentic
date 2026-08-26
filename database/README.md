@@ -1,5 +1,19 @@
 # Market Data Pipeline — Database
 
+> **⚠ Status, 2026-08-26: this directory is a DESIGN, not the live schema.** None of the tables
+> below exist. The live database is built by `db/migrations/` through `db/migrate.py` (25 migrations
+> as of today) — `001_schema.sql`, `002_views.sql` and `003_seed.sql` here have never been applied.
+>
+> The `market_mover_emails` subtree below is **retired**. Market Mover now publishes its brief as
+> JSON (`backend/scripts/sync_market_mover_brief.py` pulls it into `data/market_mover/latest.json`),
+> so there is no email to parse and no reason to store one. The email-ingest code that existed for
+> it was removed on 2026-08-26.
+>
+> The `equity_snapshots` / `equity_fundamentals` / `equity_analyst_snapshots` tiering, on the other
+> hand, is **live prior art** for issue #133 (the intraday ratio log): the FK-encoded design where a
+> snapshot points at the Tier 2/3 rows its ratios were computed from, and no derived value is
+> duplicated, is exactly the shape that issue calls for. Read this before designing that.
+
 ## Migrations
 
 Run in order:

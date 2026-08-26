@@ -50,10 +50,17 @@ to pass through the same way.
   `title`, `justification`, `verdict`), so the route passes it through the way it already does
   `headlines`. `verdict` is null today (the brief records impact, not a directional call); the page
   maps recognized verdict words to a tone and leaves the rest neutral, so no fixed vocabulary is
-  required and a null verdict simply shows no badge. `top_movers` is optional in the response: omit it
-  (or send `[]`) and the page shows an empty "No ranked movers" section rather than throwing. **The
-  route does not emit `top_movers` yet** (it currently reads only `headlines`); adding the passthrough
-  is the one remaining backend step to light up the Top Movers card.
+  required and a null verdict simply shows no badge. **The route emits `top_movers` as of 2026-08-26.** It is always
+  present — `[]` when the brief carries none — rather than omitted. The contract permits omitting
+  it, but an absent key and an empty list render identically as "No ranked movers" while being
+  different facts; `meta.brief_present` is what separates "no brief at all" from "a brief with no
+  movers".
+
+  Two departures from a pure passthrough, both deliberate. `verdict` is relayed **unmodified**,
+  including null — normalising it to a default would put a directional call in front of an operator
+  that the brief never made. And `held` / `in_slate` are **added** per "Fields the backend owns"
+  above, since that is what makes a ranked mover actionable rather than trivia. Tickers are
+  upper-cased so that join cannot silently miss on a lower-case symbol.
 
 ## Response
 
