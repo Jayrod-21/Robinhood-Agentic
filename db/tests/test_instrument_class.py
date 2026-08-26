@@ -24,6 +24,7 @@ from instrument_class import (
     classify,
     form_of,
     is_investable,
+    provider_symbols,
 )
 
 # ── form, from symbol convention alone ────────────────────────────────────────────────────────
@@ -115,10 +116,20 @@ def test_every_classification_is_in_the_constrained_vocabulary() -> None:
 # ── what a universe may draw from ─────────────────────────────────────────────────────────────
 
 
-def test_only_common_stock_and_etfs_are_investable() -> None:
-    assert is_investable(COMMON)
-    assert is_investable(ETF)
-    for kind in (WARRANT, UNIT, RIGHT, SHARE_CLASS, UNTRACKED):
+def test_shares_funds_and_share_classes_are_investable() -> None:
+    """SHARE_CLASS belongs here, and leaving it out was a bug.
+
+    Caught 2026-08-26 when the intraday collector's scope came back 14 of 15 and the missing name
+    was BRK.B — a position actually held. Berkshire B, Brown-Forman B, HEICO A and Crawford A are
+    ordinary investable shares of ordinary companies; only the investability call was wrong, and the
+    distinct TYPE is still worth keeping.
+    """
+    for kind in (COMMON, ETF, SHARE_CLASS):
+        assert is_investable(kind), kind
+
+
+def test_instruments_that_are_not_companies_are_not_investable() -> None:
+    for kind in (WARRANT, UNIT, RIGHT, UNTRACKED):
         assert not is_investable(kind), kind
 
 
@@ -157,5 +168,16 @@ def test_the_documented_split_of_the_live_universe_still_holds() -> None:
     for (symbol, etf, stock), expected in sample.items():
         assert classify(symbol, in_etf_list=etf, in_stock_list=stock) == expected
 
-    # 73.6% of the archive is investable; the rest is real instruments that are not companies.
     assert set(TYPES) == {COMMON, ETF, WARRANT, UNIT, RIGHT, SHARE_CLASS, UNTRACKED}
+
+
+def test_both_vendor_spellings_of_a_share_class_are_tried() -> None:
+    """This archive writes BRK.B (the Polygon tape); FMP writes BRK-B. Looking up only our spelling
+    missed all 57 share classes — one of 57 carried a company name before this.
+
+    Break: return only the dotted form. The loader then classifies BRK.B as `untracked`.
+    """
+    assert provider_symbols("BRK.B") == ("BRK.B", "BRK-B")
+    assert provider_symbols("AAPL") == ("AAPL",), "no variant needed for an undotted symbol"
+    assert provider_symbols("") == ()
+    assert provider_symbols("brk.b") == ("BRK.B", "BRK-B"), "and case is folded"

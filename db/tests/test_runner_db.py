@@ -415,6 +415,11 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # calls; the dispositions are not. They carry the judgement that a hole was explained, and
         # resetting them loses which holes a human has already looked at.
         ("025", False, True),
+        # 026's down drops the intraday series. The ratios are recomputable from price plus the
+        # linked statement row; the PRICE observations are not. A 30-minute series cannot be
+        # rebuilt after the fact — price_bars_daily is one bar a day and the provider's intraday
+        # history is not free. Every row dropped is a measurement that cannot be taken again.
+        ("026", False, True),
     ]
 
 
