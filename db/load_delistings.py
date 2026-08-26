@@ -150,7 +150,16 @@ PROVIDER_CALL_SLEEP_S = 0.25
 # Dispositions that mean "not yet resolved" — verify_daily_series.py check 7 fails while any
 # audited hole carries one of these. Keep in lockstep with 008's CHECK constraint.
 NON_TERMINAL_DISPOSITIONS = ("pending_review", "identity_break", "provider_unresolvable", "split_missing")
-TERMINAL_DISPOSITIONS = ("halt_consistent", "continuity_confirmed", "spliced", "halt_accepted")
+TERMINAL_DISPOSITIONS = (
+    "halt_consistent", "continuity_confirmed", "spliced", "halt_accepted",
+    # Migration 025 / issue #41. The hole is on a warrant, unit, right, share class or an
+    # instrument the provider does not carry. A delisted warrant HAS no provider history, so the
+    # absence that made these 'provider_unresolvable' is the EXPECTED answer for that form rather
+    # than an unresolved question — and splicing them would have fabricated identity breaks that
+    # never happened. Terminal, so verify_daily_series check 7 stops failing on 83 holes that were
+    # never mysteries, and keeps failing on the 6 that are.
+    "non_common_instrument",
+)
 
 # Tables that reference securities.id beyond the three this tool re-attributes. A security with
 # rows in ANY of these is refused by splice — re-keying scored history is operator surgery, not a

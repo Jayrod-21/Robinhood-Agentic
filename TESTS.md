@@ -89,7 +89,7 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
 
 ### 3b. Migration runner + loader tests (needs Docker)
 - **Command:** `python3 -m pytest db/tests/ -q`
-- **Pass criteria:** all tests pass (currently 256). Seven layers: discovery tests for the
+- **Pass criteria:** all tests pass (currently 315). Eight layers: discovery tests for the
   filename-based destructive classification (ADR-002: `NNN_name.destructive.{up,down}.sql`),
   loud rejection of near-miss filenames (uppercase `.SQL`, trailing junk — never silently
   skipped), byte-level rejection (NUL / BOM / invalid UTF-8), the best-effort keyword sniff
@@ -128,7 +128,12 @@ Suites 1, 2, and 3b can also be run together as a bare `python3 -m pytest` from 
   one. Plus 024's reconciliation columns on `cycle_runs` (`test_cycle_reconciliation.py`): a run
   that never reconciled leaves them NULL rather than zeroed, a partial write is refused, `in_sync`
   must agree with the counts in both directions, and desynced runs are indexed apart from runs that
-  never checked.
+  never checked. Plus instrument classification (`test_instrument_class.py`, `test_instrument_types_schema.py`):
+  form is read from symbol convention BEFORE any provider list, because FMP's stock-list calls
+  warrants "stock"; a four-letter symbol ending in W stays a company; `untracked` is not folded
+  into `stock`; NULL is not investable; `security_type` is CHECK-constrained to the classifier's
+  own vocabulary; and `non_common_instrument` is terminal to verify_daily_series check 7 while the
+  six real companies stay non-terminal.
 - **Network:** Docker only — testcontainers spins a throwaway postgres:16-alpine; the live rh-db
   is never touched.
 
