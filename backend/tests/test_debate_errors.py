@@ -82,7 +82,13 @@ def test_debate_unavailable_message_not_streamed(monkeypatch, caplog):
 def test_debate_unavailable_names_no_paths(monkeypatch, caplog):
     """_client()'s missing-key error is client-safe: no env-var name, no on-disk path. The
     remediation detail is logged server-side instead."""
-    monkeypatch.setattr(ac, "get_settings", lambda: SimpleNamespace(anthropic_api_key=None))
+    # _client() no longer reads settings — it asks app.llm.keys which credentials are configured,
+    # so that a call can be attributed to whichever owner's key paid for it. The PROPERTY under
+    # test is unchanged: no key is configured, and the client-facing message must not name an
+    # env var or a path.
+    from app.llm import keys as key_registry
+
+    monkeypatch.setattr(key_registry, "available", lambda _provider=None: [])
     with caplog.at_level(logging.ERROR, logger="agentic.debate.anthropic"):
         with pytest.raises(ac.DebateUnavailable) as exc:
             ac._client()

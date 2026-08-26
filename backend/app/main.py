@@ -23,6 +23,7 @@ from app.routers import (
     health,
     history,
     intraday,
+    llm_spend,
     market_context,
     performance,
     pipeline,
@@ -295,6 +296,7 @@ def create_app() -> FastAPI:
     app.include_router(cycle_router.router)
     app.include_router(testing_lab.router)
     app.include_router(intraday.router)
+    app.include_router(llm_spend.router)
     app.include_router(account.router)
     app.include_router(accounts_router.router)
     app.include_router(scan.router)
