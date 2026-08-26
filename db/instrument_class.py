@@ -45,7 +45,13 @@ TYPES = (COMMON, ETF, WARRANT, UNIT, RIGHT, SHARE_CLASS, UNTRACKED)
 
 # What a screen, a backtest or a training set may draw from. Everything else is a real instrument
 # that really traded — it is simply not a company whose fundamentals mean anything.
-INVESTABLE = (COMMON, ETF)
+#
+# SHARE_CLASS IS INVESTABLE, and leaving it out was a bug (#130, caught 2026-08-26 when the
+# intraday collector's scope came back 14 of 15 and the missing one was BRK.B). A share class is
+# common stock — Berkshire B, Brown-Forman B, HEICO A, Crawford A are ordinary investable shares of
+# ordinary companies. The TYPE stays distinct, because knowing a symbol is a class rather than the
+# primary line is worth keeping; only the investability call was wrong.
+INVESTABLE = (COMMON, ETF, SHARE_CLASS)
 
 # Dotted suffixes (NYSE/ARCA style: BRK.B, ACAX.WS, EDTX.U).
 _DOTTED = {
@@ -97,6 +103,22 @@ def form_of(symbol: str) -> str | None:
     if len(s) >= 5 and s[-1] in _TRAILING:
         return _TRAILING[s[-1]]
     return None
+
+
+def provider_symbols(symbol: str) -> tuple[str, ...]:
+    """Every spelling a provider might use for one symbol, ours first.
+
+    This archive writes share classes with a DOT (BRK.B, from the Polygon tape); FMP writes them
+    with a HYPHEN (BRK-B). Looking up only our spelling missed all 57 share classes — measured: one
+    of 57 carried a company name, and that one only because it also appears undotted somewhere.
+
+    Returned as a tuple rather than one canonical form because neither spelling is more correct;
+    they are two vendors' conventions for the same instrument, and a lookup should try both.
+    """
+    s = (symbol or "").strip().upper()
+    if not s:
+        return ()
+    return (s, s.replace(".", "-")) if "." in s else (s,)
 
 
 def classify(symbol: str, *, in_etf_list: bool, in_stock_list: bool) -> str:

@@ -89,3 +89,15 @@ CRON_TZ=America/New_York
 # Stdlib only, so it runs on the host python3 with no venv. DATA_DIR must match the path the
 # backend container has mounted (../data:/app/data), which is the repo's own data/ directory.
 */30 * * * * cd "$HOME/projects/3b. Robinhood Agentic" && /usr/bin/env DATA_DIR="$HOME/projects/3b. Robinhood Agentic/data" python3 backend/scripts/sync_market_mover_brief.py >> "$HOME/.local/state/agentic/mm-brief-sync.log" 2>&1
+
+# ── Intraday ratio log, every 30 minutes during the session ───────────────────────────────────
+# Issue #133. One observation per security in scope (held / debated / proposed): price, market cap,
+# volume, and the price-derived ratios, each carrying a lineage FK to the statement row its
+# denominators came from and the formula version that computed them.
+#
+# The RANGE is deliberately wider than regular trading hours (13:00-21:00 UTC covers 09:00-17:00 ET
+# year-round, so it survives the DST shift without editing). The job gates itself on
+# market_calendar's session_open/session_close, so a run outside the session records a 'skipped'
+# row with the reason and writes no observation — a price that has not moved since Friday is not an
+# observation, it is the same one again. Half-days close correctly for the same reason.
+0,30 13-21 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/db_collect_intraday.sh" >> "$HOME/.local/state/agentic/intraday.log" 2>&1

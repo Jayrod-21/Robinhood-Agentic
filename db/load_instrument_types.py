@@ -44,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from instrument_class import (
     INVESTABLE,
     classify,
+    provider_symbols,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -137,16 +138,19 @@ def _classify(conn: psycopg.Connection, args: argparse.Namespace) -> tuple[int, 
     tally: Counter[str] = Counter()
     computed: dict[str, str] = {}
     for security_id, symbol, current_type, current_name in rows:
+        # Both spellings. Our archive writes BRK.B; FMP writes BRK-B. Checking only ours missed
+        # every share class — 1 of 57 carried a name before this.
+        spellings = provider_symbols(symbol)
         kind = classify(
             symbol,
-            in_etf_list=symbol in etf_symbols,
-            in_stock_list=symbol in stock_symbols,
+            in_etf_list=any(v in etf_symbols for v in spellings),
+            in_stock_list=any(v in stock_symbols for v in spellings),
         )
         tally[kind] += 1
         computed[symbol] = kind
         # Only a name the provider actually supplied. An empty string is not a name, and writing
         # one would make `count(name)` report coverage the table does not have.
-        name = names.get(symbol) or None
+        name = next((names[v] for v in spellings if names.get(v)), None)
         if kind != current_type or (name and name != current_name):
             updates.append((kind, name or current_name, security_id))
 
