@@ -36,7 +36,9 @@ def test_progress_is_none_not_zero_while_the_total_is_unknown():
     from datetime import datetime, timezone
 
     now = datetime(2026, 8, 21, tzinfo=timezone.utc)
-    row = (1, "close", "running", now, now, None, None, 0, None, None, None, None)
+    # 12 base columns + 024's eight reconciliation columns, all NULL: this run never reconciled.
+    row = (1, "close", "running", now, now, None, None, 0, None, None, None, None,
+           None, None, None, None, None, None, None, None)
     import app.services.cycle_state as cs
     orig = cs.connection
     cs.connection = lambda: _conn([row])
@@ -52,7 +54,9 @@ def test_progress_is_computed_once_the_total_is_known():
     from datetime import datetime, timezone
 
     now = datetime(2026, 8, 21, tzinfo=timezone.utc)
-    row = (1, "close", "running", now, now, None, 15, 7, "NVDA", 25, 1, None)
+    # 12 base columns + 024's eight reconciliation columns, all NULL: this run never reconciled.
+    row = (1, "close", "running", now, now, None, 15, 7, "NVDA", 25, 1, None,
+           None, None, None, None, None, None, None, None)
     import app.services.cycle_state as cs
     orig = cs.connection
     cs.connection = lambda: _conn([row])
@@ -103,3 +107,50 @@ def test_the_stale_window_is_longer_than_a_real_cycle():
     """Sweeping a LIVE cycle would report a running job as dead. A full cycle is ~20 minutes at
     fifteen positions; the window has to clear that with room for a slow provider."""
     assert cycle_state.STALE_AFTER_MINUTES >= 60
+
+
+# ── the reconciliation preflight, on its way OUT of the database ──────────────────────────────
+#
+# 024 stored it and #125 wrote it, and until now nothing read it: the cycle recorded that it had
+# reasoned from a desynced slate and the page had no way to say so. Storing a finding nobody can
+# see is most of the way to not having the finding.
+
+
+def test_a_run_that_never_reconciled_reports_none_not_a_zeroed_object() -> None:
+    """024 keeps "we never looked" distinct from "we looked and it matched" precisely because six
+    weeks of unchecked cycles rendered identically to healthy ones. Flattening that on the way out
+    of the database would put it straight back.
+
+    Break: return a dict of zeros when reconciled_at is NULL.
+    """
+    from app.services.cycle_state import _reconciliation
+
+    assert _reconciliation(None, None, None, None, None, None, None, None) is None
+
+
+def test_a_desynced_run_reports_its_counts() -> None:
+    from datetime import datetime, timezone
+
+    from app.services.cycle_state import _reconciliation
+
+    at = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)
+    result = _reconciliation(at, False, 0, 5, 3, 10, 2, [{"kind": "missing", "symbol": "TSM"}])
+
+    assert result["in_sync"] is False
+    assert (result["matched"], result["drifted"], result["missing"]) == (0, 5, 3)
+    assert (result["unexpected"], result["breaches"]) == (10, 2)
+    assert result["checked_at"] == at.isoformat()
+
+
+def test_findings_are_capped_on_the_way_out_too() -> None:
+    """A book with two hundred undocumented names should not push a megabyte through a status
+    endpoint the shell polls — but the TOTAL stays honest."""
+    from datetime import datetime, timezone
+
+    from app.services.cycle_state import _reconciliation
+
+    many = [{"kind": "unexpected", "symbol": f"SYM{i}"} for i in range(200)]
+    result = _reconciliation(datetime.now(timezone.utc), False, 0, 0, 0, 200, 0, many)
+
+    assert len(result["findings"]) == 20
+    assert result["findings_total"] == 200

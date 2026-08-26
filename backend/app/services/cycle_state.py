@@ -143,7 +143,13 @@ def current() -> dict[str, Any] | None:
                 logger.warning("swept %d abandoned cycle run(s)", swept)
             row = conn.execute(
                 "SELECT id, phase, status, started_at, updated_at, completed_at, total_positions,"
-                " completed_positions, current_symbol, scanned, survivors, error"
+                " completed_positions, current_symbol, scanned, survivors, error,"
+                # 024's reconciliation preflight. Written since #125 and, until now, never read by
+                # anything — the cycle recorded that it had reasoned from a desynced slate and the
+                # page had no way to say so. Storing a finding nobody can see is most of the way to
+                # not having the finding.
+                " reconciled_at, in_sync, recon_matched, recon_drifted, recon_missing,"
+                " recon_unexpected, recon_breaches, recon_findings"
                 " FROM cycle_runs ORDER BY started_at DESC LIMIT 1"
             ).fetchone()
     except DbUnavailable:
@@ -152,7 +158,8 @@ def current() -> dict[str, Any] | None:
         return None
 
     (rid, phase, status, started, updated, completed, total, done, symbol,
-     scanned, survivors, error) = row
+     scanned, survivors, error, reconciled_at, in_sync, matched, drifted, missing,
+     unexpected, breaches, findings) = row
     return {
         "id": rid,
         "phase": phase,
@@ -169,6 +176,34 @@ def current() -> dict[str, Any] | None:
         # Computed here rather than on the page so two clients cannot disagree about it. None when
         # the total is unknown, which is different from 0% — the scan runs before the count exists.
         "progress_pct": (round(100.0 * done / total, 1) if total else None),
+        "reconciliation": _reconciliation(
+            reconciled_at, in_sync, matched, drifted, missing, unexpected, breaches, findings
+        ),
+    }
+
+
+def _reconciliation(reconciled_at, in_sync, matched, drifted, missing, unexpected,
+                    breaches, findings) -> dict[str, Any] | None:
+    """The preflight's verdict, or None when this run never checked.
+
+    None, not a zeroed object. 024 keeps "we never looked" distinct from "we looked and it matched"
+    precisely because six weeks of unchecked cycles rendered identically to healthy ones, and
+    flattening that distinction on the way out of the database would put it straight back.
+    """
+    if reconciled_at is None:
+        return None
+    return {
+        "checked_at": reconciled_at.isoformat(),
+        "in_sync": in_sync,
+        "matched": matched,
+        "drifted": drifted,
+        "missing": missing,
+        "unexpected": unexpected,
+        "breaches": breaches,
+        # Capped on the way out as well as on the way in. A book with two hundred undocumented
+        # names should not push a megabyte through a status endpoint the shell polls.
+        "findings": (findings or [])[:20],
+        "findings_total": len(findings or []),
     }
 
 
@@ -177,7 +212,8 @@ def recent(limit: int = 10) -> list[dict[str, Any]]:
         sweep_stale(conn)
         rows = conn.execute(
             "SELECT id, phase, status, started_at, completed_at, total_positions,"
-            " completed_positions, error FROM cycle_runs ORDER BY started_at DESC LIMIT %s",
+            " completed_positions, error, reconciled_at, in_sync"
+            " FROM cycle_runs ORDER BY started_at DESC LIMIT %s",
             (limit,),
         ).fetchall()
     return [
@@ -187,6 +223,10 @@ def recent(limit: int = 10) -> list[dict[str, Any]]:
             "completed_at": r[4].isoformat() if r[4] else None,
             "total_positions": r[5], "completed_positions": r[6], "error": r[7],
             "duration_seconds": (r[4] - r[3]).total_seconds() if r[4] else None,
+            # Three states, not two: True (matched), False (did not), None (never checked). A list
+            # of runs is where "the collector stopped checking" becomes visible, so the third state
+            # has to survive into the row.
+            "in_sync": r[9] if r[8] is not None else None,
         }
         for r in rows
     ]
