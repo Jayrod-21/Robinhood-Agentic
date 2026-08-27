@@ -16,7 +16,7 @@ margin multiplier 1). `/api/account` reads Alpaca live (`backend/app/services/br
 default. If Alpaca is configured but unreachable, the dashboard refuses rather than falling back to
 the Robinhood snapshot. The Robinhood MCP snapshot path (`data/account_snapshot.json`,
 `bin/refresh_daemon.sh`) is unchanged and still runs — as the legacy fallback when Alpaca credentials
-are absent, and unconditionally as part of the twice-daily scheduled cycle (neither script was
+are absent, and unconditionally as part of the scheduled cycle (neither script was
 touched by the Alpaca work). Market data (prices, fundamentals) now comes from FMP; yfinance was
 removed from everything the dashboard ships and survives only in the corporate-actions/delistings
 loader image. The `••••4025` account and dates below describe the project's actual history and are
@@ -44,7 +44,7 @@ the agent could trade. Started June 3, 2026 with $100.00, all cash. Superseded 2
 Python | FMP (fundamentals/prices — replaced yfinance in everything the dashboard ships; yfinance
 survives only in the corporate-actions/delistings loader image) | Alpaca (paper account reads,
 `src/alpaca.py`, `ALPACA_BASE_URL` selects paper vs. live) | Robinhood MCP (quotes + execution;
-still used by the twice-daily refresh cycle and as the account-read fallback when Alpaca credentials
+still used by the scheduled refresh cycle and as the account-read fallback when Alpaca credentials
 are absent) | the in-session Claude agent as the Wasden intelligence layer | Markdown-file journal as
 the self-learning memory.
 
@@ -81,7 +81,7 @@ Active — bootstrap phase (a human owner confirms every order before it places)
   [Current account state](#current-account-state-2026-08-17)).
 - [x] **Ubuntu server deployment** (`deploy/` + `SERVER_DEPLOY.md`): always-on prod stack (Caddy
   single-origin + basic auth, prod Next.js build, `restart: always`), Cloudflare Tunnel, systemd
-  boot unit, and a **twice-daily cron cycle** (market open + close, `TZ=America/New_York`) that
+  boot unit, and a **daily cron cycle** (market open, `TZ=America/New_York`) that
   refreshes the snapshot (headless `claude` + MCP, no wt.exe), scans the universe, debates each
   position, and writes `logs/reports/<date>-<phase>.md`. Job: `python -m app.jobs.cycle open|close`.
 - [ ] Position monitoring + stop/discipline automation in the dashboard.

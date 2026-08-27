@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS
     /api/reconciliation could answer "does the broker hold what the slate says" from the day issue
-    #22's first half shipped. Nothing ever asked it. The twice-daily cycle went on reading
+    #22's first half shipped. Nothing ever asked it. The cycle went on reading
     docs/SLATE.md, debating positions against it and writing a report, for weeks after the account
     of record moved brokers — while the live book matched the document on ZERO of eighteen names.
     A page nobody opens is not a control.
@@ -148,7 +148,7 @@ def _findings(positions: list[dict], breaches: list[dict]) -> list[dict]:
 def _announce(result: dict, summary: dict) -> None:
     """One log line an operator cannot read as routine.
 
-    ERROR, not WARNING: this lands in logs/cron/ twice a day and the whole point is that the last
+    ERROR, not WARNING: this lands in logs/cron/ every run and the whole point is that the last
     six weeks of it looked exactly like a healthy run.
     """
     if result["in_sync"]:

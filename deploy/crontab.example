@@ -60,7 +60,7 @@ CRON_TZ=America/New_York
 # automatically worth holding at the close.
 #
 # COST. Each debate fans out a jury: measured at ~12 API calls and ~19k tokens per position. At
-# fifteen positions that is ~180 calls per cycle, twice a day. The `cycle_max_debates` parameter
+# fifteen positions that is ~180 calls per cycle. The `cycle_max_debates` parameter
 # (Parameters page) caps how many positions get debated without a redeploy — 0 means all of them —
 # and every debate record now carries its own token usage, so the spend is auditable rather than
 # estimated.
@@ -71,8 +71,15 @@ CRON_TZ=America/New_York
 # Market OPEN 09:30 ET → run at 09:32 (let the open print settle). Mon–Fri.
 32 9 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" open
 
-# Market CLOSE 16:00 ET → run at 16:02. Mon–Fri.
-2 16 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" close
+# MORNINGS ONLY, since 2026-08-27. The close run is deliberately NOT scheduled: while the debate
+# engine is being rebuilt — anchored confidence, a paired Claude/Gemini panel at roughly double the
+# jury size — a second full cycle a day is spend on an engine that is still changing shape. The
+# `close` phase still works and can be run by hand:
+#
+#     bin/scheduled_cycle.sh close
+#
+# Nothing branches on the phase; it is a CLI choice and a label on the cycle_runs row, so dropping
+# the second run removes work, not capability.
 
 # ── Market Mover brief sync, every 30 minutes ─────────────────────────────────────────────────
 # Pulls the published brief and atomically rewrites data/market_mover/latest.json, which

@@ -53,7 +53,7 @@ def test_report_debate_error_surfaced():
 
 def test_a_debates_spend_is_recorded_on_its_own_record():
     """Nothing recorded what a debate cost. Tolerable while debates were run by hand; not on a
-    schedule that runs one per held position twice a day, where "how much is this spending?" had
+    schedule that runs one per held position, where "how much is this spending?" had
     no answer anywhere in the system."""
     from app.debate import anthropic_client as ac
 

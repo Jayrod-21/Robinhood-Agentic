@@ -59,7 +59,7 @@ def _client() -> tuple[object, str]:
 #
 # Nothing recorded what a debate cost. That was tolerable while debates were run by hand, one at a
 # time, by someone watching. It is not tolerable on a schedule: the cycle job runs a debate per held
-# position, twice a day, and "how much is this spending?" had no answer anywhere in the system —
+# position on a schedule, and "how much is this spending?" had no answer anywhere in the system —
 # not in the record, not in the logs, not in the report.
 #
 # A ContextVar rather than a module global because the cycle runs two debates concurrently

@@ -1,4 +1,4 @@
--- 022 — what the twice-daily cycle is doing right now.
+-- 022 — what the scheduled cycle is doing right now.
 --
 -- WHY THE DATABASE AND NOT MEMORY
 --   bin/scheduled_cycle.sh runs `docker compose exec backend python -m app.jobs.cycle`, which is a

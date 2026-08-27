@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scheduled_cycle.sh <open|close> [extra args passed to the cycle job]
 #
-# What cron runs twice a day. Two steps:
+# What cron runs each morning. Two steps:
 #   1. Host-side: refresh the FALLBACK account snapshot from Alpaca (bin/alpaca_snapshot.py). This
 #      used to pull from the Robinhood MCP, which lived on the host and shelled out to wt.exe — a
 #      WSL-era path that cannot work on this machine. The broker is Alpaca and the container reads

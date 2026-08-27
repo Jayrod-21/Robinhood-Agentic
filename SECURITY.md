@@ -21,7 +21,7 @@ reviewed and when. One material fact has changed since:
   the read rather than falling back to the Robinhood snapshot — serving another broker's stale
   holdings during an outage was judged worse than an honest error.
 - **The Robinhood MCP snapshot path described throughout §1–§3 below is unchanged and still live.**
-  It is used unconditionally by the twice-daily scheduled cycle, and as the account-read fallback
+  It is used unconditionally by the scheduled cycle, and as the account-read fallback
   whenever Alpaca credentials are absent. Every vector/defense pair below that references the
   Robinhood MCP, the refresh bridge, or `data/account_snapshot.json` is still an accurate
   description of code that still exists and still runs — none of it was removed or needs
@@ -50,10 +50,10 @@ The asset is **not** the ~$240 balance. Ranked:
    OAuth token. That process's tool allow-list is a security control, not a convenience.
 3. **`ANTHROPIC_API_KEY`** — loss means an attacker spends our money and impersonates the app.
 4. **The holdings snapshot** (`data/account_snapshot.json`) — cash, buying power, every position,
-   quantity, cost basis. Confidential, and also *trusted input*: debates and the twice-daily cycle
+   quantity, cost basis. Confidential, and also *trusted input*: debates and the scheduled cycle
    reason over it, so tampering with it means poisoning decisions about real money. *(See §0: since
    2026-08-17 `/api/account` reads Alpaca directly when configured and only falls back to this file
-   when Alpaca credentials are absent; the twice-daily cycle still writes and reads it
+   when Alpaca credentials are absent; the scheduled cycle still writes and reads it
    unconditionally.)*
 5. **The market-data database** (`rh-db`) — evaluation integrity; a poisoned price history
    corrupts every backtest and paper-portfolio mark.
@@ -144,7 +144,7 @@ admission that nothing does yet.*
 
 *(This subsection is unchanged and still accurate — see §0. As of 2026-08-17 it describes the
 legacy/scheduled-cycle path: the dashboard's own account read prefers Alpaca when configured, but
-this bridge still runs unconditionally as part of the twice-daily cycle and as the fallback when
+this bridge still runs unconditionally as part of the scheduled cycle and as the fallback when
 Alpaca credentials are absent.)*
 
 - **Vector:** the refresh Claude session is tricked or misused into placing orders.
@@ -234,7 +234,7 @@ Alpaca credentials are absent.)*
 - **Vector:** secrets or holdings land in logs that later get shared or exfiltrated.
   **Defense (implemented on this branch, 2026-08-13, verified):** `SecretRedactionFilter` in
   `backend/app/main.py` — attached to every root handler by the shared `configure_logging()`
-  bootstrap, which the cron cycle imports too, so the API process and the twice-daily job run one
+  bootstrap, which the cron cycle imports too, so the API process and the scheduled job run one
   implementation. It redacts `sk-ant-` keys, bearer tokens, and authorization/api-key header
   values, including in exception text (the F7 structural gap: an SDK regression attaching auth
   headers to an exception would otherwise land in `logger.exception`). The cycle also no longer

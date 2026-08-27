@@ -102,7 +102,7 @@ the portfolio against the market over the same range.
 **Where / notes:**
 - Needs a **time-series of portfolio value**, which we don't store yet (only point-in-time snapshots).
   Options to source it:
-  1. Have the twice-daily **cycle job append a value point** to a `logs/portfolio_value.jsonl` each
+  1. Have the **cycle job append a value point** to a `logs/portfolio_value.jsonl` each
      open/close (simple, forward-only — history builds over time).
   2. Use **Robinhood `get_portfolio_historicals`** via the MCP bridge (real historical account value)
      — or Alpaca's equivalent portfolio-history endpoint, now that Alpaca is the account of record

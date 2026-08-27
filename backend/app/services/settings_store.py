@@ -95,7 +95,7 @@ REGISTRY: tuple[Param, ...] = (
           "the call rate.",
           "Portfolio, Reconcile, Position"),
     Param("cycle_max_debates", "Cycle debate cap", "Runs", "count", 0.0, 0.0, 50.0,
-          "How many held positions the twice-daily cycle debates. 0 means all of them. Each debate "
+          "How many held positions the scheduled cycle debates. 0 means all of them. Each debate "
           "fans out a jury, so this is the dial between thorough and expensive.",
           "Twice-daily cycle"),
     Param("debate_rounds", "Debate rounds", "Runs", "count", 2.0, 1.0, 4.0,

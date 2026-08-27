@@ -10,7 +10,7 @@ job does not depend on the file at all.
 
 WHAT A RUN COSTS
     One debate per held position, and each debate fans out a jury. At fifteen positions that is
-    ~195 API calls per cycle, twice a day. `cycle_max_debates` (Parameters page) caps it without a
+    ~195 API calls per cycle. `cycle_max_debates` (Parameters page) caps it without a
     redeploy, and every debate record now carries its own token usage so the spend is auditable
     rather than a guess.
 
@@ -211,7 +211,7 @@ async def _run_cycle_body(phase: str, max_debates: int, run_id: int | None) -> s
                 max_debates = 0
         if max_debates > 0:
             symbols = symbols[:max_debates]
-        # Count only, no tickers: this line lands in logs/cron/ twice a day, and the symbol list
+        # Count only, no tickers: this line lands in logs/cron/ on every run, and the symbol list
         # is the account's holdings (issue #14). The per-ticker detail lives in the report file.
         logger.info("debating %d position(s)", len(symbols))
         await asyncio.to_thread(cycle_state.update, run_id, total_positions=len(symbols))

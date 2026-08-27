@@ -78,7 +78,7 @@ double-digit targets. The other ten reconcile as **unrecorded**. TSM, GEV and PL
 entirely: they were never seeded. Cash sits at 92.5% against a 10-20% band, which breaches by
 design, because the slate has not been executed.
 
-**The twice-daily cycle now reports this every run** (`backend/app/services/reconcile_check.py`).
+**The scheduled cycle now reports this every run** (`backend/app/services/reconcile_check.py`).
 It reads OUT OF SYNC at the top of every cycle report and logs at ERROR, which is correct and
 expected until the slate is either executed or replaced. It does not stop the cycle; the
 `cycle_halt_on_desync` tunable decides that and is off by default.
