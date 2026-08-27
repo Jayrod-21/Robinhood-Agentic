@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from app.config import get_settings
 from app.debate import anthropic_client as ac
 from app.debate.aggregate import aggregate
+from app.debate.anthropic_client import DebateUnavailable
 from app.debate.prompts import (
     JUROR_PERSPECTIVES,
     SYSTEM_GROUNDING,
@@ -43,6 +44,30 @@ def _fetch_context(ticker: str) -> tuple[float | None, dict | None]:
     return price, fundamentals
 
 
+async def _vote_via(provider: str, model: str, system: str, prompt: str) -> tuple[dict, str]:
+    """One vote from whichever family owns this seat. Returns (raw vote, key owner).
+
+    The two providers reach structure differently — Anthropic forces a tool call, Gemini constrains
+    the response to a JSON schema — and neither is wrapped in the other's shape. A common adapter
+    that pretended they were the same would hide the one difference that actually bites: Gemini's
+    thinking tokens count against maxOutputTokens, so its budget is set separately.
+    """
+    if provider == "gemini":
+        from app.llm import gemini_client, keys, ledger
+
+        chosen = keys.select(keys.GEMINI, ledger.spend_by_owner(keys.GEMINI))
+        if chosen is None:
+            raise DebateUnavailable("No Gemini key is configured for the paired jury.")
+        raw, payload = await gemini_client.cast_vote(model, chosen.secret, system, prompt)
+        tokens_in, tokens_out = gemini_client.usage_of(payload)
+        ledger.record(
+            provider=keys.GEMINI, key_owner=chosen.owner, model=model,
+            input_tokens=tokens_in, output_tokens=tokens_out, purpose="debate:cast_vote",
+        )
+        return raw, chosen.owner
+    return await ac.cast_vote_attributed(model, system, prompt)
+
+
 async def _run_juror(
     agent_id: int,
     focus_area: str,
@@ -55,6 +80,7 @@ async def _run_juror(
     model: str,
     sem: asyncio.Semaphore,
     transcript: str | None = None,
+    provider: str = "anthropic",
 ) -> JurorVote | None:
     """One juror: a forced-tool vote with a single retry. Returns None when it cannot vote.
 
@@ -76,13 +102,15 @@ async def _run_juror(
         owner = "unknown"
         for attempt in (1, 2):
             try:
-                raw, owner = await ac.cast_vote_attributed(model, SYSTEM_GROUNDING, prompt)
+                raw, owner = await _vote_via(provider, model, SYSTEM_GROUNDING, prompt)
                 return JurorVote(
                     agent_id=agent_id,
                     focus_area=focus_area,
                     vote=Vote(str(raw["vote"]).upper()),
                     confidence=max(0.0, min(1.0, float(raw.get("confidence", 0.5)))),
                     reasoning=str(raw.get("reasoning", "")).strip() or "(no reasoning returned)",
+                    provider=provider,
+                    model=model,
                 )
             except Exception as exc:  # noqa: BLE001 — one bad juror must not sink the jury
                 logger.warning("juror %s attempt %s failed: %s", agent_id, attempt, exc)
@@ -230,18 +258,58 @@ async def run_debate(ticker: str, question: str | None = None):
 
     # 3) Jury — all jurors concurrent (bounded), streamed as each returns.
     sem = asyncio.Semaphore(settings.debate_max_concurrency)
+    # A SECOND, tighter gate for Gemini. The shared semaphore bounds total in-flight calls, which is
+    # the right control for cost and for the event loop — but it says nothing about per-provider
+    # rate limits, and the two providers do not have the same ones.
+    #
+    # Measured on the first paired run: ten Gemini jurors dispatched under the shared limit tripped
+    # "You exceeded your current quota" and four of twenty seats abstained. A fifth of the panel
+    # lost to a rate limit is not a jury with a few gaps; it is a systematically thinner Gemini side
+    # than Anthropic side, which quietly biases every family comparison this panel exists to make.
+    gemini_sem = asyncio.Semaphore(settings.gemini_max_concurrency)
     # Clamped to the briefs that exist: asking for fifteen jurors when ten perspectives are defined
     # would silently seat ten and report a jury of fifteen. The registry's upper bound is 20 because
     # bounds are about catching a slipped decimal, not about what this engine can currently seat.
     jury_size = int(settings_store.get_or("debate_juror_count", settings.jury_size))
     jury_size = max(1, min(jury_size, len(JUROR_PERSPECTIVES)))
     perspectives = JUROR_PERSPECTIVES[:jury_size]
+
+    # PAIRED PANEL: every lens is judged by BOTH families, on the identical question.
+    #
+    # Splitting the ten lenses 5/5 between providers would have been free, and would have made
+    # every disagreement unattributable — "macro says hold, valuation says sell" could be a lens
+    # difference or a model difference, and no two jurors would ever answer the same question.
+    # Running both families over the same lens costs twice the jury and buys the only clean
+    # comparison available: same evidence, same lens, two model families.
+    #
+    # Gemini seats are numbered from 100 so an agent_id is unambiguous across families and no
+    # historical record's ids collide.
+    seats: list[tuple[int, str, str, str, str]] = [
+        (aid, focus, lens, "anthropic", settings.jury_model) for (aid, focus, lens) in perspectives
+    ]
+    from app.llm import keys as _keys
+
+    paired = settings.paired_jury and bool(_keys.available(_keys.GEMINI))
+    if paired:
+        seats += [
+            (100 + aid, focus, lens, "gemini", settings.gemini_jury_model)
+            for (aid, focus, lens) in perspectives
+        ]
+    elif settings.paired_jury:
+        # Asked for, not available. Said out loud rather than silently seating half a panel and
+        # reporting it as a jury.
+        yield {
+            "type": "notice",
+            "message": "Paired jury requested but no Gemini key is configured — Anthropic only.",
+        }
+    jury_size = len(seats)
+
     tasks = [
         asyncio.create_task(
-            _run_juror(aid, focus, lens, ticker, price, fundamentals, bull, bear, settings.jury_model,
-                       sem, transcript)
+            _run_juror(aid, focus, lens, ticker, price, fundamentals, bull, bear, model,
+                       gemini_sem if provider == "gemini" else sem, transcript, provider=provider)
         )
-        for (aid, focus, lens) in perspectives
+        for (aid, focus, lens, provider, model) in seats
     ]
     votes: list[JurorVote] = []
     abstained = 0

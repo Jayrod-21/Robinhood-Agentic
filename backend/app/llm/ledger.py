@@ -57,6 +57,22 @@ def record(
         logger.warning("could not record LLM usage (%s %s): %s", provider, key_owner, exc)
 
 
+def _balance_metric(provider: str | None) -> str:
+    """Whether to balance this provider on dollars or on tokens.
+
+    Dollars are the thing being split, so they win wherever they exist. But Gemini has no published
+    rate in pricing.py, so every Gemini row carries a NULL cost — and balancing on dollars there
+    would see 0.00 for both owners forever and keep picking slot 1, which is Joe. One owner would
+    silently carry the entire Gemini bill.
+
+    Tokens are always recorded, and WITHIN one provider running one model they are exactly
+    proportional to cost. So the fallback is not an approximation of the right answer, it IS the
+    right answer for the case it covers — it only degrades if a provider runs several models at
+    different rates, which the jury does not.
+    """
+    return "tokens" if provider == "gemini" else "cost"
+
+
 def spend_by_owner(provider: str | None = None) -> dict[str, float]:
     """Estimated USD per owner, for the selection path.
 
@@ -67,8 +83,13 @@ def spend_by_owner(provider: str | None = None) -> dict[str, float]:
     """
     try:
         with connection() as conn:
+            column = (
+                "input_tokens + output_tokens"
+                if _balance_metric(provider) == "tokens"
+                else "estimated_cost_usd"
+            )
             rows = conn.execute(
-                "SELECT key_owner, estimated_cost_usd FROM llm_spend_by_owner"
+                f"SELECT key_owner, {column} FROM llm_spend_by_owner"
                 " WHERE (%s::text IS NULL OR provider = %s)",
                 (provider, provider),
             ).fetchall()

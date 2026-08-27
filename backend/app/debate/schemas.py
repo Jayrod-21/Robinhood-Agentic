@@ -26,6 +26,13 @@ class JurorVote(BaseModel):
     vote: Vote
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
+    # Which model family judged this lens. Load-bearing on a paired panel: the same ten lenses are
+    # judged by both Claude and Gemini, so without this a disagreement is unattributable — you
+    # cannot tell "the models genuinely disagree about NVDA" from "Gemini is systematically more
+    # bearish than Claude", and the second is a calibration artifact rather than information.
+    # Defaults to anthropic so every historical record still parses.
+    provider: str = "anthropic"
+    model: str = ""
 
 
 class JuryResult(BaseModel):
@@ -44,6 +51,10 @@ class JuryResult(BaseModel):
     # information, so a page can decline to draw a confidence bar rather than assert a measurement
     # nothing made.
     confidence: dict = Field(default_factory=dict)
+    # Per-family vote counts and per-lens agreement on a paired panel. Empty for a single-family
+    # jury. Recorded on every debate so "do these families actually differ, and where" is answerable
+    # from history rather than from impressions.
+    families: dict = Field(default_factory=dict)
 
 
 class DebateTurn(BaseModel):

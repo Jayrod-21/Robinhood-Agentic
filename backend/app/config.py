@@ -31,6 +31,25 @@ class Settings(BaseSettings):
     # endpoints fail closed with a clear 503 when it is missing rather than crashing on import.
     anthropic_api_key: str | None = Field(default=None)
     jury_model: str = Field(default="claude-haiku-4-5")
+    # The Gemini seat on a paired panel.
+    #
+    # PINNED, not `gemini-flash-latest`: a moving alias means a debate cannot be reproduced, and the
+    # whole point of recording the model per vote is that a verdict stays attributable to something
+    # specific.
+    #
+    # AND CHOSEN FOR CROSS-KEY AVAILABILITY, which is not the same as "the best model". Measured
+    # 2026-08-27: `gemini-2.5-flash` answers on Joe's key and returns 404 "model not found" on
+    # Jared's — the two keys do not have the same model access. Because selection routes each call
+    # to whichever owner is behind, and failover can move a call between them mid-debate, a model
+    # only one key can reach produces abstentions that look like rate limits and are not.
+    # `gemini-3.1-flash-lite` was verified on BOTH keys.
+    gemini_jury_model: str = Field(default="gemini-3.1-flash-lite")
+    # Whether the jury is paired. Off means the panel is Anthropic-only, exactly as before, so this
+    # whole change is inert until someone turns it on or a Gemini key is configured.
+    paired_jury: bool = Field(default=True)
+    # Gemini's free tier rate-limits far below Anthropic's. Two at a time costs a little wall-clock
+    # and buys a full Gemini bench; ten at a time cost four seats on the first paired run.
+    gemini_max_concurrency: int = Field(default=2, ge=1, le=10)
 
     @field_validator("anthropic_api_key", mode="before")
     @classmethod

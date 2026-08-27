@@ -97,8 +97,9 @@ def aggregate(votes: list[JurorVote], jury_size: int) -> JuryResult:
     # early-return cannot quietly ship a JuryResult with the annotations missing — which would
     # render as "this panel is fine" rather than "nobody checked".
     jury_annotations = {
-        "calibration_signals": calibration_signals,
+        "calibration_signals": calibration_signals + calibration.family_signals(votes),
         "confidence": calibration.confidence_summary(votes),
+        "families": calibration.family_summary(votes),
     }
 
     counts = counts_of(votes)
