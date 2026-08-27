@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import time
 
 from app.debate.prompts import CAST_VOTE_TOOL
 
@@ -48,11 +49,61 @@ def _client() -> tuple[object, str]:
         raise DebateUnavailable("The live debate engine is not configured on this server.")
 
     chosen = keys.select(keys.ANTHROPIC, ledger.spend_by_owner(keys.ANTHROPIC)) or candidates[0]
+    if _exhausted(chosen.owner):
+        # This owner's key is known to be out of budget. Prefer any other configured owner over
+        # spending two attempts discovering that again — which is what happened on 2026-08-27:
+        # Jared's key hit its usage limit, both owners sat at $0 so selection kept choosing it by
+        # slot order, and all ten jurors failed against a key that could not have worked.
+        alternative = next(
+            (k for k in candidates if k.owner != chosen.owner and not _exhausted(k.owner)), None
+        )
+        if alternative is not None:
+            logger.warning(
+                "%s is out of API budget; using %s instead", chosen.owner, alternative.owner
+            )
+            chosen = alternative
+
     from anthropic import AsyncAnthropic
 
     # Generous per-request timeout; the SDK retries transient errors on its own.
     client = AsyncAnthropic(api_key=chosen.secret, timeout=120.0, max_retries=2)
     return client, chosen.owner
+
+
+# ── budget exhaustion ─────────────────────────────────────────────────────────────────────────
+#
+# A usage-limit rejection is not a transient error and must not be retried like one. Anthropic
+# answers 400 with "You have reached your specified API usage limits. You will regain access on
+# <date>" — the SDK does not retry a 400, but the ENGINE does (two attempts per juror), and with
+# ten jurors that is twenty guaranteed failures per debate against a key that cannot work.
+#
+# Remembered in-process only, deliberately. A restart clears it, which is the right default: the
+# limit lifts on a date this code does not know, and a stale "exhausted" flag surviving a redeploy
+# would keep an owner's working key benched. Worst case after a restart is one failed call, which
+# re-marks it.
+_EXHAUSTED: dict[str, float] = {}
+_EXHAUSTED_FOR_SECONDS = 3600.0
+
+
+def _exhausted(owner: str) -> bool:
+    until = _EXHAUSTED.get(owner)
+    return until is not None and time.monotonic() < until
+
+
+def mark_exhausted(owner: str) -> None:
+    """Bench one owner's key for an hour after it reports a usage limit."""
+    _EXHAUSTED[owner] = time.monotonic() + _EXHAUSTED_FOR_SECONDS
+    logger.error("%s has reached its API usage limit; benching that key for an hour", owner)
+
+
+def _is_usage_limit(exc: BaseException) -> bool:
+    """Whether this failure means "no budget" rather than "try again".
+
+    Matched on the message because the SDK surfaces it as a generic BadRequestError — there is no
+    distinct exception class for it, and a 400 is otherwise a programming error we should NOT be
+    failing over on.
+    """
+    return "usage limit" in str(exc).lower()
 
 
 # ── token accounting ──────────────────────────────────────────────────────────────────────────
@@ -118,11 +169,61 @@ def _record_usage(resp, *, owner: str | None = None, model: str = "", purpose: s
         )
 
 
+async def _create_with_failover(purpose: str, model: str, **kwargs):
+    """One Messages call, retried on the OTHER owner's key if this one is out of budget.
+
+    WHY THIS IS CENTRAL RATHER THAN PER-CALL-SITE
+        Found live on 2026-08-27. Jared's key served a debate's first two calls, which put him
+        ahead in the ledger, so the balance-aware selector correctly routed the next call to Joe —
+        whose key was at its usage limit. Cost-splitting worked exactly as designed and drove
+        straight into a dead key, and every juror failed against it.
+
+        The failover has to sit here because a usage limit can be discovered on ANY call — the
+        bull's opening case, a rebuttal, a juror's vote — and the first draft only handled the
+        juror path, so a debate died on the researcher call before the jury was ever assembled.
+
+    ONE retry, on a DIFFERENT owner. Not a loop: with two keys, if the second is also exhausted
+    there is nothing left to try, and spinning would turn an outage into a slow outage.
+    """
+    client, owner = _client()
+    try:
+        resp = await client.messages.create(model=model, **kwargs)
+        return resp, owner
+    # Broad, then narrowed: anything that is not a budget limit is re-raised unchanged.
+    except Exception as exc:
+        if not _is_usage_limit(exc):
+            raise
+        mark_exhausted(owner)
+
+    from app.llm import keys as key_registry
+
+    alternative = next(
+        (
+            k
+            for k in key_registry.available(key_registry.ANTHROPIC)
+            if k.owner != owner and not _exhausted(k.owner)
+        ),
+        None,
+    )
+    if alternative is None:
+        raise DebateUnavailable(
+            "Every configured API key has reached its usage limit. The debate engine cannot run "
+            "until one resets."
+        )
+
+    logger.warning("%s is out of budget for %s; retrying on %s", owner, purpose, alternative.owner)
+    from anthropic import AsyncAnthropic
+
+    retry_client = AsyncAnthropic(api_key=alternative.secret, timeout=120.0, max_retries=2)
+    resp = await retry_client.messages.create(model=model, **kwargs)
+    return resp, alternative.owner
+
+
 async def write_case(model: str, system: str, user: str, max_tokens: int = 700) -> str:
     """Free-text completion for a bull/bear researcher. Returns the joined text blocks."""
-    client, owner = _client()
-    resp = await client.messages.create(
-        model=model,
+    resp, owner = await _create_with_failover(
+        "debate:write_case",
+        model,
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user}],
@@ -137,9 +238,9 @@ async def cast_vote(model: str, system: str, user: str, max_tokens: int = 500) -
     Forcing ``tool_choice`` to ``cast_vote`` guarantees a parseable, schema-validated result rather
     than free-form text we'd have to scrape.
     """
-    client, owner = _client()
-    resp = await client.messages.create(
-        model=model,
+    resp, owner = await _create_with_failover(
+        "debate:cast_vote",
+        model,
         max_tokens=max_tokens,
         system=system,
         tools=[CAST_VOTE_TOOL],
@@ -150,6 +251,29 @@ async def cast_vote(model: str, system: str, user: str, max_tokens: int = 500) -
     for block in resp.content:
         if getattr(block, "type", None) == "tool_use" and block.name == "cast_vote":
             return dict(block.input)
+    raise ValueError("juror response contained no cast_vote tool call")
+
+
+async def cast_vote_attributed(model: str, system: str, user: str, max_tokens: int = 500) -> tuple[dict, str]:
+    """cast_vote, plus the owner whose key served it.
+
+    The engine needs the owner so that a usage-limit rejection can bench THAT key rather than
+    guessing which one was in play — with two owners configured, benching the wrong one would take
+    the working key out and leave the exhausted one in.
+    """
+    resp, owner = await _create_with_failover(
+        "debate:cast_vote",
+        model,
+        max_tokens=max_tokens,
+        system=system,
+        tools=[CAST_VOTE_TOOL],
+        tool_choice={"type": "tool", "name": "cast_vote"},
+        messages=[{"role": "user", "content": user}],
+    )
+    _record_usage(resp, owner=owner, model=model, purpose="debate:cast_vote")
+    for block in resp.content:
+        if getattr(block, "type", None) == "tool_use" and block.name == "cast_vote":
+            return block.input, owner
     raise ValueError("juror response contained no cast_vote tool call")
 
 
@@ -171,15 +295,9 @@ async def converse(
     when the answer must be structured; here the model has to be free to answer in prose without
     calling anything, and forcing a call would make it invent a lookup to satisfy the constraint.
     """
-    client, owner = _client()
-    kwargs: dict = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "system": system,
-        "messages": messages,
-    }
+    kwargs: dict = {"max_tokens": max_tokens, "system": system, "messages": messages}
     if tools:
         kwargs["tools"] = tools
-    resp = await client.messages.create(**kwargs)
+    resp, owner = await _create_with_failover("chat:converse", model, **kwargs)
     _record_usage(resp, owner=owner, model=model, purpose="chat:converse")
     return resp
