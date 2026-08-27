@@ -34,6 +34,16 @@ class JuryResult(BaseModel):
     decision: Decision
     escalated_to_human: bool
     reason: str
+    # Ways this panel's output should be read with suspicion — a confidence that is constant
+    # across ten lenses, a value repeated verbatim by most jurors, uniform certainty. Empty is the
+    # healthy case. These ANNOTATE; the decision above is unchanged by them, because the verdict
+    # stays a vote count and vote counts are comparable across model families in a way confidence
+    # is not. See app/debate/calibration.py.
+    calibration_signals: list[str] = Field(default_factory=list)
+    # n / mean / stdev / min / max, plus `usable`: False when the numbers are present but carry no
+    # information, so a page can decline to draw a confidence bar rather than assert a measurement
+    # nothing made.
+    confidence: dict = Field(default_factory=dict)
 
 
 class DebateTurn(BaseModel):
