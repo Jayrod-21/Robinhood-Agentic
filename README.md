@@ -22,7 +22,7 @@ Private repo. Co-owned — see [Ownership](#ownership).
 > When Alpaca is configured but unreachable, the dashboard refuses rather than falling back to the
 > Robinhood snapshot file — serving another broker's months-old holdings during an outage would show
 > positions the operator does not have. The Robinhood MCP snapshot path (`data/account_snapshot.json`,
-> `bin/refresh_daemon.sh`, the twice-daily cycle) still exists, is unchanged, and is still used —
+> `bin/refresh_daemon.sh`, the scheduled cycle) still exists, is unchanged, and is still used —
 > as the legacy fallback when Alpaca credentials are absent, and unconditionally by the scheduled
 > cycle described below. Market data (prices, fundamentals) now comes from FMP; yfinance was removed
 > from everything the dashboard ships and survives only in the corporate-actions/delistings loader

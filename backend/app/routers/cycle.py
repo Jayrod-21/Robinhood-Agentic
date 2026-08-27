@@ -1,4 +1,4 @@
-"""GET /api/cycle/current — is the twice-daily cycle running, and how far in?
+"""GET /api/cycle/current — is the scheduled cycle running, and how far in?
 
 Contract: docs/contracts/cycle-endpoint.md. Read-only.
 

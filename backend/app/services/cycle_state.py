@@ -1,4 +1,4 @@
-"""Progress for the twice-daily cycle: what is running, how far in, and what happened last time.
+"""Progress for the scheduled cycle: what is running, how far in, and what happened last time.
 
 WHY THIS IS WRITTEN TO POSTGRES
     The cycle runs as `docker compose exec backend python -m app.jobs.cycle` — a DIFFERENT PROCESS

@@ -5,7 +5,7 @@
 > `ALPACA_API_SECRET_KEY` are set in `backend/.env`; `ALPACA_BASE_URL` is the one variable
 > separating paper from live, and paper is the default. If Alpaca is configured but unreachable, the
 > app refuses the read rather than falling back to the Robinhood snapshot. **Everything below about
-> the Robinhood MCP, `refresh_once.sh`/`refresh_daemon.sh`, and the twice-daily cycle is unchanged
+> the Robinhood MCP, `refresh_once.sh`/`refresh_daemon.sh`, and the scheduled cycle is unchanged
 > and still required** — that path still runs unconditionally as the scheduled cycle, and serves as
 > the account-read fallback whenever Alpaca credentials are absent. Market data (prices,
 > fundamentals) now comes from FMP; yfinance was removed from everything the dashboard ships.
@@ -74,7 +74,7 @@ Posture, ported from 9b (see `docs/PATTERNS_FROM_9B.md` §5):
 - **As of 2026-08-17**, holdings come from Alpaca directly (`ALPACA_API_KEY_ID` /
   `ALPACA_API_SECRET_KEY` in `backend/.env`, paper by default via `ALPACA_BASE_URL`) when
   configured; the snapshot, refreshed by the host-side `claude` + MCP (no brokerage credentials are
-  ever stored), remains the fallback source and is still written unconditionally by the twice-daily
+  ever stored), remains the fallback source and is still written unconditionally by the scheduled
   cycle. **No order-placement path exists anywhere in the app** — verified; see `SECURITY.md` §
   "The order path that does not exist yet".
 
@@ -95,7 +95,7 @@ Do not proceed past step 4 until the owners have decided:
 
 1. **Docker + Compose v2** — `docker --version`, `docker compose version`.
 2. **Claude Code** — installed and logged in (`claude` on PATH).
-3. **robinhood-trading MCP at USER scope, authenticated** — this is what the twice-daily refresh
+3. **robinhood-trading MCP at USER scope, authenticated** — this is what the scheduled refresh
    rides on (step 3 below proves it). Still required as of 2026-08-17 — the scheduled cycle runs it
    unconditionally, independent of Alpaca.
 4. **Alpaca paper API credentials** (`ALPACA_API_KEY_ID` / `ALPACA_API_SECRET_KEY`) — as of
@@ -212,7 +212,7 @@ sudo systemctl enable --now agentic-dashboard
 
 (The unit already carries M's real user and path.)
 
-### 7. Schedule the twice-daily cycle
+### 7. Schedule the scheduled cycle
 
 ```bash
 crontab -e     # paste deploy/crontab.example (paths are already M's)

@@ -180,7 +180,7 @@ def test_a_healthy_book_never_halts_even_with_the_switch_on(lab) -> None:
 
 
 def test_desync_is_logged_at_error_not_warning(lab, caplog) -> None:
-    """This lands in logs/cron/ twice a day, and the whole problem is that six weeks of it looked
+    """This lands in logs/cron/ on every run, and the whole problem is that six weeks of it looked
     exactly like a healthy run."""
     lab(DESYNCED)
     with caplog.at_level("INFO", logger="agentic.reconcile_check"):
