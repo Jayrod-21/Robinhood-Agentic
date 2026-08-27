@@ -96,3 +96,103 @@ def confidence_summary(votes) -> dict:
         # False when the panel's confidences are one number wearing a distribution's clothes.
         "usable": len(confidences) >= _MIN_VOTES_TO_JUDGE and spread >= _FLAT_CONFIDENCE_STDEV,
     }
+
+
+# ── paired panels: did the families actually disagree? ────────────────────────────────────────
+#
+# The whole reason to run ten lenses twice, once per model family, is that a disagreement then has
+# exactly one explanation available: same evidence, same lens, different model. Splitting the lenses
+# 5/5 between providers would have cost nothing extra and made every disagreement unattributable.
+#
+# What this must NOT do is treat a family split as a tie to be resolved. A 10-10 split along family
+# lines is the single most informative thing this panel can produce — it says the question is
+# genuinely model-dependent — and rendering it as a generic deadlock would throw that away.
+
+# Below this level of agreement between the families, the panel is not reading one question the same
+# way. Chosen loosely on purpose: the first weeks of a paired panel are a MEASUREMENT of how often
+# the families diverge, not a signal to act on, and a tight threshold would manufacture alarm before
+# there is a baseline to compare against.
+_FAMILY_AGREEMENT_FLOOR = 0.6
+
+
+def family_signals(votes) -> list[str]:
+    """How the model families compared, when more than one sat on the panel.
+
+    Empty when the panel was single-family — there is nothing to compare — or when the families
+    landed in the same place, which is the uninteresting case.
+    """
+    by_provider: dict[str, list] = {}
+    for v in votes:
+        by_provider.setdefault(getattr(v, "provider", "anthropic"), []).append(v)
+    if len(by_provider) < 2:
+        return []
+
+    found: list[str] = []
+    majorities = {}
+    for provider, group in by_provider.items():
+        counts: dict[str, int] = {}
+        for v in group:
+            counts[v.vote.value] = counts.get(v.vote.value, 0) + 1
+        top = max(counts.items(), key=lambda kv: kv[1])
+        majorities[provider] = (top[0], top[1] / len(group), len(group))
+
+    verdicts = {m[0] for m in majorities.values()}
+    if len(verdicts) > 1:
+        detail = ", ".join(
+            f"{p} {v} ({share:.0%} of {n})" for p, (v, share, n) in sorted(majorities.items())
+        )
+        found.append(
+            f"the model families reached DIFFERENT verdicts — {detail}. This is a finding, not a "
+            f"tie: the same lenses read the same evidence and disagreed by family, which points at "
+            f"the question being model-dependent rather than at either family being wrong"
+        )
+
+    # Agreement measured per LENS, which is the comparison pairing exists to make possible.
+    paired_lenses = 0
+    disagreeing = []
+    seen: dict[str, dict[str, str]] = {}
+    for v in votes:
+        seen.setdefault(v.focus_area, {})[getattr(v, "provider", "anthropic")] = v.vote.value
+    for lens, per_provider in seen.items():
+        if len(per_provider) < 2:
+            continue
+        paired_lenses += 1
+        if len(set(per_provider.values())) > 1:
+            disagreeing.append(lens)
+
+    if paired_lenses:
+        agreement = 1 - (len(disagreeing) / paired_lenses)
+        if agreement < _FAMILY_AGREEMENT_FLOOR:
+            found.append(
+                f"the families disagreed on {len(disagreeing)} of {paired_lenses} paired lenses "
+                f"({agreement:.0%} agreement) — {', '.join(sorted(disagreeing)[:6])}"
+            )
+    return found
+
+
+def family_summary(votes) -> dict:
+    """Per-family vote counts and per-lens agreement, for display and for later analysis.
+
+    Recorded on every paired debate so the question "do these families actually differ, and where"
+    can be answered from history rather than from impressions. Until there are enough debates to
+    answer it, a cross-family AGREEMENT is not extra confidence — it may only mean the question was
+    easy.
+    """
+    by_provider: dict[str, dict[str, int]] = {}
+    for v in votes:
+        provider = getattr(v, "provider", "anthropic")
+        by_provider.setdefault(provider, {"BUY": 0, "SELL": 0, "HOLD": 0})[v.vote.value] += 1
+
+    per_lens: dict[str, dict[str, str]] = {}
+    for v in votes:
+        per_lens.setdefault(v.focus_area, {})[getattr(v, "provider", "anthropic")] = v.vote.value
+    paired = {k: p for k, p in per_lens.items() if len(p) > 1}
+    agreed = sum(1 for p in paired.values() if len(set(p.values())) == 1)
+
+    return {
+        "providers": by_provider,
+        "paired_lenses": len(paired),
+        "lenses_agreed": agreed,
+        "agreement": round(agreed / len(paired), 4) if paired else None,
+        "disagreed_on": sorted(k for k, p in paired.items() if len(set(p.values())) > 1),
+    }
