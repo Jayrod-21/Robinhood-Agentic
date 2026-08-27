@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/shell";
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, Spinner, decisionTone } from "@/components/ui";
 import { fetcher, streamSSE } from "@/lib/api";
 import { ago, cn } from "@/lib/format";
-import type { DebateSummary, JuryResult, JurorVote } from "@/lib/types";
+import type { DebateSummary, DebateTurn, JuryResult, JurorVote } from "@/lib/types";
 
 const VOTE_COLOR: Record<string, string> = { BUY: "#34d399", SELL: "#fb7185", HOLD: "#fbbf24" };
 
@@ -18,7 +18,16 @@ export default function DebatePage() {
   const router = useRouter();
   const { data: records, mutate } = useSWR<DebateSummary[]>("/api/debate/records", fetcher, { refreshInterval: 15_000 });
   const [ticker, setTicker] = useState("");
+  // The backend has always accepted a `question` (DebateRequest, max 300 chars) and defaulted it to
+  // "Should the Agentic account hold {TICKER}?". The page never sent one, so every debate ever run
+  // asked the same question. This is the box that changes that.
+  const [topic, setTopic] = useState("");
   const [running, setRunning] = useState(false);
+  // The exchange, in the order it happened. The engine has been streaming a `turn` event for every
+  // opening and rebuttal all along — the page handled six of eleven event types and dropped this
+  // one, which is why a debate looked like a post-mortem rather than an argument.
+  const [turns, setTurns] = useState<DebateTurn[]>([]);
+  const [phase, setPhase] = useState<string | null>(null);
   const [bull, setBull] = useState<string | null>(null);
   const [bear, setBear] = useState<string | null>(null);
   const [votes, setVotes] = useState<JurorVote[]>([]);
@@ -38,6 +47,8 @@ export default function DebatePage() {
     const controller = new AbortController();
     ctrl.current = controller;
     setRunning(true);
+    setTurns([]);
+    setPhase("opening statements");
     setBull(null);
     setBear(null);
     setVotes([]);
@@ -47,9 +58,29 @@ export default function DebatePage() {
     try {
       await streamSSE(
         "/api/debate/run-stream",
-        { ticker: sym },
+        // Only send a question when one was typed; an empty string would override the backend's
+        // sensible default with nothing.
+        topic.trim() ? { ticker: sym, question: topic.trim() } : { ticker: sym },
         (ev) => {
           switch (ev.type) {
+            // Five event types the engine emits and the page used to ignore. `turn` is the one that
+            // makes a debate watchable; the rest are what tell you it is alive between turns.
+            case "debate_start":
+              setPhase(`debating ${ev.ticker}`);
+              break;
+            case "context":
+              setPhase("reading price and fundamentals");
+              break;
+            case "turn":
+              setTurns((t) => [...t, ev.turn]);
+              setPhase(`round ${ev.turn.round_no} — ${ev.turn.side} ${ev.turn.kind}`);
+              break;
+            case "notice":
+              setPhase(ev.message ?? null);
+              break;
+            case "debate_complete":
+              setPhase(null);
+              break;
             case "bull_complete":
               setBull(ev.bull_case);
               break;
@@ -58,6 +89,7 @@ export default function DebatePage() {
               break;
             case "juror_complete":
               setVotes((v) => [...v, ev.vote].sort((a, b) => a.agent_id - b.agent_id));
+              setPhase(`jury voting — ${ev.completed}/${ev.total}`);
               break;
             case "aggregate":
               setJury(ev.jury);
@@ -79,6 +111,7 @@ export default function DebatePage() {
     } finally {
       if (ctrl.current === controller) {
         setRunning(false);
+        setPhase(null);
         ctrl.current = null;
         mutate();
       }
@@ -92,20 +125,32 @@ export default function DebatePage() {
     <div>
       <PageHeader
         title="Jury Debate"
-        subtitle="A bull and bear build the case, then 10 independent jurors vote. 6+ decides; a 5-5 tie escalates to you."
+        subtitle="A bull and bear argue it out over several rounds, then 10 jurors judge through their own lens. 6+ decides; a true BUY/SELL deadlock escalates to you."
         right={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               aria-label="Ticker"
               value={ticker}
               onChange={(e) => setTicker(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && run()}
               placeholder="ticker e.g. NVDA"
-              className="w-40 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm uppercase text-zinc-200 placeholder:text-zinc-600 placeholder:normal-case focus:border-brass focus:outline-none"
+              className="w-32 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm uppercase text-zinc-200 placeholder:text-zinc-600 placeholder:normal-case focus:border-brass focus:outline-none"
+            />
+            {/* The question the panel argues. Blank falls back to the engine's default,
+                "Should the Agentic account hold TICKER?" — which is what every debate on record
+                has asked, because the page never sent anything else. */}
+            <input
+              aria-label="Debate topic"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && run()}
+              maxLength={300}
+              placeholder="topic — blank asks: should we hold it?"
+              className="w-72 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-brass focus:outline-none"
             />
             <Button variant="brass" onClick={run} disabled={running || !ticker.trim()}>
               {running ? <Spinner className="border-ink-950/40 border-t-ink-950" /> : <Gavel className="h-4 w-4" />}
-              {running ? "Debating…" : "Run debate"}
+              {running ? "Debating…" : "Start debate"}
             </Button>
           </div>
         }
@@ -115,6 +160,60 @@ export default function DebatePage() {
         <Card className="mb-4 border-loss/40">
           <CardBody className="flex items-center gap-2 pt-5 text-sm text-loss">
             <AlertTriangle className="h-4 w-4" /> {err}
+          </CardBody>
+        </Card>
+      )}
+
+      {(running || turns.length > 0) && (
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>The exchange</CardTitle>
+            {phase && (
+              <span className="flex items-center gap-2 text-xs text-zinc-500">
+                {running && <Spinner className="h-3 w-3 border-zinc-600 border-t-brass" />}
+                {phase}
+              </span>
+            )}
+          </CardHeader>
+          <CardBody className="space-y-3">
+            {turns.length === 0 && running && (
+              <p className="text-sm text-zinc-500">Both sides are writing their opening cases…</p>
+            )}
+            {turns.map((t, i) => (
+              <div
+                key={`${t.round_no}-${t.side}-${i}`}
+                className={cn(
+                  "rounded-lg border-l-2 bg-ink-900/60 px-4 py-3",
+                  t.side === "bull" ? "border-gain/60" : "border-loss/60",
+                )}
+              >
+                <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wider">
+                  <span className={t.side === "bull" ? "text-gain" : "text-loss"}>{t.side}</span>
+                  <span className="text-zinc-600">
+                    round {t.round_no} · {t.kind}
+                  </span>
+                </div>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">{t.content}</p>
+              </div>
+            ))}
+          </CardBody>
+        </Card>
+      )}
+
+      {/* #139: a panel whose confidences are one number wearing a distribution's clothes. Shown
+          because the audience for "your jury is not discriminating" is whoever is deciding whether
+          to trust the verdict. */}
+      {(jury?.calibration_signals?.length ?? 0) > 0 && (
+        <Card className="mb-4 border-flat/40 bg-flat/5">
+          <CardBody className="pt-5">
+            <div className="flex items-center gap-2 font-medium text-flat">
+              <AlertTriangle className="h-4 w-4" /> Read this jury with suspicion
+            </div>
+            <ul className="mt-2 space-y-1 text-sm text-zinc-400">
+              {jury!.calibration_signals!.map((sig: string, i: number) => (
+                <li key={i}>· {sig}</li>
+              ))}
+            </ul>
           </CardBody>
         </Card>
       )}
@@ -177,12 +276,22 @@ export default function DebatePage() {
                 </span>
                 <Badge tone={decisionTone(v.vote)}>{v.vote}</Badge>
               </div>
-              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ink-800">
-                <div
-                  className={cn("h-full rounded-full", v.confidence >= 0.66 ? "bg-gain" : v.confidence >= 0.4 ? "bg-flat" : "bg-loss")}
-                  style={{ width: `${Math.round(v.confidence * 100)}%` }}
-                />
-              </div>
+              {/* Drawn only when the panel's confidences carry information. `usable` is false when
+                  they are effectively one repeated number — measured at 0.72 on 59% of every vote
+                  ever cast — and a bar drawn from a constant asserts a measurement nothing made. */}
+              {jury?.confidence?.usable === false ? (
+                <div className="mt-2 text-xs text-zinc-600">
+                  confidence {v.confidence.toFixed(2)} — not shown as a bar: the panel returned
+                  effectively one value
+                </div>
+              ) : (
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ink-800">
+                  <div
+                    className={cn("h-full rounded-full", v.confidence >= 0.66 ? "bg-gain" : v.confidence >= 0.4 ? "bg-flat" : "bg-loss")}
+                    style={{ width: `${Math.round(v.confidence * 100)}%` }}
+                  />
+                </div>
+              )}
               <p className="mt-2 text-sm leading-snug text-zinc-400">{v.reasoning}</p>
             </Card>
           ))}

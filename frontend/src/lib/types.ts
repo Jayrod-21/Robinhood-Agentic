@@ -51,12 +51,36 @@ export interface JurorVote {
   reasoning: string;
 }
 
+/** Descriptive statistics for a panel's confidence, from app/debate/calibration.py. */
+export interface ConfidenceSummary {
+  n: number;
+  mean: number | null;
+  stdev: number | null;
+  min: number | null;
+  max: number | null;
+  /**
+   * False when the numbers are present but carry no information — the panel returned effectively
+   * one value. Measured before this existed: 0.72 on 59% of every vote ever cast, and 8 of 10
+   * jurors in a single debate. A confidence bar drawn from a constant asserts a measurement that
+   * nothing made, so the page renders the raw number and says why instead.
+   */
+  usable: boolean;
+}
+
 export interface JuryResult {
   votes: JurorVote[];
   counts: Record<string, number>;
   decision: Decision;
   escalated_to_human: boolean;
   reason: string;
+  /**
+   * Ways this panel's output should be read with suspicion — confidence constant across ten
+   * lenses, a value repeated verbatim by most jurors, uniform certainty. Empty is healthy. These
+   * ANNOTATE: `decision` above is a vote count and is unchanged by them, which is what keeps
+   * verdicts comparable once Claude and Gemini jurors sit on the same panel.
+   */
+  calibration_signals?: string[];
+  confidence?: ConfidenceSummary;
 }
 
 export interface DebateSummary {

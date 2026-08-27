@@ -55,13 +55,28 @@ async def _run_juror(
     model: str,
     sem: asyncio.Semaphore,
     transcript: str | None = None,
-) -> JurorVote:
-    """One juror: a forced-tool vote with a single retry, defaulting to HOLD on repeated failure."""
+) -> JurorVote | None:
+    """One juror: a forced-tool vote with a single retry. Returns None when it cannot vote.
+
+    NONE, NOT A DEFAULT HOLD. This used to return `HOLD` with confidence 0.0 and the reasoning
+    "Juror failed to respond; defaulted to HOLD." — and aggregate() counted that as a real vote.
+
+    Discovered live on 2026-08-27, when the Anthropic key hit its usage limit: all ten jurors
+    failed, all ten "voted" HOLD, and the panel reported `{BUY: 0, SELL: 0, HOLD: 10} -> HOLD,
+    decisive majority`. A confident verdict manufactured out of an outage, indistinguishable from
+    ten lenses that actually looked. It is the same defect this project keeps finding — an absent
+    measurement impersonating a taken one — and it is the most consequential instance of it,
+    because the output is a trading decision.
+
+    An abstention is not a HOLD. HOLD is a judgement that the evidence supports doing nothing;
+    an abstention is the absence of a judgement, and the two must not be added together.
+    """
     prompt = juror_user_prompt(ticker, focus_area, lens, price, fundamentals, bull, bear, transcript)
     async with sem:
+        owner = "unknown"
         for attempt in (1, 2):
             try:
-                raw = await ac.cast_vote(model, SYSTEM_GROUNDING, prompt)
+                raw, owner = await ac.cast_vote_attributed(model, SYSTEM_GROUNDING, prompt)
                 return JurorVote(
                     agent_id=agent_id,
                     focus_area=focus_area,
@@ -71,13 +86,16 @@ async def _run_juror(
                 )
             except Exception as exc:  # noqa: BLE001 — one bad juror must not sink the jury
                 logger.warning("juror %s attempt %s failed: %s", agent_id, attempt, exc)
-    return JurorVote(
-        agent_id=agent_id,
-        focus_area=focus_area,
-        vote=Vote.HOLD,
-        confidence=0.0,
-        reasoning="Juror failed to respond; defaulted to HOLD.",
-    )
+                if ac._is_usage_limit(exc):
+                    # Not transient. Bench this owner's key so the remaining jurors fail over to
+                    # the other owner instead of each spending two more attempts proving the same
+                    # key is still out of budget — twenty guaranteed failures per debate.
+                    ac.mark_exhausted(owner)
+                    break
+    # ERROR, not warning: a juror that could not be reached is a hole in the panel, and the whole
+    # point of the change above is that the hole is now visible rather than voted.
+    logger.error("juror %s (%s) abstained after 2 attempts", agent_id, focus_area)
+    return None
 
 
 def _position_size_note(decision: Decision, jury: JuryResult) -> str:
@@ -226,12 +244,31 @@ async def run_debate(ticker: str, question: str | None = None):
         for (aid, focus, lens) in perspectives
     ]
     votes: list[JurorVote] = []
+    abstained = 0
     for coro in asyncio.as_completed(tasks):
         vote = await coro
+        if vote is None:
+            # An abstention is NOT added to `votes`. aggregate() keys every threshold off
+            # len(votes), so a juror that could not be reached reduces the panel rather than
+            # padding it with a HOLD nobody cast.
+            abstained += 1
+            yield {
+                "type": "juror_abstained",
+                "completed": len(votes),
+                "abstained": abstained,
+                "total": len(tasks),
+            }
+            continue
         votes.append(vote)
-        yield {"type": "juror_complete", "vote": vote.model_dump(), "completed": len(votes), "total": len(tasks)}
+        yield {"type": "juror_complete", "vote": vote.model_dump(), "completed": len(votes),
+               "abstained": abstained, "total": len(tasks)}
 
     votes.sort(key=lambda v: v.agent_id)
+    if abstained:
+        logger.error(
+            "%d of %d jurors abstained; the verdict below rests on %d lens(es)",
+            abstained, len(tasks), len(votes),
+        )
 
     # 4) Aggregate + decision.
     jury = aggregate(votes, jury_size)
