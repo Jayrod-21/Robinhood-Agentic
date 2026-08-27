@@ -45,16 +45,34 @@ exec >>"${LOG_DIR}/$(date -u +%Y%m%d)-marks.log" 2>&1
 echo "=== nightly_marks @ $(date -u +%FT%TZ) ==="
 
 # Alpaca and FMP credentials live here; the DB credentials come from db/.env inside each wrapper.
+#
+# PARSED, NEVER SOURCED. bin/db_migrate.sh has said why since it was written — "the file is DATA:
+# `source` would execute it as shell, turning a password containing `$(…)`, a backtick, or a space
+# into command execution or a silently truncated credential" — and this script sourced it anyway.
+#
+# It broke on 2026-08-26, the day owner labels were added for the LLM cost split:
+#
+#     ANTHROPIC_API_KEY_NAME=Jared Anthropic
+#     backend/.env: line 7: Jared: command not found
+#
+# Bash read that as "set NAME=Jared, then run the command `Anthropic`", `set -e` killed the script,
+# and the equity curve and the daily bar load both stopped — silently, for two days, because a
+# 144-byte log file looks like any other log file. Nothing in the value was malicious; a space was
+# enough.
 BACKEND_ENV="${PROJECT_DIR}/backend/.env"
-if [[ -f "${BACKEND_ENV}" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "${BACKEND_ENV}"
-  set +a
-else
-  echo "✗ ${BACKEND_ENV} missing — no broker or vendor credentials"
-  exit 1
-fi
+[[ -f "${BACKEND_ENV}" ]] || { echo "✗ ${BACKEND_ENV} missing — no broker or vendor credentials"; exit 1; }
+
+# KEY=VALUE only, comments and blanks skipped, value taken verbatim to the end of the line. No
+# expansion, no word splitting, no command substitution — the shell never evaluates the value.
+while IFS= read -r line; do
+  [[ "${line}" =~ ^[[:space:]]*# ]] && continue
+  [[ "${line}" =~ ^[[:space:]]*$ ]] && continue
+  [[ "${line}" == *=* ]] || continue
+  key="${line%%=*}"
+  value="${line#*=}"
+  [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+  export "${key}=${value}"
+done < "${BACKEND_ENV}"
 
 step() {
   local name="$1"; shift
