@@ -424,6 +424,10 @@ def test_real_migrations_are_classified_from_filenames() -> None:
         # SQL — but the runner classifies by what the SQL DOES, and the seventh outing for "this
         # one is only derived" is not the moment to start making exceptions.
         ("027", False, True),
+        # 028's down drops the ledger that says who paid for what. The argument that it is derived
+        # is not even tempting here: the provider's console shows a total per key, not a per-call
+        # attribution — and this is the record two people would consult to settle up.
+        ("028", False, True),
     ]
 
 
