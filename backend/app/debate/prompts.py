@@ -61,8 +61,14 @@ def juror_user_prompt(
         )
         + 
         f"Judge {ticker} ONLY through your {focus_area} lens. Weigh the evidence above, then call it. "
-        f"Submit your verdict by calling the cast_vote tool: vote BUY, SELL, or HOLD, a confidence "
-        f"from 0 to 1, and one or two sentences of reasoning specific to your lens."
+        f"Submit your verdict by calling the cast_vote tool: vote BUY, SELL, or HOLD, a "
+        f"confidence, and one or two sentences of reasoning specific to your lens.\n\n"
+        f"On confidence: report how strongly YOUR lens' evidence constrains the answer, not how "
+        f"strongly you believe the overall verdict. A valuation lens looking at a clean, "
+        f"unambiguous multiple should be high even if the macro picture is murky — that murk "
+        f"belongs to another juror. If your lens genuinely cannot see enough to discriminate, say "
+        f"so with a confidence near 0.5 rather than picking a comfortable number; an honest 0.5 "
+        f"is more useful to the panel than a manufactured 0.72."
     )
 
 
@@ -150,7 +156,23 @@ CAST_VOTE_TOOL = {
         "type": "object",
         "properties": {
             "vote": {"type": "string", "enum": ["BUY", "SELL", "HOLD"]},
-            "confidence": {"type": "number", "description": "0.0 to 1.0"},
+            # ANCHORED, because an unanchored scale produced a constant. Measured over 2,145 real
+            # judgments: 0.72 appeared 1,269 times — 59% — and in one TMO debate 8 of 10 jurors
+            # returned exactly 0.72. "A confidence from 0 to 1" is not a question a model can
+            # answer consistently; it reaches for a habitual number. Naming what each band MEANS
+            # gives it something to map onto.
+            "confidence": {
+                "type": "number",
+                "description": (
+                    "How much your lens' evidence actually constrains the answer, 0.0-1.0. "
+                    "0.50 = your lens is genuinely ambivalent or the data is missing. "
+                    "0.65 = a lean you would not defend hard. "
+                    "0.80 = your lens points clearly one way. "
+                    "0.95 = your lens would have to be wrong about something basic for this to "
+                    "be a mistake. Use the full range: if two lenses disagree, at least one of "
+                    "them should be below 0.7. Do not default to a comfortable middle value."
+                ),
+            },
             "reasoning": {"type": "string", "description": "1-2 sentences, specific to your lens"},
         },
         "required": ["vote", "confidence", "reasoning"],

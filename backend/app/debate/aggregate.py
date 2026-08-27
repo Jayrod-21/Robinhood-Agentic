@@ -34,6 +34,21 @@ def aggregate(votes: list[JurorVote], jury_size: int) -> JuryResult:
     if n != jury_size:
         logger.warning("aggregate got %d votes but jury_size=%d; using %d as the basis", n, jury_size, n)
 
+    # Computed here so every caller of aggregate() gets it, rather than each one remembering to
+    # ask. It annotates; it never changes the verdict below — see calibration.py.
+    from app.debate import calibration
+
+    calibration_signals = calibration.signals(votes)
+    if calibration_signals:
+        logger.warning("jury calibration: %s", "; ".join(calibration_signals))
+    # Spread onto every return below. A shared dict rather than three copied pairs, so a future
+    # early-return cannot quietly ship a JuryResult with the annotations missing — which would
+    # render as "this panel is fine" rather than "nobody checked".
+    jury_annotations = {
+        "calibration_signals": calibration_signals,
+        "confidence": calibration.confidence_summary(votes),
+    }
+
     counts = {"BUY": 0, "SELL": 0, "HOLD": 0}
     for v in votes:
         counts[v.vote.value] += 1
@@ -45,6 +60,7 @@ def aggregate(votes: list[JurorVote], jury_size: int) -> JuryResult:
     if top_n >= majority:
         decision = Decision(top_action)
         return JuryResult(
+            **jury_annotations,
             votes=votes,
             counts=counts,
             decision=decision,
@@ -57,6 +73,7 @@ def aggregate(votes: list[JurorVote], jury_size: int) -> JuryResult:
     # resolves to HOLD below. ``n % 2`` guards odd juries, which cannot split exactly in half.
     if n % 2 == 0 and counts["BUY"] == n // 2 and counts["SELL"] == n // 2:
         return JuryResult(
+            **jury_annotations,
             votes=votes,
             counts=counts,
             decision=Decision.ESCALATED,
@@ -68,6 +85,7 @@ def aggregate(votes: list[JurorVote], jury_size: int) -> JuryResult:
         )
 
     return JuryResult(
+            **jury_annotations,
         votes=votes,
         counts=counts,
         decision=Decision.HOLD,
