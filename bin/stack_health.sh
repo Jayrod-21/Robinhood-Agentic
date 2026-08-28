@@ -62,10 +62,10 @@ done
 # the query falls back to the compose defaults and the check reports honestly if it cannot read.
 DB_ENV="${PROJECT_DIR}/db/.env"
 if [[ -f "${DB_ENV}" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "${DB_ENV}"
-  set +a
+  # Parsed, never sourced — see bin/lib_env.sh for the outage that made this a rule.
+  # shellcheck source=bin/lib_env.sh
+  source "${SCRIPT_DIR}/lib_env.sh"
+  load_env_file "${DB_ENV}"
 fi
 
 DASH_PORT="${AGENTIC_DASH_PORT:-1855}"
@@ -74,9 +74,24 @@ STATUS_JSON="${PROJECT_DIR}/data/stack_health.json"
 
 PASSES=()
 FAILURES=()
+# A SECOND, STABLE rendering of each failure, used only for the notification fingerprint.
+#
+# lib_notify.sh de-duplicates on a hash of status|detail, so the same situation is logged rather
+# than re-announced. That defence was defeated by the detail itself: three checks interpolate a
+# live counter — "146220s old", "146521s old", "146820s old" — so every five-minute run looked
+# like a NEW situation and fired a fresh critical popup. One fault, ~490 notifications.
+#
+# The number is genuinely useful in the console and in data/stack_health.json, so it stays there.
+# It just must not reach the fingerprint. fail() takes an optional third argument: the same message
+# with the varying number removed. Without it the detail is stable already and is used as-is.
+FAILURE_KEYS=()
 
 pass() { PASSES+=("$1"); ${QUIET} || printf '  \033[32mPASS\033[0m %s\n' "$1"; }
-fail() { FAILURES+=("$1: $2"); ${QUIET} || printf '  \033[31mFAIL\033[0m %s — %s\n' "$1" "$2"; }
+fail() {
+  FAILURES+=("$1: $2")
+  FAILURE_KEYS+=("$1: ${3:-$2}")
+  ${QUIET} || printf '  \033[31mFAIL\033[0m %s — %s\n' "$1" "$2"
+}
 
 # ── containers ────────────────────────────────────────────────────────────────────────────────
 # Checked by NAME rather than by compose project: the incident was a container that no longer
@@ -153,7 +168,8 @@ if [[ -f "${SNAPSHOT}" ]]; then
   if (( age <= SNAPSHOT_MAX_AGE_S )); then
     pass "freshness:fallback-snapshot (${age}s)"
   else
-    fail "freshness:fallback-snapshot" "${age}s old (>${SNAPSHOT_MAX_AGE_S}s) — is the alpaca_sync cron running?"
+    fail "freshness:fallback-snapshot" "${age}s old (>${SNAPSHOT_MAX_AGE_S}s) — is the alpaca_sync cron running?" \
+      "stale (>${SNAPSHOT_MAX_AGE_S}s) — is the alpaca_sync cron running?"
   fi
 else
   fail "freshness:fallback-snapshot" "${SNAPSHOT} does not exist"
@@ -175,7 +191,8 @@ if [[ -n "${cal_last}" ]]; then
   if (( cal_days >= CALENDAR_MIN_DAYS )); then
     pass "calendar:horizon (${cal_days}d, through ${cal_last})"
   else
-    fail "calendar:horizon" "only ${cal_days}d left (through ${cal_last}) — marking stops when it runs out; re-run db/load_reference_data.py calendar"
+    fail "calendar:horizon" "only ${cal_days}d left (through ${cal_last}) — marking stops when it runs out; re-run db/load_reference_data.py calendar" \
+      "running out — marking stops when it does; re-run db/load_reference_data.py calendar"
   fi
 else
   fail "calendar:horizon" "could not read market_calendar"
@@ -194,7 +211,8 @@ if [[ -n "${newest_backup}" ]]; then
   if (( age_h <= BACKUP_MAX_AGE_H )); then
     pass "backup:recent (${age_h}h)"
   else
-    fail "backup:recent" "newest database dump is ${age_h}h old (>${BACKUP_MAX_AGE_H}h) — is the db_backup cron running?"
+    fail "backup:recent" "newest database dump is ${age_h}h old (>${BACKUP_MAX_AGE_H}h) — is the db_backup cron running?" \
+      "newest database dump is stale (>${BACKUP_MAX_AGE_H}h) — is the db_backup cron running?"
   fi
 else
   fail "backup:recent" "no database dump found in data/backups/db"
@@ -218,9 +236,14 @@ done
 # ── report ────────────────────────────────────────────────────────────────────────────────────
 checked_at="$(date -u +%FT%TZ)"
 if (( ${#FAILURES[@]} == 0 )); then
-  status="ok"; detail="${#PASSES[@]} checks passed"
+  status="ok"; detail="${#PASSES[@]} checks passed"; notify_detail="${detail}"
 else
-  status="fail"; detail="$(printf '%s; ' "${FAILURES[@]}")"; detail="${detail%; }"
+  status="fail"
+  # The human-readable detail keeps the live numbers — it is what lands in the console and the JSON.
+  detail="$(printf '%s; ' "${FAILURES[@]}")"; detail="${detail%; }"
+  # The NOTIFICATION detail is built from the stable keys instead, so a fault that persists for
+  # hours announces itself once rather than every five minutes with a bigger number attached.
+  notify_detail="$(printf '%s; ' "${FAILURE_KEYS[@]}")"; notify_detail="${notify_detail%; }"
 fi
 
 mkdir -p "${PROJECT_DIR}/data"
@@ -234,7 +257,7 @@ mkdir -p "${PROJECT_DIR}/data"
   printf ']\n}\n'
 } >"${STATUS_JSON}"
 
-notify_transition "stack-health" "${status}" "3b stack health" "${detail}"
+notify_transition "stack-health" "${status}" "3b stack health" "${notify_detail}"
 
 ${QUIET} || { echo; echo "${checked_at}  ${status}  (${#PASSES[@]} passed, ${#FAILURES[@]} failed)"; }
 (( ${#FAILURES[@]} == 0 )) || exit 1

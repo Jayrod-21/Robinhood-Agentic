@@ -33,10 +33,10 @@ source "${SCRIPT_DIR}/lib_notify.sh"
 
 BACKEND_ENV="${PROJECT_DIR}/backend/.env"
 [[ -f "${BACKEND_ENV}" ]] || { echo "✗ ${BACKEND_ENV} missing — no broker credentials" >&2; exit 1; }
-set -a
-# shellcheck disable=SC1090
-source "${BACKEND_ENV}"
-set +a
+# Parsed, never sourced — see bin/lib_env.sh for the outage that made this a rule.
+# shellcheck source=bin/lib_env.sh
+source "${SCRIPT_DIR}/lib_env.sh"
+load_env_file "${BACKEND_ENV}"
 
 PYTHON="${PROJECT_DIR}/.venv/bin/python"
 [[ -x "${PYTHON}" ]] || { echo "✗ ${PYTHON} missing — create the venv (make venv)" >&2; exit 1; }
