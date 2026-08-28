@@ -25,6 +25,7 @@ WHY THE OPERATOR IS OVERWRITTEN, NEVER FORWARDED
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -146,6 +147,77 @@ async def _stream(path: str, body: dict[str, Any]) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("")
+@router.get("/")
+async def lab_overview(request: Request) -> JSONResponse:
+    """The page-load aggregate the frontend actually fetches.
+
+    docs/contracts/testing-lab-endpoint.md specifies `GET /api/testing-lab` as ONE payload —
+    `{meta, experiments, comparison, stress}` — "so the page is one fetch". The backend shipped the
+    granular sub-routes instead and never built this, so the Testing Lab page has been reporting
+    "failed to fetch" since it landed: the bare path matched no enumerated route and 404'd.
+
+    Assembled here rather than in the Lab container because it is a composition of three Lab calls
+    plus a stress result the Lab does not produce yet. Putting the composition behind the proxy
+    keeps the Lab's own API granular and honest about what it has.
+    """
+    _gate(_READ_LIMITER, _READ_BUDGET, "Testing Lab")
+    base = _base_url()
+
+    async def _get(path: str) -> Any:
+        try:
+            async with httpx.AsyncClient(timeout=_READ_TIMEOUT) as client:
+                response = await client.get(f"{base}/api/testing-lab/{path}")
+            return response.json() if response.status_code == 200 else None
+        except httpx.HTTPError as exc:
+            logger.warning("lab overview: %s failed: %s", path, exc)
+            return None
+
+    experiments, comparison, health = await asyncio.gather(
+        _get("experiments"), _get("compare"), _get("health")
+    )
+    if experiments is None and comparison is None:
+        # Contract §Degradation: 503 makes the page show a calm "backend isn't available yet"
+        # state rather than an error banner.
+        raise HTTPException(status_code=503, detail="the Testing Lab is not reachable")
+
+    runs = (experiments or {}).get("experiments") or []
+    return JSONResponse(
+        content={
+            "meta": {
+                # The contract's honesty fields. `data_source` is the one the most recent run
+                # actually used — not a constant — because a page that says "synthetic" while
+                # showing results fitted to real bars is exactly the lie these fields prevent.
+                "data_source": (runs[0].get("data_source") if runs else None) or "synthetic",
+                # Every metric this Lab reports comes from walk-forward test windows; the validator
+                # has no in-sample path.
+                "out_of_sample": True,
+                # Sharpe and profit factor are computed from a +1/-1 directional proxy in
+                # src/ml/validation.py, NOT from realised returns. The page renders a caveat off
+                # this, and it must stay true until the metrics use real returns.
+                "proxy_pnl": True,
+                "generated_at": _now_iso(),
+                "database": (health or {}).get("database"),
+            },
+            "experiments": runs,
+            "comparison": comparison or {"models": [], "unmeasured_runs": 0},
+            # NOT BUILT. The stress scenarios are still on Joe's port list
+            # (backend/app/services/risk/stress_test.py in SSS) and this endpoint will not invent
+            # them: an empty list with `available: false` renders as "not yet", where a fabricated
+            # scenario would render as a measurement.
+            "stress": {"available": False, "scenarios": [],
+                       "note": "stress scenarios are not implemented yet"},
+        },
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @router.get("/{path:path}")

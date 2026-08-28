@@ -46,11 +46,11 @@ echo "✓ Docker daemon reachable (${DOCKER})"
 
 # Fresh random ports.
 bash "${SCRIPT_DIR}/pick_ports.sh"
-set -a
-# shellcheck disable=SC1091
-source "${PROJECT_DIR}/.env.ports"
-[ -f "${PROJECT_DIR}/backend/.env" ] && source "${PROJECT_DIR}/backend/.env"
-set +a
+# Parsed, never sourced — see bin/lib_env.sh for the outage that made this a rule.
+# shellcheck source=bin/lib_env.sh
+source "${SCRIPT_DIR}/lib_env.sh"
+load_env_file "${PROJECT_DIR}/.env.ports"
+load_env_file "${PROJECT_DIR}/backend/.env" || true
 
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo "⚠ ANTHROPIC_API_KEY not set — account & scan work, but live debates/pipeline will 503."

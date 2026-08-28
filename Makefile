@@ -104,7 +104,10 @@ down: ## Stop the stack and the refresh daemon
 .PHONY: restart-backend
 restart-backend: ## Recreate just the backend (e.g. after editing backend/.env)
 	$(load_ports)
-	set -a; [ -f "$(ROOT)/backend/.env" ] && source "$(ROOT)/backend/.env"; set +a
+	@# Parsed, never sourced. `source` executes the file as shell: an owner label containing a
+	@# space took down four jobs on 2026-08-26 (see bin/lib_env.sh). Recipes run one line per
+	@# shell, so this cannot use the bash library and repeats the parse inline.
+	set -a; while IFS= read -r l; do case "$$l" in \#*|"") continue;; *=*) export "$${l%%=*}=$${l#*=}";; esac; done < "$(ROOT)/backend/.env"; set +a
 	docker compose up -d --force-recreate backend
 
 .PHONY: ps

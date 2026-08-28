@@ -53,10 +53,10 @@ if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
   docker build -q -f "${PROJECT_DIR}/db/Dockerfile.actions" -t "${IMAGE}" "${PROJECT_DIR}/db" >/dev/null
 fi
 
-set -a
-# shellcheck disable=SC1090
-source "${DB_ENV}"
-set +a
+# Parsed, never sourced — see bin/lib_env.sh for the outage that made this a rule.
+# shellcheck source=bin/lib_env.sh
+source "${SCRIPT_DIR}/lib_env.sh"
+load_env_file "${DB_ENV}"
 : "${POSTGRES_USER:?missing from db/.env}"
 : "${POSTGRES_PASSWORD:?missing from db/.env}"
 : "${POSTGRES_DB:?missing from db/.env}"

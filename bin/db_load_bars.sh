@@ -39,10 +39,10 @@ docker network inspect "${NETWORK}" >/dev/null 2>&1 || die "network ${NETWORK} m
 docker image inspect "${IMAGE}" >/dev/null 2>&1 \
   || die "image ${IMAGE} missing — run bin/db_migrate.sh status once to build it"
 
-set -a
-# shellcheck disable=SC1090
-source "${DB_ENV}"
-set +a
+# Parsed, never sourced — see bin/lib_env.sh for the outage that made this a rule.
+# shellcheck source=bin/lib_env.sh
+source "${SCRIPT_DIR}/lib_env.sh"
+load_env_file "${DB_ENV}"
 
 : "${POSTGRES_USER:?POSTGRES_USER missing from db/.env}"
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing from db/.env}"
