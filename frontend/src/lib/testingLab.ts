@@ -1,36 +1,53 @@
-// Types plus a dev-only fixture for the Testing Lab: train and compare ML models (XGBoost, Random
-// Forest, ElasticNet, ARIMA) with honest, no-lookahead validation, parameter sweeps, crisis-scenario
-// stress tests, and a model leaderboard. This is Phase D/G of the roadmap, and it is greenfield in
-// this app; the backend ports the framework-agnostic ML lib from the Special-Sprinkle-Sauce repo
-// (src/intelligence/quant_models/), so these shapes mirror that code's real outputs.
+// Types plus a dev fixture for the Testing Lab: train and compare ML models (XGBoost, Random Forest,
+// ElasticNet, ARIMA) with honest, no-lookahead validation and a model leaderboard. The backend ports
+// the framework-agnostic ML lib from Special-Sprinkle-Sauce into src/ml/, runs it in a separate Lab
+// container, and the trading backend aggregates it at GET /api/testing-lab.
 //
-// The metric set is EXACTLY what SSS validation.calculate_metrics() returns, so the frontend and the
-// ported backend agree by construction. Contract: docs/contracts/testing-lab-endpoint.md.
+// THESE SHAPES MIRROR THE REAL ENDPOINT, not a guess. Sources of truth:
+//   - meta / experiments / comparison / stress: backend/app/routers/testing_lab.py::lab_overview
+//   - leaderboard rows:                          lab/store.py::leaderboard
+//   - experiment rows:                           lab/store.py::list_experiments (_experiment_dict)
+//   - metrics blob:                              src/ml/validation.py::calculate_metrics
+// The overview's `experiments` are experiment-level rows: they carry status/timing, NOT per-model
+// metrics or walk-forward steps. Those live in model_runs and are only returned by the per-experiment
+// detail route (GET /api/testing-lab/experiments/{id}); the leaderboard (Comparison tab) is where the
+// measured per-model metrics surface.
 //
-// Honesty note carried through the UI: the directional models score win_rate == accuracy, and the
-// Sharpe / profit-factor come from a simplified +1/-1 per-call P&L proxy until real return data is
-// wired (v1b). That caveat is surfaced on the page, never hidden behind a clean-looking number.
+// Honesty note carried through the UI: Sharpe / profit factor come from a +1/-1 directional P&L proxy
+// (src/ml/validation.py), not realised returns, so accuracy and information coefficient are the honest
+// signal; a MEASURED run can still be worthless (a constant predictor), which is what `degenerate`
+// says, printed beside the number rather than hidden.
 
 export type ModelKind = "xgboost" | "random_forest" | "elastic_net" | "arima";
-export type ValidationKind = "walk_forward" | "cross_validation";
-export type ExperimentStatus = "queued" | "running" | "complete" | "failed";
-export type DatasetKind = "synthetic" | "dow_jones_1928" | "live_bars";
 
-export const MODEL_LABEL: Record<ModelKind, string> = {
+const MODEL_LABELS: Record<string, string> = {
   xgboost: "XGBoost",
   random_forest: "Random Forest",
   elastic_net: "Elastic Net",
   arima: "ARIMA",
 };
 
-export const DATASET_LABEL: Record<DatasetKind, string> = {
+/** Backend `model_name` is a free string; label the ones we know, prettify the rest so a new model
+ *  still renders a sensible name instead of a raw slug. */
+export function modelLabel(model: string): string {
+  return MODEL_LABELS[model] ?? model.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const DATA_SOURCE_LABELS: Record<string, string> = {
   synthetic: "Synthetic",
   dow_jones_1928: "Dow Jones 1928-2009",
   live_bars: "Live daily bars",
 };
 
-/** Mirrors SSS validation.calculate_metrics() exactly. Directional models: win_rate == accuracy. */
+export function dataSourceLabel(source: string | null | undefined): string {
+  if (!source) return "Unknown";
+  return DATA_SOURCE_LABELS[source] ?? source.replace(/_/g, " ");
+}
+
+/** The metrics blob on a model run (src/ml/validation.py::calculate_metrics). `measured` is the field
+ *  that gates the rest: false means nothing was scored, and every number below is a zero placeholder. */
 export interface ModelMetrics {
+  measured: boolean;
   accuracy: number;
   precision: number;
   recall: number;
@@ -39,74 +56,68 @@ export interface ModelMetrics {
   max_drawdown: number;
   win_rate: number;
   profit_factor: number;
-  /** Pearson corr of predicted probability vs realized label. The honest signal-quality number. */
+  /** Pearson corr of predicted probability vs realized direction. The honest signal-quality number. */
   information_coefficient: number;
   total_predictions: number;
 }
 
-/** One expanding-window walk-forward step; the per-step accuracy is what the equity-of-skill chart plots. */
-export interface WalkForwardStep {
-  step: number;
-  train_size: number;
-  test_start: string;
-  test_end: string;
-  accuracy: number;
+/** The numeric metric keys, for typing the ranked-by field and the leaderboard columns. */
+export type MetricKey = Exclude<keyof ModelMetrics, "measured">;
+
+export interface LabMeta {
+  /** A free string from the run that actually produced these numbers (e.g. "synthetic"), not a
+   *  constant, so the page cannot claim "synthetic" while showing results fitted to real bars. */
+  data_source: string;
+  /** Every metric is from walk-forward test windows; the validator has no in-sample path. */
+  out_of_sample: boolean;
+  /** True while the P&L-based metrics use the +1/-1 directional proxy, not real returns. */
+  proxy_pnl: boolean;
+  generated_at: string;
+  /** From the Lab's health check; shape is loose (a flag or status). Rendered defensively. */
+  database?: boolean | string | null;
 }
 
-export interface Experiment {
-  id: string;
+/** One row of GET /api/testing-lab (list_experiments). Experiment-LEVEL: it has no metrics of its own;
+ *  a single experiment fans out into one or more model_runs, which the leaderboard ranks. */
+export interface ExperimentRow {
+  id: number;
+  name: string;
+  kind: string;
+  data_source: string;
+  dataset: string;
+  params: Record<string, unknown>;
+  validation_kind: string;
+  /** e.g. "complete" | "failed" | "running"; kept a free string, the backend owns the vocabulary. */
+  status: string;
+  operator: string | null;
   created_at: string;
-  model: ModelKind;
-  dataset: DatasetKind;
-  validation_kind: ValidationKind;
-  status: ExperimentStatus;
-  is_baseline: boolean;
-  params: Record<string, number | string>;
-  n_features: number;
-  /** null while queued/running or on failure. */
-  metrics: ModelMetrics | null;
-  steps: WalkForwardStep[];
-  /** True only when every train window ends strictly before its test window (the no-lookahead gate). */
-  lookahead_guarded: boolean;
-  notes: string | null;
+  completed_at: string | null;
+  error: string | null;
 }
 
+/** One leaderboard row (lab/store.py::leaderboard): the best MEASURED run per model, with the honesty
+ *  fields carried alongside so a ranking cannot present a constant predictor as a winner silently. */
 export interface LeaderboardRow {
-  model: ModelKind;
+  model: string;
+  run_id: number;
   metrics: ModelMetrics;
-  is_best: boolean;
-}
-
-export interface DisagreementSummary {
-  /** Mean pairwise agreement across models on the same test set, percent. */
-  mean_pairwise_agreement_pct: number;
-  /** Share of test points where every model agreed on direction. */
-  unanimous_pct: number;
-  /** True when models disagree enough that the composite should not be trusted blind. */
-  high_disagreement_flag: boolean;
+  predictions_made: number;
+  predictions_failed: number;
+  is_baseline: boolean;
+  data_source: string;
+  dataset: string;
+  created_at: string;
+  /** Ways a measured result can still be worthless, each written to be shown as-is. Empty is clean. */
+  degenerate: string[];
 }
 
 export interface ComparisonResponse {
-  rows: LeaderboardRow[];
-  disagreement: DisagreementSummary;
-  /** The metric the leaderboard is ranked by (default information_coefficient). */
-  ranked_by: keyof ModelMetrics;
-}
-
-export interface SweepPoint {
-  value: number;
-  sharpe_ratio: number;
-  win_rate: number;
-  max_drawdown: number;
-}
-
-export interface Sweep {
-  id: string;
-  model: ModelKind;
-  param: string;
-  points: SweepPoint[];
-  /** The best point and the metric it was chosen on; the UI marks it on the curve. */
-  best: { value: number; metric: keyof ModelMetrics; score: number };
+  /** The metric the leaderboard was ranked by (a key of ModelMetrics). */
+  metric: string;
+  models: LeaderboardRow[];
+  /** Runs that scored nothing and were excluded from the ranking. Reported, not hidden: a Lab with
+   *  forty failed runs and two good ones should not look like a Lab with two runs. */
+  unmeasured_runs: number;
 }
 
 export interface StressScenario {
@@ -120,140 +131,127 @@ export interface StressScenario {
 }
 
 export interface StressResponse {
+  /** False until the stress module is ported; the page shows a calm "not yet" state, not fabricated
+   *  scenarios (an empty list rendered as rows would read as "no risk"). */
+  available: boolean;
   scenarios: StressScenario[];
-  generated_at: string;
+  note?: string;
+  generated_at?: string;
 }
 
 export interface TestingLabResponse {
-  meta: {
-    data_source: DatasetKind;
-    /** All metrics are out-of-sample (holdout / walk-forward test windows only). */
-    out_of_sample: boolean;
-    /** True while the P&L-based metrics use the +1/-1 directional proxy, not real returns. */
-    proxy_pnl: boolean;
-    generated_at: string;
-  };
-  experiments: Experiment[];
+  meta: LabMeta;
+  experiments: ExperimentRow[];
   comparison: ComparisonResponse;
   stress: StressResponse;
 }
 
 // ── Dev fixture ──────────────────────────────────────────────────────────────────────────────────
-// Strict gate (NEXT_PUBLIC_TESTLAB_MOCK=1); the default hits the real endpoints. Numbers are
-// deliberately modest and honest: directional models on synthetic data hover just above coin-flip
-// (accuracy ~0.52-0.58), ICs are small, and one model is deliberately worse than a coin flip, because
-// a Testing Lab that only ever shows winners is lying.
+// Strict gate (NEXT_PUBLIC_TESTLAB_MOCK=1); the default hits the real endpoint. Shaped to match the
+// real payload exactly (so this is also how the reconciled page is verified without a live Lab).
+// Numbers are deliberately honest: models on synthetic data hover just above coin-flip, one is below
+// it, and elastic_net is the real first-run failure mode: a constant "up" predictor that topped the
+// Sharpe board with a NEGATIVE information coefficient, flagged as degenerate.
 export const TESTLAB_MOCK = process.env.NEXT_PUBLIC_TESTLAB_MOCK === "1";
 
-const GENERATED_AT = "2026-08-19T20:00:00Z";
+const GENERATED_AT = "2026-08-28T20:00:00Z";
 
-// Deterministic per-model metrics (no Math.random in a fixture: it would hydrate-mismatch).
 function metrics(m: Partial<ModelMetrics> & { accuracy: number; information_coefficient: number }): ModelMetrics {
   const acc = m.accuracy;
   return {
+    measured: true,
     accuracy: acc,
     precision: m.precision ?? Number((acc - 0.01).toFixed(4)),
     recall: m.recall ?? Number((acc + 0.02).toFixed(4)),
     f1: m.f1 ?? Number((acc + 0.005).toFixed(4)),
     sharpe_ratio: m.sharpe_ratio ?? Number(((acc - 0.5) * 12).toFixed(4)),
     max_drawdown: m.max_drawdown ?? Number((-(1 - acc) * 40).toFixed(4)),
-    win_rate: acc, // directional models: win_rate == accuracy
+    win_rate: m.win_rate ?? acc,
     profit_factor: m.profit_factor ?? Number((acc / (1 - acc)).toFixed(4)),
     information_coefficient: m.information_coefficient,
-    total_predictions: m.total_predictions ?? 1260,
+    total_predictions: m.total_predictions ?? 475,
   };
 }
 
-const MODEL_METRICS: Record<ModelKind, ModelMetrics> = {
-  xgboost: metrics({ accuracy: 0.573, information_coefficient: 0.121 }),
-  random_forest: metrics({ accuracy: 0.558, information_coefficient: 0.094 }),
-  elastic_net: metrics({ accuracy: 0.541, information_coefficient: 0.061 }),
-  arima: metrics({ accuracy: 0.487, information_coefficient: -0.018 }), // deliberately sub-coin-flip
-};
-
-function walkForwardSteps(baseAcc: number): WalkForwardStep[] {
-  // 8 expanding-window steps, test windows strictly increasing in time (no lookahead).
-  const wobble = [-0.03, 0.01, -0.05, 0.04, 0.0, -0.02, 0.03, 0.015];
-  return wobble.map((w, i) => ({
-    step: i + 1,
-    train_size: 252 + i * 126,
-    test_start: `20${19 + i}-01-02`,
-    test_end: `20${19 + i}-06-28`,
-    accuracy: Number(Math.max(0.35, Math.min(0.7, baseAcc + w)).toFixed(4)),
-  }));
-}
-
-const EXPERIMENTS: Experiment[] = (["xgboost", "random_forest", "elastic_net", "arima"] as ModelKind[]).map(
-  (model, i): Experiment => ({
-    id: `exp_${model}_2026-08-19`,
-    created_at: `2026-08-19T1${8 - i}:30:00Z`,
-    model,
+const LEADERBOARD: LeaderboardRow[] = [
+  {
+    model: "xgboost",
+    run_id: 41,
+    metrics: metrics({ accuracy: 0.573, information_coefficient: 0.121 }),
+    predictions_made: 475,
+    predictions_failed: 0,
+    is_baseline: false,
+    data_source: "synthetic",
     dataset: "synthetic",
-    validation_kind: "walk_forward",
-    status: "complete",
-    is_baseline: model === "elastic_net",
-    params:
-      model === "xgboost"
-        ? { n_estimators: 300, max_depth: 4, learning_rate: 0.05 }
-        : model === "random_forest"
-          ? { n_estimators: 400, max_depth: 8 }
-          : model === "elastic_net"
-            ? { alpha: 0.1, l1_ratio: 0.5 }
-            : { order: "(2,1,2)" },
-    n_features: 12,
-    metrics: MODEL_METRICS[model],
-    steps: walkForwardSteps(MODEL_METRICS[model].accuracy),
-    lookahead_guarded: true,
-    notes: model === "arima" ? "Below coin-flip on this synthetic set; kept for honest comparison." : null,
-  }),
-);
-
-const COMPARISON: ComparisonResponse = {
-  rows: (["xgboost", "random_forest", "elastic_net", "arima"] as ModelKind[]).map((model) => ({
-    model,
-    metrics: MODEL_METRICS[model],
-    is_best: model === "xgboost",
-  })),
-  disagreement: {
-    mean_pairwise_agreement_pct: 61.4,
-    unanimous_pct: 22.8,
-    high_disagreement_flag: false,
+    created_at: "2026-08-28T18:31:00Z",
+    degenerate: [],
   },
-  ranked_by: "information_coefficient",
-};
+  {
+    model: "random_forest",
+    run_id: 39,
+    metrics: metrics({ accuracy: 0.558, information_coefficient: 0.094 }),
+    predictions_made: 475,
+    predictions_failed: 0,
+    is_baseline: false,
+    data_source: "synthetic",
+    dataset: "synthetic",
+    created_at: "2026-08-28T18:22:00Z",
+    degenerate: [],
+  },
+  {
+    model: "elastic_net",
+    run_id: 37,
+    // The first-run failure: top Sharpe, negative IC, because it called "up" on every day.
+    metrics: metrics({ accuracy: 0.512, information_coefficient: -0.13, sharpe_ratio: 1.58, recall: 1.0, win_rate: 0.512 }),
+    predictions_made: 475,
+    predictions_failed: 0,
+    is_baseline: true,
+    data_source: "synthetic",
+    dataset: "synthetic",
+    created_at: "2026-08-28T18:10:00Z",
+    degenerate: [
+      "predicted a single direction (up) on all 475 predictions: recall 1.0, IC negative; its Sharpe is the market's, not the model's",
+    ],
+  },
+  {
+    model: "arima",
+    run_id: 35,
+    metrics: metrics({ accuracy: 0.487, information_coefficient: -0.018 }),
+    predictions_made: 452,
+    predictions_failed: 23,
+    is_baseline: false,
+    data_source: "synthetic",
+    dataset: "synthetic",
+    created_at: "2026-08-28T17:58:00Z",
+    degenerate: [],
+  },
+];
 
-const STRESS: StressResponse = {
-  generated_at: GENERATED_AT,
-  scenarios: [
-    { key: "covid_2020", label: "COVID crash", period: "Feb-Mar 2020", spy_move_pct: -33.9, estimated_pl_pct: -21.4, worst_sector: "Energy" },
-    { key: "bear_2022", label: "2022 bear market", period: "Jan-Oct 2022", spy_move_pct: -25.4, estimated_pl_pct: -18.7, worst_sector: "Technology" },
-    { key: "banking_2023", label: "Regional banking crisis", period: "Mar 2023", spy_move_pct: -7.8, estimated_pl_pct: -6.1, worst_sector: "Financials" },
-    { key: "black_monday_1987", label: "Black Monday", period: "Oct 19, 1987", spy_move_pct: -20.5, estimated_pl_pct: -19.2, worst_sector: "Technology" },
-    { key: "gfc_2008", label: "2008 financial crisis", period: "Sep-Nov 2008", spy_move_pct: -56.8, estimated_pl_pct: -41.0, worst_sector: "Financials" },
-    { key: "crash_1929", label: "1929 crash", period: "Oct-Nov 1929", spy_move_pct: -47.9, estimated_pl_pct: -39.5, worst_sector: "Industrials" },
-  ],
-};
+const EXPERIMENTS: ExperimentRow[] = [
+  {
+    id: 12, name: "synthetic walk-forward sweep", kind: "single", data_source: "synthetic", dataset: "synthetic",
+    params: { models: "xgboost, random_forest, elastic_net, arima", horizon: 5 },
+    validation_kind: "walk_forward", status: "complete", operator: "joe",
+    created_at: "2026-08-28T18:05:00Z", completed_at: "2026-08-28T18:32:00Z", error: null,
+  },
+  {
+    id: 11, name: "arima convergence retry", kind: "single", data_source: "synthetic", dataset: "synthetic",
+    params: { model: "arima", order: "(2,1,2)" },
+    validation_kind: "walk_forward", status: "failed", operator: "joe",
+    created_at: "2026-08-28T17:40:00Z", completed_at: "2026-08-28T17:41:00Z",
+    error: "statsmodels failed to converge on 23 of 475 windows; run scored the rest and flagged the gaps",
+  },
+  {
+    id: 10, name: "dow-jones baseline", kind: "single", data_source: "dow_jones_1928", dataset: "dow_jones_1928",
+    params: { models: "xgboost, elastic_net" },
+    validation_kind: "cross_validation", status: "complete", operator: "jared",
+    created_at: "2026-08-27T22:15:00Z", completed_at: "2026-08-27T22:39:00Z", error: null,
+  },
+];
 
 export const MOCK_TESTING_LAB: TestingLabResponse = {
-  meta: { data_source: "synthetic", out_of_sample: true, proxy_pnl: true, generated_at: GENERATED_AT },
+  meta: { data_source: "synthetic", out_of_sample: true, proxy_pnl: true, generated_at: GENERATED_AT, database: true },
   experiments: EXPERIMENTS,
-  comparison: COMPARISON,
-  stress: STRESS,
+  comparison: { metric: "information_coefficient", models: LEADERBOARD, unmeasured_runs: 2 },
+  stress: { available: false, scenarios: [], note: "stress scenarios are not implemented yet" },
 };
-
-/** A mock parameter sweep for one model/param, with an inverted-U so a real-looking optimum exists. */
-export function mockSweep(model: ModelKind = "xgboost", param = "max_depth"): Sweep {
-  const values = [2, 3, 4, 5, 6, 8, 10, 12];
-  const peak = 4;
-  const points: SweepPoint[] = values.map((v) => {
-    const dist = Math.abs(v - peak);
-    const sharpe = Number((0.9 - dist * 0.12).toFixed(4));
-    return {
-      value: v,
-      sharpe_ratio: sharpe,
-      win_rate: Number((0.575 - dist * 0.012).toFixed(4)),
-      max_drawdown: Number((-14 - dist * 1.4).toFixed(4)),
-    };
-  });
-  return { id: `sweep_${model}_${param}`, model, param, points, best: { value: peak, metric: "sharpe_ratio", score: 0.9 } };
-}
