@@ -13,6 +13,7 @@ import { Badge, Card, CardBody, CardHeader, CardTitle, Spinner, decisionTone } f
 import { FundamentalsGrid } from "@/components/fundamentals";
 import { Markdown } from "@/components/markdown";
 import { DebateExport } from "@/components/debate-export";
+import { CalibrationBanner, FamilySplit, providerLabel } from "@/components/jury-signals";
 import { fetcher } from "@/lib/api";
 import { ago, cn } from "@/lib/format";
 import type { DebateDetail, JurorVote, Vote } from "@/lib/types";
@@ -171,6 +172,12 @@ export default function DebateDetailPage({ params }: { params: { id: string } })
             )
           )}
 
+          {/* #139/#142: the panel's meta-signals. The banner and the split ANNOTATE the verdict
+              below; neither changes it. A record written before these existed simply has no
+              signals and no families, and both render nothing. */}
+          <CalibrationBanner signals={data.jury?.calibration_signals} />
+          <FamilySplit families={data.jury?.families} />
+
           {data.jury && (
             <Card>
               <CardHeader>
@@ -218,8 +225,12 @@ export default function DebateDetailPage({ params }: { params: { id: string } })
 
           {votes.length > 0 && (
             <div className="grid gap-3 sm:grid-cols-2">
-              {votes.map((v) => (
-                <JurorCard key={v.agent_id} vote={v} />
+              {votes.map((v, i) => (
+                <JurorCard
+                  key={`${v.agent_id}-${v.provider ?? ""}-${i}`}
+                  vote={v}
+                  confidenceUsable={data.jury?.confidence?.usable !== false}
+                />
               ))}
             </div>
           )}
@@ -254,24 +265,35 @@ function BackLink() {
   );
 }
 
-function JurorCard({ vote: v }: { vote: JurorVote }) {
+function JurorCard({ vote: v, confidenceUsable }: { vote: JurorVote; confidenceUsable: boolean }) {
+  const family = providerLabel(v.provider);
   return (
     <Card className="px-4 py-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <span className="text-xs uppercase tracking-wider text-zinc-500">
           #{v.agent_id} · {v.focus_area.replace(/_/g, " ")}
+          {family && <span className="ml-1.5 normal-case tracking-normal text-zinc-600">· {family}</span>}
         </span>
         <span className="flex items-center gap-2">
           <span className="text-xs tnum text-zinc-500">conf {(v.confidence * 100).toFixed(0)}%</span>
           <Badge tone={decisionTone(v.vote)}>{v.vote}</Badge>
         </span>
       </div>
-      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ink-800">
-        <div
-          className={cn("h-full rounded-full", v.confidence >= 0.66 ? "bg-gain" : v.confidence >= 0.4 ? "bg-flat" : "bg-loss")}
-          style={{ width: `${Math.round(v.confidence * 100)}%` }}
-        />
-      </div>
+      {/* Bar drawn only when the panel's confidences carry information. `usable` is false when they
+          are effectively one repeated number, and a bar from a constant asserts a measurement
+          nothing made (see calibration.py); the number still shows, without the false precision. */}
+      {confidenceUsable ? (
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ink-800">
+          <div
+            className={cn("h-full rounded-full", v.confidence >= 0.66 ? "bg-gain" : v.confidence >= 0.4 ? "bg-flat" : "bg-loss")}
+            style={{ width: `${Math.round(v.confidence * 100)}%` }}
+          />
+        </div>
+      ) : (
+        <div className="mt-2 text-xs text-zinc-600">
+          not shown as a bar: the panel returned effectively one value
+        </div>
+      )}
       <p className="mt-2 text-sm leading-relaxed text-zinc-400">{v.reasoning}</p>
     </Card>
   );

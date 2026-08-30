@@ -49,6 +49,32 @@ export interface JurorVote {
   vote: Vote;
   confidence: number;
   reasoning: string;
+  /**
+   * Which model family judged this lens (from app/debate/schemas.py). Load-bearing on a paired
+   * panel: the same lens is judged by both Claude and Gemini, so without it a disagreement is
+   * unattributable. Optional here because records written before paired juries have no provider;
+   * the backend defaults them to "anthropic", but a client reading an older cached payload may not
+   * see the field at all.
+   */
+  provider?: string;
+  model?: string;
+}
+
+/** Per-family vote counts and per-lens agreement on a paired panel, from
+ *  app/debate/calibration.py::family_summary. Empty/absent for a single-family jury. A cross-family
+ *  AGREEMENT is NOT extra confidence until there is a baseline (it may only mean the question was
+ *  easy), so the UI reports it, it does not fold it into the verdict. */
+export interface FamilySummary {
+  /** provider -> { BUY, SELL, HOLD } counts. The sum per family is how many lenses it actually
+   *  voted on, which is also how a family's abstentions show up (fewer than the paired count). */
+  providers: Record<string, Partial<Record<Vote, number>>>;
+  /** Lenses where BOTH families cast a vote (the ones a comparison is even possible on). */
+  paired_lenses: number;
+  lenses_agreed: number;
+  /** lenses_agreed / paired_lenses, or null when no lens was paired. */
+  agreement: number | null;
+  /** Lens names where the families landed on different votes. */
+  disagreed_on: string[];
 }
 
 /** Descriptive statistics for a panel's confidence, from app/debate/calibration.py. */
@@ -81,6 +107,8 @@ export interface JuryResult {
    */
   calibration_signals?: string[];
   confidence?: ConfidenceSummary;
+  /** Present when more than one model family sat on the panel; absent/empty otherwise. */
+  families?: FamilySummary;
 }
 
 export interface DebateSummary {
