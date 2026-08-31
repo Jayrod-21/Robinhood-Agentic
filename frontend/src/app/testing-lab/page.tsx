@@ -1,20 +1,20 @@
 "use client";
 
-// Testing Lab: train and compare ML models with honest, no-lookahead validation, parameter sweeps,
-// crisis-scenario stress tests, and a model leaderboard. Read-only monitor over the backend's ML
-// runs (the backend ports the framework-agnostic lib from the Special-Sprinkle-Sauce repo).
+// Testing Lab: monitor the backend's ML runs with honest, no-lookahead validation and a model
+// leaderboard. Read-only over GET /api/testing-lab (backend/app/routers/testing_lab.py::lab_overview),
+// which aggregates the separate Lab container. The honesty thesis runs through the page: out-of-sample
+// metrics only, information coefficient shown next to accuracy, a loud caveat that Sharpe/profit-factor
+// are a directional P&L proxy, unmeasured runs counted rather than hidden, and a MEASURED-but-worthless
+// run (a constant predictor) flagged as degenerate right on its leaderboard row.
 //
-// Built mock-first (NEXT_PUBLIC_TESTLAB_MOCK=1, see lib/testingLab.ts) until the /api/testing-lab
-// endpoints exist. The honesty thesis runs through the whole page: out-of-sample metrics only,
-// walk-forward with a lookahead guard, information coefficient shown next to accuracy, a model that
-// loses shown losing, and a loud caveat that Sharpe/profit-factor are a directional P&L proxy until
-// real returns are wired.
+// The overview's `experiments` are experiment-LEVEL rows (status/timing, no per-model metrics); the
+// measured per-model numbers live on the leaderboard (Comparison tab). Per-experiment model runs and
+// parameter sweeps are returned by GET /api/testing-lab/experiments/{id}, not wired into this page yet.
 
 import { useState } from "react";
 import useSWR from "swr";
 import {
-  Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ReferenceDot, ReferenceLine,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { AlertTriangle, Database, ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/shell";
@@ -22,9 +22,9 @@ import { Badge, Card, CardBody, CardHeader, CardTitle, Spinner, StatCard } from 
 import { fetcher } from "@/lib/api";
 import { cn, plColor } from "@/lib/format";
 import {
-  DATASET_LABEL, MODEL_LABEL, MOCK_TESTING_LAB, TESTLAB_MOCK, mockSweep,
-  type ComparisonResponse, type Experiment, type ModelKind, type ModelMetrics,
-  type StressResponse, type TestingLabResponse,
+  dataSourceLabel, modelLabel, MOCK_TESTING_LAB, TESTLAB_MOCK,
+  type ComparisonResponse, type ExperimentRow, type ModelMetrics, type StressResponse,
+  type TestingLabResponse,
 } from "@/lib/testingLab";
 
 const AXIS = "#71717a";
@@ -35,11 +35,24 @@ const acc = (n: number) => `${(n * 100).toFixed(1)}%`;
 const ic = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(3)}`;
 const two = (n: number) => n.toFixed(2);
 
-type Tab = "experiments" | "comparison" | "sweeps" | "stress";
+/** Metric access by a string key from the backend (comparison.metric, leaderboard columns). Falls back
+ *  to 0 rather than NaN so a missing/renamed key never blows up the sort or a cell. */
+function metricVal(m: ModelMetrics, key: string): number {
+  const v = (m as unknown as Record<string, number>)[key];
+  return typeof v === "number" ? v : 0;
+}
+
+function statusTone(status: string): "buy" | "sell" | "hold" | "neutral" {
+  if (status === "complete") return "buy";
+  if (status === "failed") return "sell";
+  if (status === "running" || status === "queued") return "hold";
+  return "neutral";
+}
+
+type Tab = "experiments" | "comparison" | "stress";
 const TABS: { id: Tab; label: string }[] = [
   { id: "experiments", label: "Experiments" },
   { id: "comparison", label: "Comparison" },
-  { id: "sweeps", label: "Sweeps" },
   { id: "stress", label: "Stress" },
 ];
 
@@ -55,7 +68,7 @@ export default function TestingLabPage() {
   const header = (
     <PageHeader
       title="Testing Lab"
-      subtitle={resp ? `${DATASET_LABEL[resp.meta.data_source]} data · ${resp.experiments.length} runs` : "Train and compare models, honestly"}
+      subtitle={resp ? `${dataSourceLabel(resp.meta.data_source)} data · ${resp.experiments.length} runs` : "Train and compare models, honestly"}
       right={TESTLAB_MOCK ? <Badge tone="hold">MOCK DATA</Badge> : undefined}
     />
   );
@@ -71,8 +84,8 @@ export default function TestingLabPage() {
               <>
                 <Database className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
                 <span className="text-zinc-400">
-                  The Testing Lab backend isn&apos;t available yet. This page trains and compares models via
-                  the /api/testing-lab endpoints; it fills in once they&apos;re live.
+                  The Testing Lab backend isn&apos;t available yet. This page monitors the /api/testing-lab
+                  model runs; it fills in once the Lab is reachable.
                 </span>
               </>
             ) : (
@@ -114,7 +127,7 @@ export default function TestingLabPage() {
         </span>
         {resp.meta.data_source !== "live_bars" && (
           <span className="inline-flex items-center gap-1.5 text-flat">
-            <AlertTriangle className="h-3.5 w-3.5" /> {DATASET_LABEL[resp.meta.data_source]} data, not live
+            <AlertTriangle className="h-3.5 w-3.5" /> {dataSourceLabel(resp.meta.data_source)} data, not live
           </span>
         )}
       </div>
@@ -148,19 +161,27 @@ export default function TestingLabPage() {
 
       {tab === "experiments" && <ExperimentsTab experiments={resp.experiments} />}
       {tab === "comparison" && <ComparisonTab comparison={resp.comparison} />}
-      {tab === "sweeps" && <SweepsTab />}
       {tab === "stress" && <StressTab stress={resp.stress} />}
     </div>
   );
 }
 
 // ── Experiments ────────────────────────────────────────────────────────────────────────────────
-function ExperimentsTab({ experiments }: { experiments: Experiment[] }) {
-  const rows = [...experiments].sort(
-    (a, b) => (b.metrics?.information_coefficient ?? -1) - (a.metrics?.information_coefficient ?? -1),
-  );
-  const [selected, setSelected] = useState<string>(rows[0]?.id ?? "");
+function ExperimentsTab({ experiments }: { experiments: ExperimentRow[] }) {
+  const rows = [...experiments].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  const [selected, setSelected] = useState<number>(rows[0]?.id ?? -1);
   const sel = rows.find((r) => r.id === selected) ?? rows[0];
+
+  if (rows.length === 0) {
+    return (
+      <Card>
+        <CardBody className="pt-5 text-sm text-zinc-400">
+          No experiments have been run yet. A run posts to{" "}
+          <span className="tnum text-zinc-300">/api/testing-lab/experiments/run</span> and shows up here.
+        </CardBody>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -172,13 +193,11 @@ function ExperimentsTab({ experiments }: { experiments: Experiment[] }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-y border-ink-800 text-left text-xs uppercase tracking-wider text-zinc-500">
-                <th className="px-5 py-2 font-medium">Model</th>
+                <th className="px-5 py-2 font-medium">Experiment</th>
+                <th className="px-3 py-2 font-medium">Data</th>
                 <th className="px-3 py-2 font-medium">Validation</th>
-                <th className="px-3 py-2 text-right font-medium">Accuracy</th>
-                <th className="px-3 py-2 text-right font-medium" title="Correlation of predicted probability with realized direction. The honest signal-quality number.">IC</th>
-                <th className="px-3 py-2 text-right font-medium">Sharpe*</th>
-                <th className="px-3 py-2 text-right font-medium">Max DD*</th>
-                <th className="px-5 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-5 py-2 font-medium">Started</th>
               </tr>
             </thead>
             <tbody>
@@ -191,22 +210,16 @@ function ExperimentsTab({ experiments }: { experiments: Experiment[] }) {
                     r.id === sel?.id && "bg-ink-850/60",
                   )}
                 >
-                  <td className="px-5 py-2.5 font-medium text-zinc-100">
-                    {MODEL_LABEL[r.model]}
-                    {r.is_baseline && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-brass">baseline</span>}
-                  </td>
-                  <td className="px-3 py-2.5 text-zinc-400">{r.validation_kind.replace(/_/g, " ")}</td>
-                  <td className="px-3 py-2.5 text-right tnum text-zinc-200">{r.metrics ? acc(r.metrics.accuracy) : "—"}</td>
-                  <td className={cn("px-3 py-2.5 text-right tnum", r.metrics ? plColor(r.metrics.information_coefficient) : "text-zinc-600")}>
-                    {r.metrics ? ic(r.metrics.information_coefficient) : "—"}
-                  </td>
-                  <td className={cn("px-3 py-2.5 text-right tnum", r.metrics ? plColor(r.metrics.sharpe_ratio) : "text-zinc-600")}>
-                    {r.metrics ? two(r.metrics.sharpe_ratio) : "—"}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tnum text-loss">{r.metrics ? two(r.metrics.max_drawdown) : "—"}</td>
                   <td className="px-5 py-2.5">
-                    <Badge tone={r.status === "complete" ? "buy" : r.status === "failed" ? "sell" : "hold"}>{r.status}</Badge>
+                    <span className="font-medium text-zinc-100">{r.name}</span>
+                    {r.kind && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-zinc-500">{r.kind}</span>}
                   </td>
+                  <td className="px-3 py-2.5 text-zinc-400">{dataSourceLabel(r.data_source)}</td>
+                  <td className="px-3 py-2.5 text-zinc-400">{r.validation_kind.replace(/_/g, " ")}</td>
+                  <td className="px-3 py-2.5">
+                    <Badge tone={statusTone(r.status)}>{r.status}</Badge>
+                  </td>
+                  <td className="px-5 py-2.5 tnum text-zinc-500">{fmtTime(r.created_at)}</td>
                 </tr>
               ))}
             </tbody>
@@ -216,39 +229,63 @@ function ExperimentsTab({ experiments }: { experiments: Experiment[] }) {
 
       {sel && (
         <Card>
-          <CardHeader className="flex items-center justify-between">
-            <CardTitle>{MODEL_LABEL[sel.model]}: walk-forward accuracy by step</CardTitle>
-            <span className="text-xs text-zinc-500">{sel.n_features} features · {sel.steps.length} steps</span>
+          <CardHeader className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle>{sel.name}</CardTitle>
+            <span className="text-xs text-zinc-500">
+              run #{sel.id}{sel.operator ? ` · ${sel.operator}` : ""}
+            </span>
           </CardHeader>
-          <CardBody>
-            {sel.notes && <p className="mb-3 text-xs text-flat">{sel.notes}</p>}
-            <div className="h-56">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={sel.steps} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
-                  <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="step" tick={{ fill: AXIS, fontSize: 11 }} tickLine={false} axisLine={{ stroke: GRID }} tickFormatter={(v) => `#${v}`} />
-                  <YAxis domain={[0.35, 0.7]} tick={{ fill: AXIS, fontSize: 11 }} tickLine={false} axisLine={false} width={44} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-                  {/* Coin-flip line: skill is distance above this, sustained. */}
-                  <ReferenceLine y={0.5} stroke="#71717a" strokeDasharray="4 4" label={{ value: "coin flip", fill: "#a1a1aa", fontSize: 10, position: "insideTopRight" }} />
-                  <Tooltip contentStyle={TIP} labelFormatter={(l) => `step #${l}`} formatter={(v: number) => [acc(v), "accuracy"]} />
-                  <Line type="monotone" dataKey="accuracy" stroke="#e0b34d" strokeWidth={1.5} dot={{ r: 2, fill: "#e0b34d" }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+          <CardBody className="space-y-3 text-sm">
+            {sel.error && (
+              <div className="flex items-start gap-2 rounded-md border border-loss/30 bg-loss/5 px-3 py-2 text-xs text-loss">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{sel.error}</span>
+              </div>
+            )}
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3">
+              <Field label="Kind" value={sel.kind || "—"} />
+              <Field label="Dataset" value={dataSourceLabel(sel.dataset)} />
+              <Field label="Validation" value={sel.validation_kind.replace(/_/g, " ")} />
+              <Field label="Started" value={fmtTime(sel.created_at)} />
+              <Field label="Finished" value={sel.completed_at ? fmtTime(sel.completed_at) : "—"} />
+              <Field label="Operator" value={sel.operator ?? "—"} />
+            </dl>
+            {sel.params && Object.keys(sel.params).length > 0 && (
+              <div>
+                <div className="mb-1 text-[10px] uppercase tracking-wider text-zinc-600">Parameters</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(sel.params).map(([k, v]) => (
+                    <span key={k} className="rounded bg-ink-850 px-2 py-0.5 text-xs text-zinc-400">
+                      <span className="text-zinc-600">{k}</span> {String(v)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardBody>
         </Card>
       )}
 
       <p className="text-[11px] leading-relaxed text-zinc-600">
-        * Sharpe and Max DD use the directional P&amp;L proxy noted above. Ranked by information coefficient.
-        Running a new experiment posts to <span className="tnum">/api/testing-lab/experiments/run</span> (backend pending).
+        Per-model metrics are on the Comparison tab. A run&apos;s individual model results, walk-forward
+        steps, and parameter sweeps come from{" "}
+        <span className="tnum">/api/testing-lab/experiments/{"{id}"}</span> (not wired into this page yet).
       </p>
     </div>
   );
 }
 
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-[10px] uppercase tracking-wider text-zinc-600">{label}</dt>
+      <dd className="text-zinc-300">{value}</dd>
+    </div>
+  );
+}
+
 // ── Comparison ─────────────────────────────────────────────────────────────────────────────────
-const LEADERBOARD_COLS: { key: keyof ModelMetrics; label: string; fmt: (n: number) => string; color?: boolean }[] = [
+const LEADERBOARD_COLS: { key: string; label: string; fmt: (n: number) => string; color?: boolean }[] = [
   { key: "information_coefficient", label: "IC", fmt: ic, color: true },
   { key: "accuracy", label: "Accuracy", fmt: acc },
   { key: "precision", label: "Precision", fmt: acc },
@@ -258,21 +295,43 @@ const LEADERBOARD_COLS: { key: keyof ModelMetrics; label: string; fmt: (n: numbe
 ];
 
 function ComparisonTab({ comparison }: { comparison: ComparisonResponse }) {
-  const rows = [...comparison.rows].sort((a, b) => b.metrics[comparison.ranked_by] - a.metrics[comparison.ranked_by]);
-  const icData = rows.map((r) => ({ model: MODEL_LABEL[r.model], ic: r.metrics.information_coefficient, is_best: r.is_best }));
-  const d = comparison.disagreement;
+  const rankKey = comparison.metric || "information_coefficient";
+  const rows = [...comparison.models].sort((a, b) => metricVal(b.metrics, rankKey) - metricVal(a.metrics, rankKey));
+  const flagged = rows.filter((r) => r.degenerate.length > 0);
+
+  if (rows.length === 0) {
+    return (
+      <Card>
+        <CardBody className="pt-5 text-sm text-zinc-400">
+          No measured runs to rank yet.
+          {comparison.unmeasured_runs > 0 && (
+            <> {comparison.unmeasured_runs} run{comparison.unmeasured_runs === 1 ? "" : "s"} scored nothing and {comparison.unmeasured_runs === 1 ? "was" : "were"} excluded.</>
+          )}
+        </CardBody>
+      </Card>
+    );
+  }
+
+  const best = rows[0];
+  const icData = rows.map((r) => ({ model: modelLabel(r.model), ic: r.metrics.information_coefficient }));
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <StatCard label="Best model" value={MODEL_LABEL[rows[0].model]} sub={`by ${String(comparison.ranked_by).replace(/_/g, " ")}`} valueClass="text-gain" />
-        <StatCard label="Model agreement" value={`${d.mean_pairwise_agreement_pct.toFixed(0)}%`} sub={`${d.unanimous_pct.toFixed(0)}% unanimous`} valueClass={d.high_disagreement_flag ? "text-flat" : undefined} />
-        <StatCard label="Consensus" value={d.high_disagreement_flag ? "Low" : "OK"} sub={d.high_disagreement_flag ? "high disagreement, distrust the composite" : "models broadly agree"} valueClass={d.high_disagreement_flag ? "text-loss" : "text-gain"} />
+        <StatCard label="Best model" value={modelLabel(best.model)} sub={`by ${rankKey.replace(/_/g, " ")}`} valueClass="text-gain" />
+        <StatCard label="Measured runs" value={String(rows.length)} sub="ranked below" />
+        <StatCard
+          label="Unmeasured runs"
+          value={String(comparison.unmeasured_runs)}
+          sub={comparison.unmeasured_runs > 0 ? "scored nothing, excluded" : "none"}
+          valueClass={comparison.unmeasured_runs > 0 ? "text-flat" : "text-gain"}
+        />
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle>Leaderboard</CardTitle>
+          <span className="text-xs text-zinc-500">best measured run per model</span>
         </CardHeader>
         <CardBody className="overflow-x-auto p-0">
           <table className="w-full text-sm">
@@ -282,26 +341,58 @@ function ComparisonTab({ comparison }: { comparison: ComparisonResponse }) {
                 {LEADERBOARD_COLS.map((c) => (
                   <th key={c.key} className="px-3 py-2 text-right font-medium">{c.label}</th>
                 ))}
+                <th className="px-3 py-2 text-right font-medium" title="Walk-forward predictions scored / failed">Preds</th>
+                <th className="px-5 py-2 font-medium">Source</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.model} className={cn("border-b border-ink-850 last:border-0", r.is_best && "bg-gain/5")}>
+              {rows.map((r, i) => (
+                <tr key={r.run_id} className={cn("border-b border-ink-850 last:border-0", i === 0 && "bg-gain/5")}>
                   <td className="px-5 py-2.5 font-medium text-zinc-100">
-                    {MODEL_LABEL[r.model]}
-                    {r.is_best && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-gain">best</span>}
+                    <span className="inline-flex items-center gap-1.5">
+                      {r.degenerate.length > 0 && (
+                        <span title="degenerate: a measured result that is still worthless (see below)">
+                          <AlertTriangle className="h-3.5 w-3.5 text-flat" />
+                        </span>
+                      )}
+                      {modelLabel(r.model)}
+                    </span>
+                    {i === 0 && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-gain">best</span>}
+                    {r.is_baseline && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-brass">baseline</span>}
                   </td>
                   {LEADERBOARD_COLS.map((c) => (
-                    <td key={c.key} className={cn("px-3 py-2.5 text-right tnum", c.color ? plColor(r.metrics[c.key]) : "text-zinc-200")}>
-                      {c.fmt(r.metrics[c.key])}
+                    <td key={c.key} className={cn("px-3 py-2.5 text-right tnum", c.color ? plColor(metricVal(r.metrics, c.key)) : "text-zinc-200")}>
+                      {c.fmt(metricVal(r.metrics, c.key))}
                     </td>
                   ))}
+                  <td className="px-3 py-2.5 text-right tnum text-zinc-400">
+                    {r.predictions_made}
+                    {r.predictions_failed > 0 && <span className="ml-1 text-loss">/ {r.predictions_failed} failed</span>}
+                  </td>
+                  <td className="px-5 py-2.5 text-zinc-500">{dataSourceLabel(r.data_source)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </CardBody>
       </Card>
+
+      {flagged.length > 0 && (
+        <Card className="border-flat/40 bg-flat/5">
+          <CardBody className="pt-5">
+            <div className="flex items-center gap-2 font-medium text-flat">
+              <AlertTriangle className="h-4 w-4" /> Degenerate results: measured, but not a model
+            </div>
+            <ul className="mt-2 space-y-1.5 text-sm text-zinc-400">
+              {flagged.map((r) => (
+                <li key={r.run_id}>
+                  <span className="text-zinc-300">{modelLabel(r.model)}:</span> {r.degenerate.join("; ")}
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -331,62 +422,23 @@ function ComparisonTab({ comparison }: { comparison: ComparisonResponse }) {
   );
 }
 
-// ── Sweeps ─────────────────────────────────────────────────────────────────────────────────────
-const SWEEP_METRICS: { key: "sharpe_ratio" | "win_rate" | "max_drawdown"; label: string }[] = [
-  { key: "sharpe_ratio", label: "Sharpe*" },
-  { key: "win_rate", label: "Win rate" },
-  { key: "max_drawdown", label: "Max DD*" },
-];
-
-function SweepsTab() {
-  const sweep = mockSweep("xgboost", "max_depth");
-  const [metric, setMetric] = useState<(typeof SWEEP_METRICS)[number]["key"]>("sharpe_ratio");
-  const best = sweep.points.reduce((a, b) => (metric === "max_drawdown" ? (b[metric] > a[metric] ? b : a) : b[metric] > a[metric] ? b : a));
-  const fmt = metric === "win_rate" ? acc : two;
-
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>{MODEL_LABEL[sweep.model]}: {sweep.param.replace(/_/g, " ")} sweep</CardTitle>
-          <div className="flex gap-1">
-            {SWEEP_METRICS.map((m) => (
-              <button
-                key={m.key}
-                onClick={() => setMetric(m.key)}
-                className={cn("rounded-md px-2 py-1 text-xs transition-colors", metric === m.key ? "bg-ink-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-300")}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </CardHeader>
-        <CardBody>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={sweep.points} margin={{ top: 6, right: 12, bottom: 0, left: 0 }}>
-                <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="value" tick={{ fill: AXIS, fontSize: 11 }} tickLine={false} axisLine={{ stroke: GRID }} />
-                <YAxis tick={{ fill: AXIS, fontSize: 11 }} tickLine={false} axisLine={false} width={48} tickFormatter={(v) => (metric === "win_rate" ? `${Math.round(v * 100)}%` : v.toFixed(1))} />
-                <Tooltip contentStyle={TIP} labelFormatter={(l) => `${sweep.param} = ${l}`} formatter={(v: number) => [fmt(v), SWEEP_METRICS.find((m) => m.key === metric)!.label]} />
-                <Line type="monotone" dataKey={metric} stroke="#e0b34d" strokeWidth={1.5} dot={{ r: 2, fill: "#e0b34d" }} />
-                <ReferenceDot x={best.value} y={best[metric]} r={5} fill="#34d399" stroke="none" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="mt-2 text-xs text-zinc-500">
-            Best {SWEEP_METRICS.find((m) => m.key === metric)!.label} at <span className="text-gain">{sweep.param} = {best.value}</span>.
-            The inverted-U is the point: past the peak, more complexity overfits and out-of-sample skill falls.
-          </p>
-        </CardBody>
-      </Card>
-      <p className="text-[11px] text-zinc-600">Live sweeps post to <span className="tnum">/api/testing-lab/sweeps</span> (backend pending); this shows the shape.</p>
-    </div>
-  );
-}
-
 // ── Stress ─────────────────────────────────────────────────────────────────────────────────────
 function StressTab({ stress }: { stress: StressResponse }) {
+  if (!stress.available || stress.scenarios.length === 0) {
+    return (
+      <Card>
+        <CardBody className="flex items-start gap-3 pt-5 text-sm text-zinc-400">
+          <Database className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
+          <span>
+            {stress.note || "Stress scenarios aren't available yet."} The crisis-scenario module
+            (COVID 2020, 2022 bear, 2008, and the rest) is still on the port list; this tab fills in
+            once it lands, rather than showing fabricated scenarios.
+          </span>
+        </CardBody>
+      </Card>
+    );
+  }
+
   const rows = [...stress.scenarios].sort((a, b) => a.estimated_pl_pct - b.estimated_pl_pct);
   const chart = rows.map((s) => ({ label: s.label, spy: s.spy_move_pct, est: s.estimated_pl_pct }));
 
@@ -448,4 +500,13 @@ function StressTab({ stress }: { stress: StressResponse }) {
       </Card>
     </div>
   );
+}
+
+function fmtTime(iso: string): string {
+  // Fixed locale + UTC so server and client render identical text (no hydration mismatch).
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("en-US", {
+    timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+  });
 }
