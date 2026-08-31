@@ -8,6 +8,7 @@ import { Gavel, AlertTriangle, ChevronRight } from "lucide-react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/shell";
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, Spinner, decisionTone } from "@/components/ui";
+import { FamilySplit, providerLabel } from "@/components/jury-signals";
 import { fetcher, streamSSE } from "@/lib/api";
 import { ago, cn } from "@/lib/format";
 import type { DebateSummary, DebateTurn, JuryResult, JurorVote } from "@/lib/types";
@@ -266,13 +267,28 @@ export default function DebatePage() {
         </div>
       )}
 
+      {/* #142: how the two model families compared on the same lenses. Renders nothing for a
+          single-family panel. */}
+      {jury?.families && (
+        <div className="mb-4">
+          <FamilySplit families={jury.families} />
+        </div>
+      )}
+
       {votes.length > 0 && (
         <div className="mb-6 grid gap-3 sm:grid-cols-2">
-          {votes.map((v) => (
-            <Card key={v.agent_id} className="px-4 py-3">
-              <div className="flex items-center justify-between">
+          {votes.map((v, i) => (
+            // key includes provider + index: on a paired panel the same lens id is judged by both
+            // families, so agent_id alone collides.
+            <Card key={`${v.agent_id}-${v.provider ?? ""}-${i}`} className="px-4 py-3">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-xs uppercase tracking-wider text-zinc-500">
                   #{v.agent_id} · {v.focus_area.replace(/_/g, " ")}
+                  {v.provider && (
+                    <span className="ml-1.5 normal-case tracking-normal text-zinc-600">
+                      · {providerLabel(v.provider)}
+                    </span>
+                  )}
                 </span>
                 <Badge tone={decisionTone(v.vote)}>{v.vote}</Badge>
               </div>
