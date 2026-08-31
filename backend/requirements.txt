@@ -29,5 +29,5 @@ pyotp==2.10.0
 # AES-256-GCM for operator_totp.secret_encrypted (§5.4). The key lives in backend/.env and never in
 # rh-db — see §7 for why encrypting a column with a key stored in the same database is obfuscation
 # rather than encryption at rest.
-cryptography==50.0.0
+cryptography==50.0.1
 pytest==9.1.1
