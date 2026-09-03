@@ -1,5 +1,25 @@
 # Target Slate — account 1
 
+> **Slate status: NOT IN FORCE** — superseded 2026-08-17 when the account of record moved to the Alpaca paper book; no allocation debate has run against it since.
+>
+> **What that means, and what it does not.** This document is retained in full as the written
+> record of the 2026-06-03 allocation debate. It is no longer a claim about what the book should
+> hold today, so reconciliation does not apply it, and the position and market-context pages do not
+> present its weights as targets. Delete the status line above to put it back in force.
+>
+> **Why it was retired.** The weights below were decided against a $100 Robinhood book. The fifteen
+> positions the Alpaca paper account holds today were placed by `bin/seed_paper_book.py` — an owner
+> seeding an equal-dollar basket ($500 a name) so the marking job had something to value, which that
+> script is explicit is "not the agentic loop deciding anything" and must not be read as the
+> strategy's track record. Reconciling one against the other is not a weaker comparison; it is a
+> wrong one, and it produced eighteen findings and two guardrail breaches at the top of every
+> morning report — every one of them an artifact of comparing two different books.
+>
+> **What replaces it.** Nothing, until an allocation debate runs against the current book and
+> produces a slate for it. Until then the cycle reads positions from the broker and judges them on
+> their own merits, and the reconciliation section says "no slate in force" rather than inventing a
+> diff. See issue #22.
+
 > **This file is the slate for ACCOUNT 1 only.** Alpaca paper `••••I1PN` — the agentic debate book.
 >
 > **Documented book: $100,000.** That line is parsed (`_DOCUMENTED_BOOK_LABELLED`) and reported as

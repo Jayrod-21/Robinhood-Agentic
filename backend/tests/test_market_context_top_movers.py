@@ -41,8 +41,11 @@ def route(monkeypatch: pytest.MonkeyPatch):
     def _install(brief):
         monkeypatch.setattr(mod, "_load_brief", lambda: brief)
         monkeypatch.setattr(mod, "_catalysts", lambda *a, **k: [])
+        # Returns the (slate, path, status) triple load_governing_slate answers with: the route
+        # asks "which targets govern this account", not "parse this file".
         monkeypatch.setattr(
-            mod, "load_slate", lambda _p: {"TSM": object(), "NVDA": object()}
+            mod, "load_governing_slate",
+            lambda *a, **k: ({"TSM": object(), "NVDA": object()}, None, None),
         )
 
         class _Snap:

@@ -13,6 +13,12 @@ from app.routers import reconciliation as rec
 from app.services.snapshot import AccountSnapshot
 from fastapi import HTTPException
 
+# The live docs/SLATE.md is retired (marked NOT IN FORCE) since the account of record moved to the
+# Alpaca paper book. These tests exercise the reconciliation ARITHMETIC against the real targets, so
+# they pin the slate as governing rather than depending on the owner's current status line. The
+# status behaviour itself is tested in tests/test_slate_not_in_force.py.
+pytestmark = pytest.mark.usefixtures("slate_in_force")
+
 
 def _snapshot(positions=(), cash=500.0, total=1000.0):
     return AccountSnapshot.model_validate(

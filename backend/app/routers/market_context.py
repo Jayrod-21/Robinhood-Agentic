@@ -36,9 +36,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query
 
 from app.config import get_settings
+from app.services import accounts
 from app.services.broker import get_snapshot
 from app.services.freshness import is_stale
-from app.services.slate import load_slate
+from app.services.slate import load_governing_slate
 from app.services.snapshot import SnapshotError
 
 logger = logging.getLogger("agentic.api.market_context")
@@ -167,7 +168,9 @@ def _catalysts(symbols: set[str], slate: dict, held: set[str]) -> list[dict[str,
 def market_context(account_id: AccountId = None) -> dict[str, Any]:
     settings = get_settings()
     docs = settings.docs_dir
-    slate = load_slate(docs / "SLATE.md")
+    # Per account, and empty when no slate is in force: catalyst relevance then degrades to the
+    # names actually held, which is the honest lens when no document claims to describe the book.
+    slate, _slate_path, _slate_status = load_governing_slate(docs, account_id, accounts.DEFAULT_ACCOUNT_ID)
 
     held: set[str] = set()
     try:

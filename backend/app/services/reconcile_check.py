@@ -63,13 +63,20 @@ def run(*, halt_on_desync: bool | None = None) -> dict[str, Any]:
         return {"checked": False, "reason": f"{type(exc).__name__}: {exc}"}
 
     meta = report.get("meta") or {}
-    if meta.get("slate_documented") is False:
-        # Not a desync and not a failure — this account was never given targets. Reported as
-        # "did not run", with the reason, so the cycle row stores NULLs (024) rather than a
-        # verdict about a comparison that did not happen.
+    if meta.get("slate_documented") is False or meta.get("slate_in_force") is False:
+        # Not a desync and not a failure — either this account was never given targets, or its
+        # slate was deliberately retired. Reported as "did not run", with the reason, so the cycle
+        # row stores NULLs (024) rather than a verdict about a comparison that did not happen.
         reason = report.get("note") or "no documented slate for this account"
         logger.info("reconciliation skipped: %s", reason)
-        return {"checked": False, "reason": reason}
+        return {
+            "checked": False,
+            "reason": reason,
+            # Distinguishes a deliberate state from an accidental one for report_section(). A
+            # retired slate is not a gap in the controls; a missing one on an account that should
+            # have targets is. Rendering both as the same warning erases that difference.
+            "by_design": True,
+        }
 
     summary = report.get("summary") or {}
     positions = report.get("positions") or []
@@ -184,6 +191,17 @@ def report_section(result: dict | None) -> list[str]:
     """
     if result is None or not result.get("checked"):
         reason = (result or {}).get("reason", "not run")
+        if (result or {}).get("by_design"):
+            # No warning glyph and no "we skipped a control" line: nothing was missed here. The
+            # cycle is reasoning from the book itself, which is the honest basis when no document
+            # claims to describe it — and saying so plainly is what keeps the ⚠ above meaningful
+            # on the days it does appear.
+            return [
+                "## Reconciliation — no slate in force",
+                f"- {reason}",
+                "- Positions below are read from the broker and judged on their own merits.",
+                "",
+            ]
         return [
             "## ⚠ Reconciliation — DID NOT RUN",
             f"- {reason}",

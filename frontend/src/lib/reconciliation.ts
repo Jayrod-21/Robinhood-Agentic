@@ -53,8 +53,19 @@ export interface DisciplineCheck {
 }
 
 export interface ReconMeta {
-  slate_source: string;
-  slate_dated: string;
+  /** Null only when no slate file exists for this account; a RETIRED slate is still named, so an
+   *  operator can open the document that stopped governing them. */
+  slate_source: string | null;
+  slate_dated: string | null;
+  /** False when no slate file exists for this account at all. */
+  slate_documented?: boolean;
+  /** False when a slate exists but is marked NOT IN FORCE. Documented-and-not-in-force is a real
+   *  state, not a contradiction: the 2026-06-03 debate is kept as a record while no longer being a
+   *  claim about what the book should hold. When this is false NOTHING was diffed, so every count
+   *  in `summary` is a zero that means "not measured" — never "measured and clean". */
+  slate_in_force?: boolean;
+  /** Why it was retired, verbatim from the document's status line. */
+  slate_retired_reason?: string | null;
   snapshot_generated_at: string | null;
   /** Reconciling against a stale snapshot is itself a caveat, so it is surfaced, not hidden. */
   snapshot_stale: boolean;
@@ -82,6 +93,8 @@ export interface ReconSummary {
 
 export interface ReconciliationResponse {
   meta: ReconMeta;
+  /** Present when nothing was reconciled, explaining why in a sentence meant for a human. */
+  note?: string;
   positions: ReconPosition[];
   checks: DisciplineCheck[];
   summary: ReconSummary;
