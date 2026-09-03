@@ -2,7 +2,6 @@
 
 import useSWR from "swr";
 import { AlertTriangle, CheckCircle2, Database, FileQuestion, ShieldAlert } from "lucide-react";
-import { PageHeader } from "@/components/shell";
 import { Badge, Card, CardBody, CardHeader, CardTitle, Spinner, StatCard } from "@/components/ui";
 import { fetcher } from "@/lib/api";
 import { useAccount, withAccount } from "@/components/account-context";
@@ -32,7 +31,7 @@ const STATUS_LABEL: Record<PositionStatus, string> = {
   unexpected: "unrecorded",
 };
 
-export default function ReconciliationPage() {
+export function ReconciliationSection() {
   const { selectedId } = useAccount();
   const { data, error, isLoading } = useSWR<ReconciliationResponse>(
     RECON_MOCK ? null : withAccount("/api/reconciliation", selectedId),
@@ -41,16 +40,22 @@ export default function ReconciliationPage() {
   );
   const resp = RECON_MOCK ? MOCK_RECONCILIATION : data;
 
+  // A section heading, not a PageHeader: reconciliation is a view of the book against its targets,
+  // so it lives under Portfolio rather than holding a top-level tab of its own. Since #153 retired
+  // the 2026-06-03 slate it renders a single explanatory card, which made a whole tab for it
+  // especially hard to justify.
   const header = (
-    <PageHeader
-      title="Reconciliation"
-      subtitle={
-        resp?.meta.slate_source && resp.meta.slate_dated
-          ? `${resp.meta.slate_source} (${resp.meta.slate_dated}) vs broker, snapshot ${ago(resp.meta.snapshot_generated_at)}`
-          : "Documented slate vs broker truth"
-      }
-      right={RECON_MOCK ? <Badge tone="hold">MOCK DATA</Badge> : undefined}
-    />
+    <div className="mb-4 mt-10 flex flex-wrap items-end justify-between gap-3 border-t border-ink-800 pt-6">
+      <div>
+        <h2 className="font-serif text-xl text-zinc-100">Reconciliation</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          {resp?.meta.slate_source && resp.meta.slate_dated
+            ? `${resp.meta.slate_source} (${resp.meta.slate_dated}) vs broker, snapshot ${ago(resp.meta.snapshot_generated_at)}`
+            : "Documented slate vs broker truth"}
+        </p>
+      </div>
+      {RECON_MOCK ? <Badge tone="hold">MOCK DATA</Badge> : undefined}
+    </div>
   );
 
   if (error) {

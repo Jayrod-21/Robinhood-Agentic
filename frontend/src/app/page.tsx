@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/shell";
 import { Card, CardBody, CardHeader, CardTitle, Spinner, StatCard } from "@/components/ui";
 import { AccountSwitcher } from "@/components/account-switcher";
 import { useAccount, withAccount } from "@/components/account-context";
+import { ReconciliationSection } from "@/components/views/reconciliation-section";
 import { fetcher } from "@/lib/api";
 import { ago, cn, pct, plColor, usd } from "@/lib/format";
 import type { AccountView } from "@/lib/types";
@@ -165,6 +166,10 @@ export default function PortfolioPage() {
           </CardBody>
         </Card>
       </div>
+
+      {/* Both halves of "what do we hold": the book itself, then whether it is the book we said we
+          would hold. These were two top-level tabs answering one question. */}
+      <ReconciliationSection />
     </div>
   );
 }
