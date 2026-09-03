@@ -259,7 +259,7 @@ export default function DebateDetailPage({ params }: { params: { id: string } })
 
 function BackLink() {
   return (
-    <Link href="/debate" className="mb-4 inline-flex items-center gap-1.5 text-sm text-zinc-500 transition-colors hover:text-zinc-200">
+    <Link href="/decisions" className="mb-4 inline-flex items-center gap-1.5 text-sm text-zinc-500 transition-colors hover:text-zinc-200">
       <ArrowLeft className="h-4 w-4" /> All debates
     </Link>
   );

@@ -172,7 +172,7 @@ export default function LearningPage() {
         <Card>
           <CardHeader className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>Accuracy over time</CardTitle>
-            <Link href="/calibration" className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200">
+            <Link href="/track-record/calibration" className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200">
               full reliability curve <ArrowRight className="h-3 w-3" />
             </Link>
           </CardHeader>

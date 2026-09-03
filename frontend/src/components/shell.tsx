@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import useSWR from "swr";
-import { Activity, BookOpen, FlaskConical, Gavel, GraduationCap, LayoutDashboard, LineChart, ListFilter, LogOut, Newspaper, NotebookPen, Scale, SlidersHorizontal, Target } from "lucide-react";
+import { Gavel, LayoutDashboard, LineChart, LogOut, Newspaper, NotebookPen, SlidersHorizontal } from "lucide-react";
 import { fetchAuthState, fetchMe, logout } from "@/lib/auth";
 import { cn } from "@/lib/format";
 import { DataTrustStrip } from "@/components/data-trust";
@@ -15,21 +15,26 @@ import { ChatDrawer } from "@/components/chat-drawer";
  *  reached from an email link before any session exists. */
 const PUBLIC_PATHS = new Set(["/login", "/verify-email"]);
 
+// Five sections, one theme each. This was thirteen entries, and several of them were sub-data of
+// another page that had been promoted to a tab: Fundamentals is the drill-down of a Scan survivor,
+// Calibration and Learning are two cuts of the same scored judgments, Reconcile is a view of the
+// book against its targets. Thirteen top-level choices is not a menu, it is a search problem.
+//
+// Parts live underneath their section as real routes (see components/sub-tabs.tsx), which is the
+// pattern /position/[symbol] and /debate/[id] already used — reached by clicking a row, never by
+// a nav entry.
 const NAV = [
-  { href: "/", label: "Portfolio", icon: LayoutDashboard },
-  { href: "/reconciliation", label: "Reconcile", icon: Scale },
-  { href: "/performance", label: "Performance", icon: LineChart },
-  { href: "/calibration", label: "Calibration", icon: Target },
-  { href: "/learning", label: "Learning", icon: GraduationCap },
-  { href: "/testing-lab", label: "Testing Lab", icon: FlaskConical },
-  { href: "/fundamentals", label: "Fundamentals", icon: BookOpen },
+  { href: "/", label: "Book", icon: LayoutDashboard },
+  { href: "/research", label: "Research", icon: Newspaper },
+  { href: "/decisions", label: "Decisions", icon: Gavel },
+  { href: "/track-record", label: "Track Record", icon: LineChart },
   { href: "/journal", label: "Journal", icon: NotebookPen },
-  { href: "/market", label: "Market", icon: Newspaper },
-  { href: "/scan", label: "Scan", icon: ListFilter },
-  { href: "/pipeline", label: "Pipeline", icon: Activity },
-  { href: "/debate", label: "Debate", icon: Gavel },
-  { href: "/settings", label: "Parameters", icon: SlidersHorizontal },
 ];
+
+// Deliberately NOT in NAV. Parameters is configuration touched rarely; it held a permanent tab
+// next to the pages the system is actually read through. It keeps its route and its link, one
+// rung down in the visual hierarchy.
+const SETTINGS = { href: "/settings", label: "Parameters", icon: SlidersHorizontal };
 
 /** Send a signed-out visitor to the sign-in page.
  *
@@ -84,7 +89,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="mt-8 flex flex-col gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {
-            const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+            // Prefix match so a sub-route (/research/scan) keeps its section lit. The two
+            // drill-downs keep their own top-level URLs — they predate this structure and are the
+            // pattern it was modelled on — so each is mapped to its section explicitly. Without
+            // that the sidebar goes blank exactly when you have navigated deepest and most need
+            // to know where you are.
+            const active =
+              href === "/"
+                ? pathname === "/" || pathname.startsWith("/position")
+                : pathname.startsWith(href) ||
+                  (href === "/decisions" && pathname.startsWith("/debate"));
             return (
               <Link
                 key={href}
@@ -101,6 +115,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="mt-auto">
+          <Link
+            href={SETTINGS.href}
+            className={cn(
+              "mb-3 flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+              pathname.startsWith(SETTINGS.href)
+                ? "bg-ink-800 text-zinc-100"
+                : "text-zinc-500 hover:bg-ink-850 hover:text-zinc-200",
+            )}
+          >
+            <SETTINGS.icon className="h-4 w-4" />
+            {SETTINGS.label}
+          </Link>
           <SignOutControl />
           <div className="px-2 text-[11px] leading-relaxed text-zinc-600">
             Read-only monitor. Live debates cost API tokens. Trades execute via the in-session agent.
