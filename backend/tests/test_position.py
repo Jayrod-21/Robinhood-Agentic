@@ -21,6 +21,12 @@ from app.services.slate import (
 from app.services.snapshot import AccountSnapshot
 from fastapi import HTTPException
 
+# The live docs/SLATE.md is retired (marked NOT IN FORCE) since the account of record moved to the
+# Alpaca paper book. These tests exercise the reconciliation ARITHMETIC against the real targets, so
+# they pin the slate as governing rather than depending on the owner's current status line. The
+# status behaviour itself is tested in tests/test_slate_not_in_force.py.
+pytestmark = pytest.mark.usefixtures("slate_in_force")
+
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 
 

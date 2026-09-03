@@ -36,7 +36,13 @@ from app.services import accounts, settings_store
 from app.services.broker import get_snapshot
 from app.services.freshness import is_stale
 from app.services.marks import get_marks, resolve_ttl_seconds
-from app.services.slate import SLATE_DIR, load_sizing_rules, load_slate, slate_path_for
+from app.services.slate import (
+    SLATE_DIR,
+    load_sizing_rules,
+    load_slate,
+    slate_path_for,
+    slate_status,
+)
 from app.services.snapshot import SnapshotError
 from app.services.valuation import account_totals, value_position, weight_pct
 
@@ -139,6 +145,45 @@ def _undocumented(account_id: int | None, settings: Any, docs: Any) -> dict[str,
     }
 
 
+def _retired(account_id: int | None, slate_path: Any, reason: str | None, settings: Any) -> dict[str, Any]:
+    """The response for an account whose slate exists but no longer governs the book.
+
+    Shaped like :func:`_undocumented` for the same reason: the finding is "no targets are in force",
+    which is ONE fact, and rendering it as fifteen unexpected holdings is the shape that teaches an
+    operator to skim. It differs in naming the document, because "there is no slate" and "the slate
+    was retired on purpose, and here is why" are different states and an operator must be able to
+    tell which one they are in.
+    """
+    resolved = account_id or accounts.DEFAULT_ACCOUNT_ID
+    source = _relative(slate_path, settings)
+    logger.info("account %s has no slate in force (%s is marked NOT IN FORCE)", resolved, source)
+    note = (
+        f"Account {resolved} has no slate in force. `{source}` is retained as the written record of "
+        f"the debate that produced it, but is marked NOT IN FORCE and was not applied to the book."
+    )
+    if reason:
+        note = f"{note} Reason given: {reason}"
+    return {
+        "meta": {
+            # Named, unlike the no-file case: the document exists and an operator should be able to
+            # open the thing that is not governing them.
+            "slate_source": source,
+            "slate_documented": True,
+            "slate_in_force": False,
+            "slate_retired_reason": reason,
+            "account_id": resolved,
+            "slate_dated": None,
+            "expected_slate_path": source,
+            "thresholds_source": None,
+        },
+        "summary": {"matched": 0, "drifted": 0, "missing": 0, "unexpected": 0,
+                    "checks_total": 0, "checks_failing": 0},
+        "positions": [],
+        "checks": [],
+        "note": note,
+    }
+
+
 @router.get("/reconciliation")
 def reconciliation(account_id: AccountId = None) -> dict[str, Any]:
     settings = get_settings()
@@ -153,6 +198,14 @@ def reconciliation(account_id: AccountId = None) -> dict[str, Any]:
         # could not be READ, and not a diff against some other account's targets. An account with
         # no documented slate is a normal state — a testing book is not supposed to have one.
         return _undocumented(account_id, settings, docs)
+
+    # A slate on disk is not automatically a slate in force. Checked BEFORE parsing the table, so a
+    # retired document is reported as retired even if its format has since rotted — the reason an
+    # operator gets should be "this was retired", never a parser error about a file that stopped
+    # mattering weeks ago.
+    status = slate_status(slate_path)
+    if not status.in_force:
+        return _retired(account_id, slate_path, status.reason, settings)
 
     slate = load_slate(slate_path)
     rules = load_sizing_rules(slate_path)

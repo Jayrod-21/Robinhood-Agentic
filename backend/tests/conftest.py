@@ -54,3 +54,30 @@ def _no_inherited_dsns(monkeypatch):
     reset_db_settings()
     yield
     reset_db_settings()
+
+
+@pytest.fixture
+def slate_in_force(monkeypatch):
+    """Pin the live ``docs/SLATE.md`` as governing, for tests about the DIFF and not the status.
+
+    Same argument as the ``env_file`` suppression above, one layer out: a suite whose result depends
+    on a developer's live configuration is not a gate — and a slate's in-force status is exactly
+    that kind of live configuration. ``docs/SLATE.md`` was retired when the account of record moved
+    to the Alpaca paper book, and twenty-four tests that reconcile real targets against fixture
+    holdings went red overnight without a line of their own logic changing.
+
+    Those tests are about whether a holding at target reports 'match' and whether a cash breach is
+    caught. They are not about which document governs account 1 this week, so they say so here and
+    stop caring. ``tests/test_slate_not_in_force.py`` owns the status question and does NOT use
+    this fixture.
+
+    Both names are patched deliberately: ``reconciliation`` imported ``slate_status`` into its own
+    module namespace, while ``load_governing_slate`` resolves it through ``app.services.slate``.
+    Patching one and not the other fixes half the callers and leaves a confusing half-red suite.
+    """
+    from app.services.slate import SlateStatus
+
+    governing = SlateStatus(in_force=True)
+    monkeypatch.setattr("app.services.slate.slate_status", lambda _path: governing)
+    monkeypatch.setattr("app.routers.reconciliation.slate_status", lambda _path: governing)
+    return governing

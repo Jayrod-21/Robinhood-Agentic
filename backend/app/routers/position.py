@@ -30,10 +30,11 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.config import get_settings
 from app.debate.records import get_record, list_records
+from app.services import accounts
 from app.services.broker import get_snapshot
 from app.services.freshness import is_stale
 from app.services.marks import MARKS_PROVIDER, get_marks, resolve_ttl_seconds
-from app.services.slate import load_sizing_rules, load_slate, load_theses
+from app.services.slate import load_governing_slate, load_sizing_rules, load_theses
 from app.services.snapshot import SnapshotError
 from app.validation import normalize_ticker
 
@@ -168,9 +169,16 @@ def position(symbol: str, account_id: AccountId = None) -> dict[str, Any]:
 
     settings = get_settings()
     docs = settings.docs_dir
-    slate = load_slate(docs / "SLATE.md")
+    # Per account, and only if that account's slate is in force — a retired slate's weights are
+    # history, and rendering them on a live position page presents them as a target someone might
+    # trade toward. `entry` then falls to None, which this router already reports as a null
+    # target_weight_pct rather than 0%.
+    slate, slate_path, _slate_status = load_governing_slate(docs, account_id, accounts.DEFAULT_ACCOUNT_ID)
     theses = load_theses(docs / "THESES.md")
-    rules = load_sizing_rules(docs / "SLATE.md")
+    # Sizing (stop, trim) is read from the slate document even when its ALLOCATION is retired: the
+    # stop discipline is the charter's, restated there, and it governs any position the book holds
+    # regardless of whether a target weight does. Falls back to the charter defaults when absent.
+    rules = load_sizing_rules(slate_path) if slate_path else load_sizing_rules(docs / "SLATE.md")
 
     try:
         snapshot = get_snapshot(settings.snapshot_path, account_id)

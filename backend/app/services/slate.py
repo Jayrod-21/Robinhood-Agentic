@@ -44,6 +44,16 @@ _CONVICTION = re.compile(r"conviction\s+(?P<level>[A-Z]+)", re.IGNORECASE)
 # **Core thesis (6-18mo):** A structural AI-compute monopoly ...
 _CORE_THESIS = re.compile(r"^\*\*Core thesis[^:]*:\*\*\s*(?P<text>.+)$", re.MULTILINE)
 
+# > **Slate status: NOT IN FORCE** — the seeded basket is not an allocation decision.
+# A slate can exist as a document and still not govern the book. Parsed rather than inferred: the
+# alternative is guessing from a date, and a stale-looking slate that IS in force and a current-
+# looking one that is NOT are exactly the two cases a heuristic gets backwards. Absent marker means
+# IN FORCE, so every slate written before this existed keeps governing its account unchanged.
+_SLATE_STATUS_NOT_IN_FORCE = re.compile(
+    r"^>?\s*\*\*Slate status:\s*NOT IN FORCE\*\*\s*(?:[—-]\s*(?P<reason>.+?))?\s*$",
+    re.MULTILINE,
+)
+
 # Sizing discipline, from SLATE.md §Sizing. Read from the file rather than hardcoded so an owner
 # editing the document changes the dashboard, which is the entire point of the document.
 _STOP_PCT = re.compile(r"stop\s*[−-]\s*(?P<pct>[0-9]+(?:\.[0-9]+)?)\s*%", re.IGNORECASE)
@@ -122,6 +132,47 @@ def slate_path_for(docs_dir: Path, account_id: int | None, default_account_id: i
     if int(account_id) == default_account_id and legacy.is_file():
         return legacy
     return None
+
+
+@dataclass(frozen=True)
+class SlateStatus:
+    """Whether a slate governs its book, and why not when it does not."""
+
+    in_force: bool
+    reason: str | None = None
+
+
+def slate_status(path: Path) -> SlateStatus:
+    """Does this slate still govern its account?
+
+    WHY A SLATE CAN BE DOCUMENTED AND NOT IN FORCE
+        The 2026-06-03 allocation debate ran against a $100 Robinhood book. The account of record
+        moved to an Alpaca paper book on 2026-08-17, and the fifteen positions in it were put there
+        by ``bin/seed_paper_book.py`` — an owner seeding an equal-dollar basket so the marking job
+        had something to value. That script says so itself: "not the agentic loop deciding
+        anything". No allocation debate has run against the current book.
+
+        Reconciling the second against the first produced eighteen findings and two guardrail
+        breaches every single morning, at the top of the only report this system writes. Every one
+        of them was an artifact of comparing two different books. That is the failure
+        :func:`slate_path_for` exists to prevent between accounts, arriving instead through time:
+        an operator who reads OUT OF SYNC every day learns to skim past it, and the alarm is then
+        worth less than no alarm at all.
+
+    RETIRING IS NOT DELETING
+        The document stays, table intact, because it is the written record of a real debate. It
+        simply stops being a claim about what the book should hold today.
+    """
+    text = _read(path)
+    if text is None:
+        # Unreadable is not "retired". The caller distinguishes these: load_slate() returning empty
+        # raises a 503 about a parser failure, which is the correct answer to a file we cannot read.
+        return SlateStatus(in_force=True)
+    m = _SLATE_STATUS_NOT_IN_FORCE.search(text)
+    if m is None:
+        return SlateStatus(in_force=True)
+    reason = (m.group("reason") or "").strip() or None
+    return SlateStatus(in_force=False, reason=reason)
 
 
 def _read(path: Path) -> str | None:
@@ -230,6 +281,30 @@ def load_sizing_rules(path: Path) -> SizingRules:
     if m:
         trim = float(m.group("mult"))
     return SizingRules(hard_stop_pct=stop, trim_multiple=trim)
+
+
+def load_governing_slate(
+    docs_dir: Path, account_id: int | None = None, default_account_id: int = 1,
+) -> tuple[dict[str, SlateEntry], Path | None, SlateStatus]:
+    """The targets that actually govern an account right now: resolve, then check in-force.
+
+    THE ONE CALL EVERY PAGE SHOULD MAKE
+        Both halves are easy to skip, and skipping either produces a confident wrong number rather
+        than a missing one. Two routers read ``docs/SLATE.md`` by hand and got both halves wrong:
+        they applied account 1's targets to every account, and they would go on presenting a
+        retired slate's weights as current. Answering "which targets apply" in one place is what
+        keeps the next page from having to remember.
+
+    Returns an EMPTY slate when none is in force — never the retired one's rows. Callers already
+    render an absent target as null rather than 0%, which is the behaviour that makes this safe.
+    """
+    path = slate_path_for(docs_dir, account_id, default_account_id)
+    if path is None:
+        return {}, None, SlateStatus(in_force=False, reason="no slate on file for this account")
+    status = slate_status(path)
+    if not status.in_force:
+        return {}, path, status
+    return load_slate(path), path, status
 
 
 def slate_health(slate: dict[str, SlateEntry], theses: dict[str, Thesis]) -> dict[str, object]:

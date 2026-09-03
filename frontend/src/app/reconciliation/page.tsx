@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { AlertTriangle, CheckCircle2, Database, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, FileQuestion, ShieldAlert } from "lucide-react";
 import { PageHeader } from "@/components/shell";
 import { Badge, Card, CardBody, CardHeader, CardTitle, Spinner, StatCard } from "@/components/ui";
 import { fetcher } from "@/lib/api";
@@ -45,7 +45,7 @@ export default function ReconciliationPage() {
     <PageHeader
       title="Reconciliation"
       subtitle={
-        resp
+        resp?.meta.slate_source && resp.meta.slate_dated
           ? `${resp.meta.slate_source} (${resp.meta.slate_dated}) vs broker, snapshot ${ago(resp.meta.snapshot_generated_at)}`
           : "Documented slate vs broker truth"
       }
@@ -93,6 +93,40 @@ export default function ReconciliationPage() {
   }
 
   const { meta, positions, checks, summary } = resp;
+
+  // Nothing was diffed: either no slate exists for this account, or the one that does was retired.
+  // Rendered BEFORE the stat cards, and instead of them, because every count below is a zero that
+  // means "not measured". Falling through would print "0 held nowhere, 0 off target" under a red
+  // "the book has drifted" banner — four true numbers arranged into a false statement, which is the
+  // exact failure this whole change exists to end.
+  if (meta.slate_documented === false || meta.slate_in_force === false) {
+    const retired = meta.slate_in_force === false && meta.slate_documented !== false;
+    return (
+      <div>
+        {header}
+        <Card>
+          <CardBody className="flex items-start gap-3 pt-5 text-sm">
+            <FileQuestion className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
+            <div className="space-y-2 text-zinc-400">
+              <p className="font-medium text-zinc-300">
+                {retired ? "No slate in force for this account." : "No slate documented for this account."}
+              </p>
+              <p>{resp.note}</p>
+              {retired && meta.slate_source && (
+                <p className="text-xs text-zinc-500">
+                  <span className="font-mono">{meta.slate_source}</span> is kept as the written
+                  record of the debate that produced it. Positions are read from the broker and
+                  judged on their own merits until an allocation debate produces a slate for this
+                  book.
+                </p>
+              )}
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+    );
+  }
+
   const sorted = [...positions].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.symbol.localeCompare(b.symbol));
   const problems = summary.missing + summary.unexpected + summary.drifted;
   const depositGap = meta.account_value != null && meta.documented_book_value != null && meta.account_value - meta.documented_book_value > 1;
