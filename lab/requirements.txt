@@ -14,8 +14,8 @@
 # wire protocol to the same database should not be running two different psycopg versions.
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
-pydantic==2.13.4
-psycopg[binary]==3.3.4
+pydantic==2.13.5
+psycopg[binary]==3.3.5
 psycopg-pool==3.3.1
 
 # The numerics. pandas pin matches backend/requirements.txt and requirements.txt; numpy is pinned
@@ -27,4 +27,4 @@ pandas==3.0.5
 xgboost==3.4.1
 scikit-learn==1.9.0
 statsmodels==0.15.0
-joblib==1.5.3
+joblib==1.6.0
