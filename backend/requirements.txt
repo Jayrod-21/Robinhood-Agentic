@@ -5,7 +5,7 @@
 # the CI `pip-audit` gate green in the same commit.
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
-pydantic==2.13.4
+pydantic==2.13.5
 pydantic-settings==2.15.0
 anthropic==0.125.0
 # src/fmp.py's HTTP transport. It used to arrive transitively through yfinance, which is now gone
@@ -18,7 +18,7 @@ pandas==3.0.5
 httpx==0.28.1
 # DB connection layer (issue #6). Same psycopg pin as db/requirements.txt so the backend and the
 # migration/loader containers never argue about wire behavior against the one shared rh-db.
-psycopg[binary]==3.3.4
+psycopg[binary]==3.3.5
 psycopg-pool==3.3.1
 # Operator authentication (issue #17, docs/AUTH_THREAT_MODEL.md). argon2-cffi is the reference
 # Argon2id implementation and is what §5.1 specifies; pyotp implements RFC 6238 TOTP for §5.4.
