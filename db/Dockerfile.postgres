@@ -1,0 +1,23 @@
+# The database image: upstream postgres, patched.
+#
+# This exists for the same reason db/Dockerfile carries an apt-get upgrade layer. postgres:16-alpine
+# is pinned by digest so a rebuild is reproducible, but the pin cannot control when upstream rebuilds
+# against a patched Alpine, and it lags: the image scanned 9 HIGH with fixes available in Alpine —
+# one OpenSSL (CVE-2026-14456) and seven util-linux, all present in the image and none of them ours.
+#
+# Two alternatives were measured and rejected, recorded here so they are not re-tried:
+#   * bumping the digest to the current 16-alpine tag — identical package set, still 9;
+#   * switching to the Debian-based postgres:16 — 36 HIGH/CRITICAL, four times worse.
+#
+# `apk upgrade` holds the Postgres version steady (16.15 before and after), so this patches the base
+# distro without moving the database out from under its own data directory.
+
+# Digest resolved by `docker pull postgres:16-alpine` on 2026-09-15. To bump: pull, then read
+# `docker inspect --format='{{index .RepoDigests 0}}' postgres:16-alpine`.
+FROM postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+
+# Not version-pinned, deliberately, for the reason given in db/Dockerfile: a pinned -rN leaves the
+# Alpine archive as soon as it is superseded, turning a silent vulnerability into a broken build on
+# someone else's schedule. apk still verifies each package signature against the trusted keys baked
+# into the image.
+RUN apk upgrade --no-cache

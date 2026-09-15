@@ -32,12 +32,15 @@
 
 services:
   db:
-    # Pinned by digest as well as tag: a tag is mutable, and "it worked yesterday" should not depend
-    # on what postgres:16-alpine happens to point at today. Matches 9b's Postgres major so operator
-    # habits and pg_dump/pg_restore compatibility carry across both stacks on this box.
-    # Digest resolved by `docker pull postgres:16-alpine` on 2026-07-28. To bump: pull, read
-    # `docker inspect --format='{{index .RepoDigests 0}}' postgres:16-alpine`, update here.
-    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    # Built, not pulled: upstream postgres:16-alpine ships Alpine packages with published fixes it
+    # has not rebuilt against, so db/Dockerfile.postgres applies them on top of a digest-pinned base.
+    # The digest lives there, next to the reasoning and the two alternatives that were measured and
+    # rejected. Still the same Postgres major as 9b, so operator habits and pg_dump/pg_restore
+    # compatibility carry across both stacks on this box.
+    build:
+      context: ./db
+      dockerfile: Dockerfile.postgres
+    image: rh-postgres:local
     container_name: rh-db
     restart: unless-stopped
 
