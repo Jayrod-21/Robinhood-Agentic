@@ -36,7 +36,11 @@ fi
 found="$(jq -r '[.vulnerabilities[].via[] | objects
                  | select(.severity == "high" or .severity == "critical") | .url]
                 | unique | .[]' "${audit_json}" | sed 's|.*/||' | sort -u)"
-baseline="$(grep -v -E '^\s*(#|$)' "${BASELINE_FILE}" | sort -u)"
+# `|| true` is load-bearing: grep exits 1 when it matches nothing, and an ALL-COMMENT baseline —
+# the state this file is supposed to reach — matches nothing. Without it, `set -Eeuo pipefail` kills
+# the script on the assignment, and a clean audit fails with no output, identically to a breach.
+# That was the live behaviour the moment the last id was pruned.
+baseline="$(grep -v -E '^\s*(#|$)' "${BASELINE_FILE}" | sort -u || true)"
 
 new="$(comm -23 <(printf '%s\n' "${found}") <(printf '%s\n' "${baseline}") | sed '/^$/d')"
 stale="$(comm -13 <(printf '%s\n' "${found}") <(printf '%s\n' "${baseline}") | sed '/^$/d')"
@@ -60,4 +64,8 @@ if [[ -n "${new}" ]]; then
 fi
 
 count="$(printf '%s\n' "${found}" | sed '/^$/d' | wc -l)"
-echo "✓ npm audit: no high/critical advisories beyond the ${count} baselined (tracked for the next major upgrade)"
+if (( count == 0 )); then
+  echo "✓ npm audit: no high/critical advisories at all, and nothing baselined"
+else
+  echo "✓ npm audit: no high/critical advisories beyond the ${count} baselined (tracked for the next major upgrade)"
+fi
