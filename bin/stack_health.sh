@@ -225,7 +225,11 @@ else
 fi
 
 crontab_text="$(crontab -l 2>/dev/null)"
-for job in alpaca_sync.sh nightly_marks.sh scheduled_cycle.sh db_backup.sh; do
+# db_collect_intraday.sh was added on 2026-09-15: it had been running on a mis-set window for 248
+# runs and nothing here noticed, because nothing here looked. A name check would not have caught
+# that particular fault — the entry was present, its hours were wrong — but an absent entry is
+# the cheaper half of the same question, and this loop was already asking it of every other job.
+for job in alpaca_sync.sh nightly_marks.sh scheduled_cycle.sh db_backup.sh db_collect_intraday.sh; do
   if grep -q "${job}" <<<"${crontab_text}"; then
     pass "cron:${job}"
   else
