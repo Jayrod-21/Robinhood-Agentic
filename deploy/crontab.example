@@ -6,12 +6,32 @@
 # contains a SPACE, so the path is quoted and the job is invoked through bash — cron splits an
 # unquoted command on whitespace and would otherwise treat "Robinhood" as an argument.
 
-CRON_TZ=America/New_York
+# ══ TIMES BELOW ARE THIS MACHINE'S LOCAL TIME (America/Denver), NOT ET ═══════════════════════
+#
+# This file used to declare `CRON_TZ=America/New_York`. That line did nothing. Ubuntu ships
+# cron 3.0pl1, in which CRON_TZ does not appear in the binary at all, and crontab(5) is explicit:
+#
+#     "It currently does not support per-user timezones... Even if a user specifies the TZ
+#      environment variable in his crontab this will affect only the commands executed in the
+#      crontab, not the execution of the crontab tasks themselves."
+#
+# So every schedule here has always run on the system timezone, and the declaration only made the
+# file read as though it ran on ET. Each job's comment below now gives BOTH: the local time it
+# fires and the ET time that lands on.
+#
+# Denver is ET minus 2 hours year-round — both zones observe US DST and shift on the same dates —
+# so a market-relative schedule written in local time stays correct across the DST transitions.
+# Do not re-add CRON_TZ. If the schedules ever need to be ET-relative in the file itself, the
+# supported route on this daemon is a `TZ=America/New_York date` check inside the job, not a
+# crontab variable.
 
 # ── Daily marking: the equity curve ───────────────────────────────────────────────────────────
-# Syncs the broker mirror, loads the day's closes, then marks the book. 17:15 ET is after the
-# 16:00 close with room for the vendor to publish the daily bar. Weekdays only; the job skips
-# market holidays itself via market_calendar.
+# Syncs the broker mirror, loads the day's closes, then marks the book. Fires 17:15 local, which
+# is 19:15 ET — comfortably past the 16:00 close and past the vendor's daily-bar publication.
+# The comment used to claim 17:15 ET; it never ran then. Left where it is because it works and
+# because later is the safe direction for this job: moving it earlier risks marking against a bar
+# the vendor has not published. Weekdays only; the job skips market holidays itself via
+# market_calendar.
 #
 # This one is NOT optional if the performance page is meant to mean anything. A missed day is a
 # permanent hole: a live mark is refused once it is more than 3 days old and must then be
@@ -40,7 +60,7 @@ CRON_TZ=America/New_York
 */5 * * * * /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/stack_health.sh" --quiet
 
 # ── Database backup, nightly ──────────────────────────────────────────────────────────────────
-# 22:30 ET, after the 17:15 marking run has finished writing.
+# 22:30 local = 00:30 ET the next day, well after the marking run has finished writing.
 #
 # bin/db_backup.sh existed, worked, and had NEVER been scheduled: the newest dump was three weeks
 # old, predating the Alpaca migration, the seeded book, every debate record, the fundamentals
@@ -68,7 +88,10 @@ CRON_TZ=America/New_York
 # Failures go to bin/lib_notify.sh (log + desktop notification), not to cron mail, which this
 # machine discards.
 
-# Market OPEN 09:30 ET → run at 09:32 (let the open print settle). Mon–Fri.
+# Fires 09:32 local, which is 11:32 ET — about two hours into the session, NOT the two minutes
+# after the open this line used to claim. Left unchanged here because moving it is a strategy
+# decision, not a bug fix: debating at 11:32 ET means the jury reads two hours of price action
+# that a 09:32 ET run would not have. To restore the original intent, change this to 7 32.
 32 9 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/scheduled_cycle.sh" open
 
 # MORNINGS ONLY, since 2026-08-27. The close run is deliberately NOT scheduled: while the debate
@@ -102,9 +125,20 @@ CRON_TZ=America/New_York
 # volume, and the price-derived ratios, each carrying a lineage FK to the statement row its
 # denominators came from and the formula version that computed them.
 #
-# The RANGE is deliberately wider than regular trading hours (13:00-21:00 UTC covers 09:00-17:00 ET
-# year-round, so it survives the DST shift without editing). The job gates itself on
-# market_calendar's session_open/session_close, so a run outside the session records a 'skipped'
-# row with the reason and writes no observation — a price that has not moved since Friday is not an
-# observation, it is the same one again. Half-days close correctly for the same reason.
-0,30 13-21 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/db_collect_intraday.sh" >> "$HOME/.local/state/agentic/intraday.log" 2>&1
+# 07:00-14:30 local = 09:00-16:30 ET, bracketing the 09:30-16:00 session by one slot at each end.
+#
+# THIS WINDOW WAS WRONG FOR THE FIRST 248 RUNS. The hours were written as UTC ("13:00-21:00 UTC
+# covers 09:00-17:00 ET"), the file declared CRON_TZ=America/New_York, and the daemon honoured
+# neither — it fired 13:00-21:30 LOCAL, which is 15:00-23:30 ET. Only two of those slots fell
+# inside a trading session, so the log collected 15:00 and 15:30 ET and nothing else: 195
+# observations at each of two marks, and 246 runs that recorded 'skipped'. The morning of every
+# trading day, the open included, was never sampled.
+#
+# The gate did its job throughout — it logged every skip rather than writing a stale quote forward,
+# which is why this was recoverable as a schedule bug and not as a corpus of invented prices.
+#
+# The job still gates itself on market_calendar's session_open/session_close, so the bracketing
+# slots record 'skipped' with a reason and write no observation — a price that has not moved since
+# Friday is not an observation, it is the same one again. Half-days close correctly for the same
+# reason, and a holiday collects nothing at all.
+0,30 7-14 * * 1-5 /usr/bin/env bash "$HOME/projects/3b. Robinhood Agentic/bin/db_collect_intraday.sh" >> "$HOME/.local/state/agentic/intraday.log" 2>&1
