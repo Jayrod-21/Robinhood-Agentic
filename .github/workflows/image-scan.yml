@@ -3,8 +3,9 @@
 # Scans the two images this repo ships or depends on:
 #   * rh-migrate — built here from db/Dockerfile (hash-pinned deps; the build itself would fail on
 #     a tampered wheel, this catches vulnerable-but-authentic ones);
-#   * the pinned postgres:16-alpine digest from docker-compose.db.yml — new CVEs land after the
-#     digest was chosen, which is what the weekly schedule exists to catch.
+#   * rh-postgres — built here from db/Dockerfile.postgres, the image docker-compose.db.yml runs.
+#     Both are digest-pinned bases with a distro upgrade layer on top, so what is scanned is what
+#     ships; new CVEs land after the digest was chosen, which is what the weekly schedule catches.
 #
 # Fails on HIGH/CRITICAL with an available fix. Actions are pinned to commit SHAs, not tags
 # (Bar §5.9 — the tj-actions compromise was a moved tag).
@@ -15,6 +16,7 @@ on:
   push:
     paths:
       - "db/Dockerfile"
+      - "db/Dockerfile.postgres"
       - "db/requirements.txt"
       - "docker-compose.db.yml"
       - ".github/workflows/image-scan.yml"
@@ -44,27 +46,24 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
-      - name: Resolve pinned postgres digest from compose
-        id: pg
-        run: |
-          ref="$(grep -oE 'postgres:16-alpine@sha256:[0-9a-f]{64}' docker-compose.db.yml | head -1)"
-          [ -n "$ref" ] || { echo "no pinned postgres digest found in docker-compose.db.yml" >&2; exit 1; }
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - name: Build rh-postgres image
+        run: docker build -f db/Dockerfile.postgres -t rh-postgres:ci db/
 
-      - name: Scan postgres base image
+      - name: Scan rh-postgres image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ steps.pg.outputs.ref }}
+          image-ref: rh-postgres:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-          # gosu is excluded DELIBERATELY, not to make the gate green by fiat: the current upstream
-          # postgres:16-alpine (verified identical to our pin, 2026-07-28) ships a gosu built on a
-          # stale Go stdlib, flagging 15 HIGH/CRITICAL TLS/net-parsing CVEs. gosu's only job in
-          # this image is the entrypoint's one-shot root→postgres privilege drop — it never touches
-          # a socket, so those code paths are unreachable. Without this scope the job is
-          # permanently red on findings we cannot act on, which trains people to ignore it. Re-test
-          # without the skip whenever the digest is bumped.
+          # gosu is excluded DELIBERATELY, not to make the gate green by fiat: postgres:16-alpine
+          # ships a gosu built on a stale Go stdlib, flagging 22 HIGH/CRITICAL TLS/net-parsing CVEs
+          # as of the 2026-09-15 digest. gosu's only job in this image is the entrypoint's one-shot
+          # root→postgres privilege drop — it never touches a socket, so those code paths are
+          # unreachable. It is also a vendored binary, not an apk package, so the image's own
+          # upgrade layer cannot reach it. Without this scope the job is permanently red on findings
+          # we cannot act on, which trains people to ignore it. Re-test without the skip whenever
+          # the digest is bumped.
           skip-files: usr/local/bin/gosu
 
       - name: Generate SBOM (CycloneDX) for rh-migrate

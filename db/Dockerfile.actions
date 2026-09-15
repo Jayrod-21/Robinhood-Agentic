@@ -5,8 +5,22 @@
 # them apart also means a provider-library CVE never forces a rebuild of the thing that applies
 # migrations.
 #
-# Digest from `docker pull python:3.12-slim` on 2026-07-28; bump with the runner image together.
-FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+# Digest from `docker pull python:3.12-slim` on 2026-09-14; bump with the runner image together.
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+
+# Debian security updates on top of the pinned base. The digest above fixes *what* is installed so
+# a rebuild is reproducible; it cannot fix *when* upstream rebuilds, and python:3.12-slim lags the
+# Debian security archive by weeks. Without this the image ships known-fixed CVEs in perl-base,
+# gzip, libsqlite3-0 and libpcre2-8-0 — all flagged by the Trivy gate, none of them ours.
+#
+# Deliberately not version-pinned, unlike requirements.txt: a pinned -security version is removed
+# from the archive as soon as it is superseded, so pinning here converts a silent vulnerability
+# into a broken build on someone else's schedule. Authenticity still holds — apt verifies the
+# signed Release file and each package checksum against it.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
 
 # Not hash-pinned like db/requirements.txt: yfinance pulls a wide transitive tree (pandas, numpy,
 # curl_cffi) whose hash set would need regenerating on every bump. This image touches no secret and
