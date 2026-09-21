@@ -6,6 +6,6 @@
 # engine and the pipeline all read FMP now. The ONLY remaining yfinance consumers are the corporate-
 # actions and delistings loaders, which build their own image (bin/db_corporate_actions.sh) and pin
 # it there — so nothing that ships in the dashboard carries it any more.
-pandas==3.0.5
+pandas==3.0.6
 requests==2.34.2
 pytest==9.1.1
