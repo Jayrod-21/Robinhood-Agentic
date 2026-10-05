@@ -3,8 +3,8 @@
 # holding an API key and a brokerage snapshot. These pins match what CI and the containers resolve
 # as of 2026-08-13 (verified against a python:3.12-slim dry-run install). Bump deliberately, with
 # the CI `pip-audit` gate green in the same commit.
-fastapi==0.141.1
-uvicorn[standard]==0.52.4
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
 anthropic==0.125.0
@@ -14,12 +14,12 @@ anthropic==0.125.0
 # thing that dragged it in leaves, and then it is an ImportError in production against a live
 # brokerage dashboard while every local test still passes.
 requests==2.34.2
-pandas==3.0.5
+pandas==3.0.6
 httpx==0.28.1
 # DB connection layer (issue #6). Same psycopg pin as db/requirements.txt so the backend and the
 # migration/loader containers never argue about wire behavior against the one shared rh-db.
-psycopg[binary]==3.3.5
-psycopg-pool==3.3.1
+psycopg[binary]==3.3.6
+psycopg-pool==3.3.3
 # Operator authentication (issue #17, docs/AUTH_THREAT_MODEL.md). argon2-cffi is the reference
 # Argon2id implementation and is what §5.1 specifies; pyotp implements RFC 6238 TOTP for §5.4.
 # Versions verified to resolve on python:3.12-slim, the image CI and the containers actually use —
@@ -29,5 +29,5 @@ pyotp==2.10.0
 # AES-256-GCM for operator_totp.secret_encrypted (§5.4). The key lives in backend/.env and never in
 # rh-db — see §7 for why encrypting a column with a key stored in the same database is obfuscation
 # rather than encryption at rest.
-cryptography==50.0.1
+cryptography==50.0.2
 pytest==9.1.1
